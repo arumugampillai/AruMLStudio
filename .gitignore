@@ -1,0 +1,48 @@
+# IDE / tooling
+.idea/
+.vscode/
+
+# Python environments and bytecode
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.py[cod]
+*$py.class
+.Python
+
+# Logs
+*.log
+logs/
+
+# Build / packaging / local training artifacts
+build/
+dist/
+release/
+releases/
+release_logs/
+catboost_info/
+
+# Credentials and local secrets (never commit)
+cred.py
+config_aru.py
+**/cred.py
+**/config_aru.py
+*.pem
+*.key
+*.pfx
+.env
+.env.*
+config/local*
+config/local/**
+secret*
+*api_key*
+*_credentials.json
+credentials.json
+
+# Local databases and large runtime data (project-specific)
+*.db
+*.sqlite
+*.sqlite3

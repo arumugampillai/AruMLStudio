@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "description": "OHLC Aggregation history profiles by sample interval. History counts are product configuration (not derived from warm-up). Prefer exact wall-clock periods when the sample interval divides them. When a label cannot divide evenly (e.g. 5m at 9s), use the largest exact sample grid below the nominal period and set nominal_seconds so UI/metadata remain transparent. Add intervals or timeframe entries here without code changes. Each entry needs seconds divisible by the profile interval.",
+  "profiles": {
+    "3": {
+      "3m": {"seconds": 180, "history": 6},
+      "5m": {"seconds": 300, "history": 3},
+      "15m": {"seconds": 900, "history": 1}
+    },
+    "6": {
+      "3m": {"seconds": 180, "history": 6},
+      "5m": {"seconds": 300, "history": 6},
+      "15m": {"seconds": 900, "history": 2},
+      "30m": {"seconds": 1800, "history": 1}
+    },
+    "9": {
+      "3m": {"seconds": 180, "history": 6},
+      "5m": {
+        "seconds": 297,
+        "history": 3,
+        "nominal_seconds": 300
+      },
+      "15m": {"seconds": 900, "history": 3}
+    }
+  },
+  "unavailable": {}
+}

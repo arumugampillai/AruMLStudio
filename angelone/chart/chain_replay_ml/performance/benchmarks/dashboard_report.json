@@ -1,0 +1,25 @@
+{
+  "title": "Feature Engine Performance",
+  "generated_at": "2026-07-31T07:17:55.492968+00:00",
+  "report_path": "C:\\Users\\admin\\PycharmProjects\\v1\\AruNeo\\angelone\\chart\\chain_replay_ml\\performance\\benchmarks\\benchmark_report.json",
+  "rows_per_sec": 11301.38,
+  "features_per_sec": 2328083.36,
+  "numba_status": "Active (Numba)",
+  "compile_time_sec": 0.346564,
+  "kernel_hits": 0,
+  "cache_hits": 0,
+  "runtime": {
+    "numba_available": true,
+    "numba_enabled": true,
+    "python_fallback": false,
+    "python_fallback_reason": null,
+    "warmed": false,
+    "compile_overhead_sec": {},
+    "compile_total_sec": 0,
+    "kernel_hits": 0,
+    "cache_hits": 0
+  },
+  "suite_label": "controller_suite_numba",
+  "rows": 100000,
+  "features_assumed": 206
+}

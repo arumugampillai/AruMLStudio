@@ -1,0 +1,172 @@
+"""Outcome Label Engine — Phase 1–5 (foundation through production hardening)."""
+
+from __future__ import annotations
+
+from .base import (
+    ArtifactPaths,
+    DayChunkRunner,
+    DayChunkRunResult,
+    DaySampleSource,
+    ImmutableArtifactWriter,
+    OutcomeLabelStrategy,
+    create_immutable_writer,
+    mint_artifact_id,
+    run_labeling,
+)
+from .benchmarks import (
+    BenchmarkResult,
+    benchmark_fixed_horizon_regression,
+    benchmark_large_dataset,
+    benchmark_memory_bound,
+    benchmark_streaming_day_chunks,
+    run_all_benchmarks,
+)
+from .contracts import (
+    OleContractError,
+    assert_run_meta_complete,
+    assert_truncate_at_close_default,
+    sanitize_label_row,
+)
+from .fixed_horizon import (
+    STRATEGY_ID as FIXED_HORIZON_STRATEGY_ID,
+    FixedHorizonStrategy,
+    compute_fixed_horizon_targets,
+    get_fixed_horizon_strategy,
+    register_fixed_horizon_strategy,
+)
+from .model_builder_bridge import (
+    config_schema_fields,
+    default_params_for_strategy,
+    default_strategy_id_for_prediction_type,
+    merge_strategy_params,
+    metadata_for_prediction_type,
+    preferred_target_column,
+    resolve_training_target,
+    strategy_selector_rows,
+    strategies_for_prediction_type,
+)
+from .prediction_source import CallablePredictionDaySource, InMemoryPredictionDaySource
+from .registry import (
+    StrategyAlreadyRegisteredError,
+    StrategyNotFoundError,
+    clear_registry,
+    discover_for_ui,
+    filter_by_problem_type,
+    filter_by_source,
+    get_capabilities,
+    get_strategy,
+    list_metadata,
+    list_strategies,
+    list_strategy_ids,
+    register_strategy,
+    unregister_strategy,
+)
+from .triple_barrier import (
+    LABEL_ENCODING as TRIPLE_BARRIER_LABEL_ENCODING,
+    STRATEGY_ID as TRIPLE_BARRIER_STRATEGY_ID,
+    TripleBarrierStrategy,
+    get_triple_barrier_strategy,
+    label_triple_barrier_sample,
+    register_triple_barrier_strategy,
+    resolve_barrier_prices,
+)
+from .types import (
+    ENGINE_VERSION,
+    SOURCE_MASTER,
+    SOURCE_PREDICTION,
+    ConfigFieldType,
+    LabelBatchResult,
+    LabelRunMeta,
+    LabelSourceContext,
+    LabelStrategyConfig,
+    ProblemType,
+    StrategyCapabilities,
+    StrategyMetadata,
+    TargetDefinitions,
+    defaults_from_config_schema,
+    normalize_enum_choices,
+    validate_config_against_schema,
+)
+
+
+def ensure_builtin_strategies() -> None:
+    """Register built-in strategies (Fixed Horizon + Triple Barrier)."""
+    register_fixed_horizon_strategy(replace=True)
+    register_triple_barrier_strategy(replace=True)
+
+
+ensure_builtin_strategies()
+
+__all__ = [
+    "ENGINE_VERSION",
+    "FIXED_HORIZON_STRATEGY_ID",
+    "SOURCE_MASTER",
+    "SOURCE_PREDICTION",
+    "TRIPLE_BARRIER_LABEL_ENCODING",
+    "TRIPLE_BARRIER_STRATEGY_ID",
+    "ArtifactPaths",
+    "BenchmarkResult",
+    "CallablePredictionDaySource",
+    "ConfigFieldType",
+    "DayChunkRunner",
+    "DayChunkRunResult",
+    "DaySampleSource",
+    "FixedHorizonStrategy",
+    "ImmutableArtifactWriter",
+    "InMemoryPredictionDaySource",
+    "LabelBatchResult",
+    "LabelRunMeta",
+    "LabelSourceContext",
+    "LabelStrategyConfig",
+    "OleContractError",
+    "OutcomeLabelStrategy",
+    "ProblemType",
+    "StrategyAlreadyRegisteredError",
+    "StrategyCapabilities",
+    "StrategyMetadata",
+    "StrategyNotFoundError",
+    "TargetDefinitions",
+    "TripleBarrierStrategy",
+    "assert_run_meta_complete",
+    "assert_truncate_at_close_default",
+    "benchmark_fixed_horizon_regression",
+    "benchmark_large_dataset",
+    "benchmark_memory_bound",
+    "benchmark_streaming_day_chunks",
+    "clear_registry",
+    "compute_fixed_horizon_targets",
+    "config_schema_fields",
+    "create_immutable_writer",
+    "default_params_for_strategy",
+    "default_strategy_id_for_prediction_type",
+    "defaults_from_config_schema",
+    "discover_for_ui",
+    "ensure_builtin_strategies",
+    "filter_by_problem_type",
+    "filter_by_source",
+    "get_capabilities",
+    "get_fixed_horizon_strategy",
+    "get_strategy",
+    "get_triple_barrier_strategy",
+    "label_triple_barrier_sample",
+    "list_metadata",
+    "list_strategies",
+    "list_strategy_ids",
+    "merge_strategy_params",
+    "metadata_for_prediction_type",
+    "mint_artifact_id",
+    "normalize_enum_choices",
+    "preferred_target_column",
+    "register_fixed_horizon_strategy",
+    "register_strategy",
+    "register_triple_barrier_strategy",
+    "resolve_barrier_prices",
+    "resolve_training_target",
+    "run_all_benchmarks",
+    "run_labeling",
+    "sanitize_label_row",
+    "strategies_for_prediction_type",
+    "strategy_selector_rows",
+    "unregister_strategy",
+    "validate_config_against_schema",
+]

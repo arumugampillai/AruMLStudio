@@ -1,0 +1,10 @@
+{
+  "compiler_version": "1.0.0",
+  "supported": [
+    {
+      "grammar_version": "1.0",
+      "operator_pack_version": "1.0.0",
+      "supported": true
+    }
+  ]
+}
