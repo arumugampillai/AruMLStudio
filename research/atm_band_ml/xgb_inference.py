@@ -21,7 +21,7 @@ from research.atm_band_ml.feature_builder import (
     replay_feature_columns,
 )
 
-_CHART_DIR = Path(__file__).resolve().parents[2] / "angelone" / "chart"
+_CHART_DIR = Path(__file__).resolve().parents[2] / "apps"
 DEFAULT_DATA_DIR = _CHART_DIR / "data"
 DEFAULT_SCORE_THRESHOLD = 3.0
 DELTA_BANDS = ("A", "B", "C")

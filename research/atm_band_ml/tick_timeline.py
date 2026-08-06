@@ -21,7 +21,7 @@ from api.tick_ring import TickRingStore, TickSample
 if TYPE_CHECKING:
     from chain_replay_ml.ticks import TickTimeline
 
-_CHART_DIR = Path(__file__).resolve().parents[2] / "angelone" / "chart"
+_CHART_DIR = Path(__file__).resolve().parents[2] / "apps"
 _replay_tick_timeline_cls: type | None = None
 
 

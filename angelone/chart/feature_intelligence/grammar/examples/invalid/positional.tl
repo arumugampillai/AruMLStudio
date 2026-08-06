@@ -1,2 +1,0 @@
-# expect: POSITIONAL_ARG
-OP_EMA(20)

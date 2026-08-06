@@ -4,7 +4,7 @@
 Run from repo root:
 
     python master_dataset_manager.py
-    python master_dataset_manager.py --chart-dir D:\\MyResearch\\angelone\\chart
+    python master_dataset_manager.py --chart-dir D:\\MyResearch\\project_data
     pythonw master_dataset_manager.py
 """
 from __future__ import annotations
@@ -14,9 +14,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-CHART_DIR = ROOT / "angelone" / "chart"
-if str(CHART_DIR) not in sys.path:
-    sys.path.insert(0, str(CHART_DIR))
+APPS_DIR = ROOT / "apps"
+if str(APPS_DIR) not in sys.path:
+    sys.path.insert(0, str(APPS_DIR))
 
 from master_dataset_tk.app import main
 
@@ -27,7 +27,7 @@ def _parse_args() -> argparse.Namespace:
         "--chart-dir",
         dest="chart_dir",
         default=None,
-        help="Project chart folder (contains data/). Defaults to last-used or bundled angelone/chart.",
+        help="Project data folder (contains data/). Defaults to last-used or bundled apps/.",
     )
     return parser.parse_args()
 

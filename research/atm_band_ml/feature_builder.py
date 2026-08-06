@@ -19,7 +19,7 @@ import numpy as np
 from api.tick_ring import TickRingStore
 from research.atm_band_ml.tick_timeline import ring_to_tick_timeline
 
-_CHART_DIR = Path(__file__).resolve().parents[2] / "angelone" / "chart"
+_CHART_DIR = Path(__file__).resolve().parents[2] / "apps"
 
 # Match chain_replay_ml.recompute_2_1_ratio data-quality gates.
 FEATURE_BAR_SEC = 5

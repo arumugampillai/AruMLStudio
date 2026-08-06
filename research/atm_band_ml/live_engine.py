@@ -228,7 +228,7 @@ def _resolve_expiry_ts(state: AppState) -> float | None:
         import sys
         from pathlib import Path
 
-        chart_dir = Path(__file__).resolve().parents[2] / "angelone" / "chart"
+        chart_dir = Path(__file__).resolve().parents[2] / "apps"
         chart_str = str(chart_dir)
         if chart_str not in sys.path:
             sys.path.insert(0, chart_str)

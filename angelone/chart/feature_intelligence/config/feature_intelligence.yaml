@@ -1,4 +1,0 @@
-# Feature Intelligence Core — package settings (Sprint 0)
-schema_version: "0.0.1"
-environment: development
-# data_dir: optional override; default is %APPDATA%/AruNeo/feature_intelligence

@@ -27,7 +27,7 @@ def default_candle_db_path() -> str:
     """Read-only Angel historic OHLC store (1m NIFTY lives here)."""
     here = os.path.dirname(os.path.abspath(__file__))
     repo = os.path.dirname(here)
-    return os.path.join(repo, "angelone", "chart", "data", "angel_historic_bars.db")
+    return os.path.join(repo, "apps", "data", "angel_historic_bars.db")
 
 
 def default_output_dir() -> str:

@@ -49,9 +49,9 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-_CHART_DIR = _ROOT / "angelone" / "chart"
-if str(_CHART_DIR) not in sys.path:
-    sys.path.insert(0, str(_CHART_DIR))
+_APPS_DIR = _ROOT / "apps"
+if str(_APPS_DIR) not in sys.path:
+    sys.path.insert(0, str(_APPS_DIR))
 
 _HOOKS_DIR = _ROOT / "pyi_hooks"
 _RTH_PATH = _HOOKS_DIR / "rth_scipy_distn_fix.py"

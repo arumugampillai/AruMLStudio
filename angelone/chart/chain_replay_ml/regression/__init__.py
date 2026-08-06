@@ -1,1 +1,0 @@
-"""Golden dataset regression assets."""

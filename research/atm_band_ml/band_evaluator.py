@@ -31,7 +31,7 @@ from research.atm_band_ml.tick_timeline import (
     ring_to_tick_timeline,
 )
 
-_CHART_DIR = Path(__file__).resolve().parents[2] / "angelone" / "chart"
+_CHART_DIR = Path(__file__).resolve().parents[2] / "apps"
 
 DEFAULT_BAND_SIZE = 10
 DEFAULT_BAND_SIZE_STRIKES = DEFAULT_BAND_SIZE * 2 + 1  # 21
