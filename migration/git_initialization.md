@@ -95,7 +95,8 @@ None — no credential files existed at initialization.
 |------|--------|
 | `.git` initialized? | **Yes** |
 | Current branch | `main` |
-| Current commit | `0bc13ff2c524892143180adc9af82d32d27ca482` |
+| Current commit (HEAD) | `8c24ec0` — includes `migration/git_initialization.md` |
+| Initial commit | `0bc13ff2c524892143180adc9af82d32d27ca482` — `Initial standalone AruMLStudio` |
 | `git remote -v` | *(empty — no remotes)* |
 
 ### Sensitive files ignored
