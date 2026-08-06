@@ -788,7 +788,7 @@ def _train_single_split(
             feature_importance=importance.to_dict(orient="records"),
             training_summary=saved.get("training_summary"),
             training_metadata=training_metadata_doc,
-            report_url=f"/api/ml/model-report?model_name={saved['model_name']}",
+            report_url="",
         )
 
         result = {
@@ -805,7 +805,7 @@ def _train_single_split(
             "shap_importance": shap_rows,
             "hyperparameter_optimization": hpo_result,
             "optimization_result": optimization_result,
-            "report_url": f"/api/ml/model-report?model_name={saved['model_name']}",
+            "report_url": "",
             "matrix_report": matrix_report,
             "steps": TRAIN_STEP_ORDER + (["hyperparameter_optimization"] if hpo_result else []),
             "config": config.to_dict(),
@@ -1420,7 +1420,7 @@ def _train_walk_forward(
             walk_forward=aggregated,
             feature_selection=selection_meta,
             selected_features=use_features,
-            report_url=f"/api/ml/model-report?model_name={saved['model_name']}",
+            report_url="",
         )
 
         result = {
@@ -1439,7 +1439,7 @@ def _train_walk_forward(
             "walk_forward_summary": wf_result["summary"],
             "selected_features": use_features,
             "shap_importance": shap_rows,
-            "report_url": f"/api/ml/model-report?model_name={saved['model_name']}",
+            "report_url": "",
             "matrix_report": matrix_report,
             "steps": TRAIN_STEP_ORDER + ["walk_forward"] + (["hyperparameter_optimization"] if hpo_result else []),
             "config": final_config.to_dict(),

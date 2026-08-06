@@ -1,4 +1,4 @@
-"""Tk Model Builder — full parity with web /ml/model-builder."""
+"""Tk Model Builder — Create Model workflow in ML Research Studio."""
 
 from .panel import CreateModelPanel
 

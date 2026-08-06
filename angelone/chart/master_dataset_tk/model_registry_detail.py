@@ -1993,8 +1993,6 @@ def render_retrain(
 ) -> None:
     from tkinter import messagebox
 
-    from .ui_util import open_model_builder_lifecycle, open_web_model_registry
-
     clear_children(scroll.inner)
     parent = scroll.inner
     model_name = str(doc.get("model_name") or "").strip()
@@ -2002,6 +2000,33 @@ def render_retrain(
     performed = bool(hpo.get("performed"))
     params = hpo.get("baseline_parameters") or {}
     param_preview = _param_preview(params)
+
+    def _lifecycle(mode: str) -> None:
+        if not model_name:
+            messagebox.showinfo("Model Builder", "No model selected.")
+            return
+        if mode == "calibration_only":
+            messagebox.showinfo("Calibration Only", "Calibration-only is not implemented yet.")
+            return
+        if on_lifecycle:
+            on_lifecycle(model_name, mode)
+        else:
+            messagebox.showinfo(
+                "Model Builder",
+                "Open Create Model from the main navigation to run this action.",
+            )
+
+    def _view_trials() -> None:
+        if not model_name:
+            messagebox.showinfo("Model Builder", "No model selected.")
+            return
+        if on_lifecycle:
+            on_lifecycle(model_name, "complete_optimization")
+        else:
+            messagebox.showinfo(
+                "Model Builder",
+                "Open Create Model from the main navigation to review optimization trials.",
+            )
 
     section_title(parent, "Hyperparameter Optimization")
 
@@ -2033,18 +2058,6 @@ def render_retrain(
     actions = ttk.Frame(parent)
     actions.pack(fill="x", pady=(8, 0))
 
-    def _lifecycle(mode: str) -> None:
-        if not model_name:
-            messagebox.showinfo("Model Builder", "No model selected.")
-            return
-        if mode == "calibration_only":
-            messagebox.showinfo("Calibration Only", "Calibration-only is not implemented yet.")
-            return
-        if on_lifecycle:
-            on_lifecycle(model_name, mode)
-        else:
-            open_model_builder_lifecycle(model_name, mode)
-
     ttk.Button(actions, text="Retrain", command=lambda: _lifecycle("retrain")).pack(side="left", padx=(0, 6), pady=2)
     primary_label = "Re-run Optimization" if performed else "Complete Optimization"
     ttk.Button(actions, text=primary_label, command=lambda: _lifecycle("complete_optimization")).pack(side="left", padx=6, pady=2)
@@ -2062,7 +2075,7 @@ def render_retrain(
         ttk.Button(
             actions,
             text="View Trials",
-            command=open_web_model_registry,
+            command=_view_trials,
         ).pack(side="left", padx=6, pady=2)
 
 

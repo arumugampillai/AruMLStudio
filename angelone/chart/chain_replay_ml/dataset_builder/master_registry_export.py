@@ -1630,7 +1630,7 @@ def create_master_registry_dataset(
         "parquet_path": parquet_path,
         "json_path": json_path,
         "expected_path": expected_path,
-        "registry_url": "/ml/create-dataset#registry",
+        "registry_url": "",
         "export_stats": metadata.get("export_stats"),
         "pipeline_no_null_report": pipeline_no_null_report_text,
     }

@@ -1255,7 +1255,7 @@ def _table_row(data_dir: str, entry: str, pkg: str) -> dict[str, Any]:
         "protected": protected,
         "protected_reason": reason,
         "is_active": _is_active_model(data_dir, str(model_name)),
-        "report_url": f"/api/ml/model-report?model_name={safe_model_name(entry)}",
+        "report_url": "",
         "is_research_experiment": research,
         "registry_scope": "experiment" if research else "production",
         "experiment_id": doc.get("experiment_id") or config.get("experiment_id"),
@@ -1798,7 +1798,7 @@ def load_model_detail(data_dir: str, model_name: str) -> dict[str, Any]:
             "baseline_model_ubj": os.path.basename(paths["baseline_model_ubj"]),
             "tuned_model_ubj": os.path.basename(paths["tuned_model_ubj"]),
         },
-        "report_url": table_row.get("report_url") or f"/api/ml/model-report?model_name={safe}",
+        "report_url": table_row.get("report_url") or "",
         "model_lifecycle": lifecycle_view,
         "_deferred_heavy": True,
         "_timing": {

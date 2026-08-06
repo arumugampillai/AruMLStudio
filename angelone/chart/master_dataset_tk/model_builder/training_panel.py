@@ -1,4 +1,4 @@
-"""Model training progress — Tk parity with /ml/model-training."""
+"""Model training progress — Tk Create Model training panel."""
 
 from __future__ import annotations
 

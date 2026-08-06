@@ -5,7 +5,6 @@ from __future__ import annotations
 import queue
 import threading
 import tkinter as tk
-import webbrowser
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Any, Callable
 
@@ -684,17 +683,10 @@ class RegistryPanel(ttk.Frame, LazyLoadMixin):
         if self._on_open_builder:
             self._on_open_builder(name)
             return
-        url = f"http://127.0.0.1:8000/ml/model-builder?dataset={name}"
-        if messagebox.askyesno(
+        messagebox.showinfo(
             "Train",
-            f"Open Model Builder for dataset \"{name}\"?\n\n"
-            f"If the chart server is running:\n{url}\n\n"
-            "Otherwise copy the dataset name for manual use.",
-        ):
-            try:
-                webbrowser.open(url)
-            except OSError:
-                pass
+            f"Open Create Model from the main navigation to train on dataset \"{name}\".",
+        )
 
     def _show_compare_tab(self) -> None:
         name = self._require_selection()
