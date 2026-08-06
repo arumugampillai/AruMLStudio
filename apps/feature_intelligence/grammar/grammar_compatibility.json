@@ -1,0 +1,9 @@
+{
+  "grammar_version": "1.0",
+  "grammar_pack_version": "1.0.0",
+  "token_pack_version": "1.0.0",
+  "formatter_version": "1.0.0",
+  "supported_operator_pack_versions": ["1.0.0"],
+  "supported_compiler_versions": ["1.0.0"],
+  "notes": "Sprint 5: Grammar 1.0 × Compiler 1.0.0"
+}

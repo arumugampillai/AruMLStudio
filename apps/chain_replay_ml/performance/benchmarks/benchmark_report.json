@@ -1,0 +1,441 @@
+{
+  "generated_at": "2026-07-31T06:42:13.963541+00:00",
+  "rows": 100000,
+  "features_assumed": 206,
+  "numba_available": true,
+  "compile_overhead_sec": {
+    "population_std": 0.324015,
+    "ema_update": 0.002136,
+    "ema_series": 0.003921,
+    "rolling_mean_std": 0.003796,
+    "rolling_max_min": 0.003663,
+    "pct_returns": 0.00279,
+    "safe_ratio": 0.001857,
+    "distance_pct": 0.001949,
+    "iv_zscore": 0.002437
+  },
+  "limitations": [
+    "Synthetic price/IV streams \u2014 not a full production day build.",
+    "Does not exercise build_feature_raw_for_row end-to-end (requires tick DB).",
+    "Throughput approximates controller hotspots inside the per-row feature path.",
+    "features/sec uses assumed feature count=206 (registry-sized)."
+  ],
+  "per_kernel": [
+    {
+      "name": "StdController_vs_legacy_list_np",
+      "baseline": {
+        "kernel": "legacy_std_list_np",
+        "use_numba": false,
+        "rows": 100000,
+        "window": 20,
+        "total_sec": 1.4781735999931698,
+        "rows_per_sec": 67651.052623631,
+        "last_value": 0.25496887653435596
+      },
+      "optimized": {
+        "kernel": "StdController",
+        "use_numba": true,
+        "rows": 100000,
+        "total_sec": 0.37894930000038585,
+        "rows_per_sec": 263887.5437951678,
+        "last_value": 0.2549688765343559
+      },
+      "speedup": 3.901
+    },
+    {
+      "name": "population_std",
+      "baseline": {
+        "kernel": "population_std",
+        "use_numba": false,
+        "calls": 99981,
+        "window": 20,
+        "total_sec": 1.3059319999956642,
+        "calls_per_sec": 76559.11640141443,
+        "last_value": 0.25496887653435596
+      },
+      "optimized": {
+        "kernel": "population_std",
+        "use_numba": true,
+        "calls": 99981,
+        "window": 20,
+        "total_sec": 0.05380419999710284,
+        "calls_per_sec": 1858237.8328343069,
+        "last_value": 0.2549688765343559
+      },
+      "speedup": 24.272
+    },
+    {
+      "name": "ema_series",
+      "baseline": {
+        "kernel": "ema_series",
+        "use_numba": false,
+        "rows": 100000,
+        "period": 20,
+        "total_sec": 0.027284099996904843,
+        "rows_per_sec": 3665138.304409681,
+        "last_value": 36.40912672244221
+      },
+      "optimized": {
+        "kernel": "ema_series",
+        "use_numba": true,
+        "rows": 100000,
+        "period": 20,
+        "total_sec": 0.00014209999790182337,
+        "rows_per_sec": 703729778.1600941,
+        "last_value": 36.40912672244221
+      },
+      "speedup": 192.006
+    },
+    {
+      "name": "iv_zscore",
+      "baseline": {
+        "kernel": "iv_zscore",
+        "use_numba": false,
+        "calls": 99900,
+        "window": 100,
+        "total_sec": 1.6188745000035851,
+        "calls_per_sec": 61709.53955960068,
+        "last_value": 0.8025721924938833
+      },
+      "optimized": {
+        "kernel": "iv_zscore",
+        "use_numba": true,
+        "calls": 99900,
+        "window": 100,
+        "total_sec": 0.08523810000042431,
+        "calls_per_sec": 1172011.1077030424,
+        "last_value": 0.8025721924938789
+      },
+      "speedup": 18.992
+    },
+    {
+      "name": "StdController",
+      "baseline": {
+        "kernel": "StdController",
+        "use_numba": false,
+        "rows": 100000,
+        "total_sec": 1.7839930999980425,
+        "rows_per_sec": 56054.02846014916,
+        "last_value": 0.25496887653435596
+      },
+      "optimized": {
+        "kernel": "StdController",
+        "use_numba": true,
+        "rows": 100000,
+        "total_sec": 0.3641898999994737,
+        "rows_per_sec": 274582.0243783381,
+        "last_value": 0.2549688765343559
+      },
+      "speedup": 4.899
+    },
+    {
+      "name": "RvController",
+      "baseline": {
+        "kernel": "RvController",
+        "use_numba": false,
+        "rows": 100000,
+        "period": 30,
+        "total_sec": 1.8569083000038518,
+        "rows_per_sec": 53852.95547431856,
+        "last_value": 0.36959175936543376
+      },
+      "optimized": {
+        "kernel": "RvController",
+        "use_numba": true,
+        "rows": 100000,
+        "period": 30,
+        "total_sec": 0.3976676999955089,
+        "rows_per_sec": 251466.23676282828,
+        "last_value": 0.36959175936543376
+      },
+      "speedup": 4.669
+    },
+    {
+      "name": "IvZscoreWindowController",
+      "baseline": {
+        "kernel": "IvZscoreWindowController",
+        "use_numba": false,
+        "rows": 100000,
+        "total_sec": 2.1266744999957155,
+        "rows_per_sec": 47021.7703744515,
+        "last_value": 0.8025721924938833
+      },
+      "optimized": {
+        "kernel": "IvZscoreWindowController",
+        "use_numba": true,
+        "rows": 100000,
+        "total_sec": 1.02021870000317,
+        "rows_per_sec": 98018.19943085662,
+        "last_value": 0.8025721924938789
+      },
+      "speedup": 2.085
+    }
+  ],
+  "suite": {
+    "baseline": {
+      "label": "controller_suite_baseline",
+      "total_sec": 33.075394,
+      "rows": 100000,
+      "features": 206,
+      "rows_per_sec": 3023.4,
+      "features_per_sec": 622819.49,
+      "peak_memory_mib": 0.781,
+      "hottest": [
+        {
+          "function": "<lambda>",
+          "file": "benchmark.py",
+          "line": 306,
+          "cumtime": 33.075387,
+          "tottime": 7e-06,
+          "calls": 1
+        },
+        {
+          "function": "_suite",
+          "file": "benchmark.py",
+          "line": 298,
+          "cumtime": 33.07538,
+          "tottime": 3.9e-05,
+          "calls": 1
+        },
+        {
+          "function": "update",
+          "file": "rolling_controllers.py",
+          "line": 174,
+          "cumtime": 31.860961,
+          "tottime": 0.701653,
+          "calls": 300000
+        },
+        {
+          "function": "_population_std_buffer",
+          "file": "rolling_controllers.py",
+          "line": 257,
+          "cumtime": 20.977777,
+          "tottime": 0.189691,
+          "calls": 199951
+        },
+        {
+          "function": "population_std",
+          "file": "runtime.py",
+          "line": 73,
+          "cumtime": 20.788086,
+          "tottime": 0.187456,
+          "calls": 199951
+        },
+        {
+          "function": "population_std_numpy",
+          "file": "feature_kernels.py",
+          "line": 47,
+          "cumtime": 19.113497,
+          "tottime": 0.250205,
+          "calls": 199951
+        },
+        {
+          "function": "std",
+          "file": "fromnumeric.py",
+          "line": 3913,
+          "cumtime": 18.832445,
+          "tottime": 0.466641,
+          "calls": 199951
+        },
+        {
+          "function": "_std",
+          "file": "_methods.py",
+          "line": 225,
+          "cumtime": 18.365805,
+          "tottime": 1.168041,
+          "calls": 199951
+        },
+        {
+          "function": "_var",
+          "file": "_methods.py",
+          "line": 153,
+          "cumtime": 17.138191,
+          "tottime": 9.94241,
+          "calls": 199951
+        },
+        {
+          "function": "_bench_rv_controller",
+          "file": "benchmark.py",
+          "line": 164,
+          "cumtime": 12.590108,
+          "tottime": 0.179014,
+          "calls": 1
+        },
+        {
+          "function": "_update_sample",
+          "file": "rolling_controllers.py",
+          "line": 318,
+          "cumtime": 11.987989,
+          "tottime": 0.578849,
+          "calls": 100000
+        },
+        {
+          "function": "_bench_std_controller",
+          "file": "benchmark.py",
+          "line": 140,
+          "cumtime": 11.810505,
+          "tottime": 0.174439,
+          "calls": 1
+        },
+        {
+          "function": "_update_sample",
+          "file": "rolling_controllers.py",
+          "line": 278,
+          "cumtime": 11.230123,
+          "tottime": 0.287497,
+          "calls": 100000
+        },
+        {
+          "function": "_bench_iv_zscore_controller",
+          "file": "benchmark.py",
+          "line": 188,
+          "cumtime": 8.290289,
+          "tottime": 0.228452,
+          "calls": 1
+        },
+        {
+          "function": "_update_sample",
+          "file": "rolling_controllers.py",
+          "line": 368,
+          "cumtime": 7.715483,
+          "tottime": 1.659399,
+          "calls": 100000
+        }
+      ],
+      "extra": {}
+    },
+    "optimized": {
+      "label": "controller_suite_numba",
+      "total_sec": 8.84848,
+      "rows": 100000,
+      "features": 206,
+      "rows_per_sec": 11301.38,
+      "features_per_sec": 2328083.36,
+      "peak_memory_mib": 0.774,
+      "hottest": [
+        {
+          "function": "<lambda>",
+          "file": "benchmark.py",
+          "line": 314,
+          "cumtime": 8.848477,
+          "tottime": 2e-06,
+          "calls": 1
+        },
+        {
+          "function": "_suite",
+          "file": "benchmark.py",
+          "line": 298,
+          "cumtime": 8.848475,
+          "tottime": 2.5e-05,
+          "calls": 1
+        },
+        {
+          "function": "update",
+          "file": "rolling_controllers.py",
+          "line": 174,
+          "cumtime": 8.105866,
+          "tottime": 0.620882,
+          "calls": 300000
+        },
+        {
+          "function": "_bench_iv_zscore_controller",
+          "file": "benchmark.py",
+          "line": 188,
+          "cumtime": 4.034269,
+          "tottime": 0.227129,
+          "calls": 1
+        },
+        {
+          "function": "_update_sample",
+          "file": "rolling_controllers.py",
+          "line": 368,
+          "cumtime": 3.468789,
+          "tottime": 1.665457,
+          "calls": 100000
+        },
+        {
+          "function": "_bench_rv_controller",
+          "file": "benchmark.py",
+          "line": 164,
+          "cumtime": 2.614297,
+          "tottime": 0.153052,
+          "calls": 1
+        },
+        {
+          "function": "_bench_std_controller",
+          "file": "benchmark.py",
+          "line": 140,
+          "cumtime": 2.199726,
+          "tottime": 0.154317,
+          "calls": 1
+        },
+        {
+          "function": "_update_sample",
+          "file": "rolling_controllers.py",
+          "line": 318,
+          "cumtime": 2.123856,
+          "tottime": 0.52324,
+          "calls": 100000
+        },
+        {
+          "function": "buffer_to_float64",
+          "file": "feature_kernels.py",
+          "line": 233,
+          "cumtime": 2.067119,
+          "tottime": 0.504152,
+          "calls": 299853
+        },
+        {
+          "function": "_population_std_buffer",
+          "file": "rolling_controllers.py",
+          "line": 257,
+          "cumtime": 1.803438,
+          "tottime": 0.139827,
+          "calls": 199951
+        },
+        {
+          "function": "_update_sample",
+          "file": "rolling_controllers.py",
+          "line": 278,
+          "cumtime": 1.707897,
+          "tottime": 0.266003,
+          "calls": 100000
+        },
+        {
+          "function": "population_std",
+          "file": "runtime.py",
+          "line": 73,
+          "cumtime": 1.663611,
+          "tottime": 0.282791,
+          "calls": 199951
+        },
+        {
+          "function": "<built-in method numpy.fromiter>",
+          "file": "~",
+          "line": 0,
+          "cumtime": 1.5046,
+          "tottime": 1.5046,
+          "calls": 299852
+        },
+        {
+          "function": "iv_zscore",
+          "file": "runtime.py",
+          "line": 96,
+          "cumtime": 1.015703,
+          "tottime": 0.180553,
+          "calls": 99901
+        },
+        {
+          "function": "get",
+          "file": "rolling_controllers.py",
+          "line": 111,
+          "cumtime": 0.911168,
+          "tottime": 0.407008,
+          "calls": 300000
+        }
+      ],
+      "extra": {}
+    },
+    "overall_speedup": 3.738
+  }
+}

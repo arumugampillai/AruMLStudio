@@ -1,0 +1,2 @@
+# expect: MISSING_PARAM
+OP_EMA()

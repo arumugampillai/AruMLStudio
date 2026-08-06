@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "dataset_name": "golden",
+  "description": "Golden regression dataset — ~5 min window, one expiry. Update via POST /api/ml/golden-regression/update-manifest after intentional changes (requires Audit PASS + Validation PASS).",
+  "expected_spec_hash": "",
+  "expected_pipeline_fingerprint": {},
+  "expected_stage_hashes": {},
+  "expected_rows": 0,
+  "expected_columns": 0,
+  "expected_audit": "PASS",
+  "expected_validation": "PASS",
+  "expected_dataset_hash": "",
+  "expected_metadata_hash": "",
+  "expected_feature_hash": "",
+  "expected_sample_hash": ""
+}

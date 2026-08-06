@@ -1,0 +1,5 @@
+# Logging settings for Feature Intelligence Core
+level: INFO
+format: "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+to_file: false
+# file_path: optional log file path when to_file is true

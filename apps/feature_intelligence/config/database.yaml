@@ -1,0 +1,4 @@
+# SQLite settings for feature_intelligence.db
+# path: optional absolute/relative override
+timeout_seconds: 30.0
+journal_mode: WAL

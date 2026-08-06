@@ -1,0 +1,23 @@
+{
+  "rebuild_on_full": false,
+  "description": "Set rebuild_on_full true and fill build config when CI should rebuild golden before regression.",
+  "build": {
+    "dataset_name": "golden",
+    "sources": [],
+    "sampling": {
+      "trainingIntervalSec": 30,
+      "samplingMethod": "fixed_interval"
+    },
+    "strike_selection": {
+      "mode": "atm_band",
+      "atmBand": 10
+    },
+    "prediction_targets": {
+      "horizonsSec": [10, 30, 60, 300]
+    },
+    "feature_selection": {
+      "profile": "default",
+      "enabledGroups": []
+    }
+  }
+}

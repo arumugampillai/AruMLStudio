@@ -1,0 +1,13 @@
+{
+  "metric": "suite.optimized.rows_per_sec",
+  "rows": 100000,
+  "features_assumed": 206,
+  "rows_per_sec": 11301.38,
+  "features_per_sec": 2328083.36,
+  "max_drop_pct": 20,
+  "source": "benchmark_report.json @ 2026-07-31T06:42:13+00:00 (Windows, Numba 0.66)",
+  "notes": [
+    "Release gate: fail if current suite rows/sec drops more than max_drop_pct vs this baseline.",
+    "Update this file after intentional performance changes by re-running the benchmark and copying suite.optimized rates."
+  ]
+}
