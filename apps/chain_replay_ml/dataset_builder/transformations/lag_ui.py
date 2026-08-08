@@ -512,13 +512,19 @@ def canonical_registry_feature_names() -> set[str]:
     return canonical_plugin_feature_names()
 
 
-def filter_to_registry_features(columns: list[str]) -> list[str]:
+def filter_to_registry_features(
+    columns: list[str],
+    *,
+    exclude_names: set[str] | frozenset[str] | None = None,
+) -> list[str]:
     """Keep only columns that exist in the canonical Feature Registry.
 
     Stale Master DB columns (pipeline-owned / retired / migrated) are dropped so
-    Feature Transformation and Create Dataset stay aligned with the 185 registry.
+    Feature Transformation and Create Dataset stay aligned with the registry.
     """
     registry = canonical_registry_feature_names()
+    if exclude_names:
+        registry -= {str(n) for n in exclude_names}
     if not registry:
         return [str(c) for c in columns if str(c).strip()]
     return [str(c) for c in columns if str(c).strip() and str(c) in registry]
@@ -528,12 +534,17 @@ def registry_feature_count_from_master(
     feature_columns: list[str] | None,
     *,
     fallback_feature_count: int = 0,
+    exclude_names: set[str] | frozenset[str] | None = None,
 ) -> int:
-    """Count of master feature columns that are still in the Feature Registry."""
+    """Count of master feature columns that are still active in the Feature Registry."""
+    blocked = {str(n) for n in (exclude_names or ())}
     cols = [str(c) for c in (feature_columns or []) if str(c).strip()]
     if cols:
-        return len(filter_to_registry_features(cols))
+        kept = filter_to_registry_features(cols, exclude_names=blocked)
+        return len(kept)
     registry = canonical_registry_feature_names()
+    if blocked:
+        registry -= blocked
     if registry:
         return len(registry)
     return max(0, int(fallback_feature_count or 0))
@@ -543,6 +554,7 @@ def filter_laggable_features(
     columns: list[str],
     *,
     registry_only: bool = True,
+    exclude_names: set[str] | frozenset[str] | None = None,
 ) -> list[str]:
     """Columns offered in Feature Transformation feature selection.
 
@@ -554,5 +566,5 @@ def filter_laggable_features(
         if str(c).strip() and str(c) not in META_SKIP_COLUMNS
     ]
     if registry_only:
-        names = filter_to_registry_features(names)
+        names = filter_to_registry_features(names, exclude_names=exclude_names)
     return sorted(names)

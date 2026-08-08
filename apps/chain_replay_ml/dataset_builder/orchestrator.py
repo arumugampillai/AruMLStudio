@@ -104,7 +104,17 @@ class DatasetBuildOrchestrator:
         if schema_errors:
             raise RuntimeError("Schema integrity failed:\n" + "\n".join(f"• {e}" for e in schema_errors))
 
-        step_sec = int(self.config.sampling.get("trainingIntervalSec") or 10)
+        from .sliding_stride_policy import (
+            resolve_feature_window_sec,
+            resolve_sliding_stride_sec,
+            validate_sliding_stride,
+        )
+
+        window_sec = resolve_feature_window_sec(self.config.sampling)
+        stride_sec = resolve_sliding_stride_sec(self.config.sampling)
+        stride_err = validate_sliding_stride(window_sec, stride_sec)
+        if stride_err:
+            raise RuntimeError(f"Invalid sliding stride: {stride_err}")
         atm_band = int(self.config.strike_selection.get("atmBand") or 10)
         strike_selection = dict(self.config.strike_selection or {})
         strike_mode = str(strike_selection.get("mode") or "atm_band").lower()
@@ -235,7 +245,7 @@ class DatasetBuildOrchestrator:
                     source_day_total=n_sources,
                 )
                 try:
-                    ctx = load_day_context(_CHART_DIR, src, feature_grid_step_sec=step_sec)
+                    ctx = load_day_context(_CHART_DIR, src, feature_grid_step_sec=stride_sec)
                     loaded.append(ctx)
                     total_source_ticks += ctx.source_ticks
                     source_results.append({
@@ -300,7 +310,7 @@ class DatasetBuildOrchestrator:
             max_horizon = max(horizons_sec) if horizons_sec else 0
             for ctx in valid_ctx:
                 total_sample_points += len(
-                    build_sample_timestamps(ctx, step_sec=step_sec, max_horizon_sec=max_horizon)
+                    build_sample_timestamps(ctx, step_sec=stride_sec, max_horizon_sec=max_horizon)
                 )
             strikes_per_sample = 18 if strike_mode == "delta_range" else (2 * atm_band + 1) * 2
             est_total_rows = total_sample_points * strikes_per_sample
@@ -400,7 +410,7 @@ class DatasetBuildOrchestrator:
 
                 day_rows, day_stats = build_production_day_rows(
                     ctx,
-                    step_sec=step_sec,
+                    step_sec=stride_sec,
                     strike_selection=strike_selection,
                     horizons_sec=horizons_sec,
                     enabled_groups=enabled_groups,
@@ -615,7 +625,7 @@ class DatasetBuildOrchestrator:
                     implemented=implemented,
                     target_columns=target_columns,
                     job_id=job_id,
-                    step_sec=step_sec,
+                    step_sec=stride_sec,
                     atm_band=atm_band,
                     on_progress=on_master_progress,
                     cancel_check=self._cancelled,
@@ -695,7 +705,7 @@ class DatasetBuildOrchestrator:
             )
 
             pipeline_fingerprint = build_pipeline_fingerprint(
-                sampling_interval_sec=step_sec,
+                sampling_interval_sec=window_sec,
                 atm_band=atm_band,
                 feature_count=len(implemented),
                 target_horizons_sec=horizons_sec,
@@ -711,7 +721,8 @@ class DatasetBuildOrchestrator:
 
             build_summary = build_summary_metadata(
                 feature_names=implemented,
-                sampling_interval_sec=float(step_sec),
+                sampling_interval_sec=float(window_sec),
+                sliding_stride_sec=float(stride_sec),
                 strike_selection=strike_selection,
                 gap_policy=self.config.gap_policy,
                 prediction_targets=self.config.prediction_targets,
@@ -728,7 +739,8 @@ class DatasetBuildOrchestrator:
                 "sources": source_results,
                 "expected_spec": path_relative_to_data_dir(expected_path, data_dir),
                 "sampling": {
-                    "interval_sec": step_sec,
+                    "interval_sec": window_sec,
+                    "sliding_stride_sec": stride_sec,
                     "method": self.config.sampling.get("samplingMethod") or "fixed_interval",
                 },
                 "strike_selection": strike_selection_metadata(strike_selection),
@@ -802,7 +814,7 @@ class DatasetBuildOrchestrator:
 
                 fp_manifest = finalize_build_policy_manifest(
                     implemented,
-                    sampling_interval_sec=float(step_sec),
+                    sampling_interval_sec=float(window_sec),
                     gap_max_sec=gap_max_sec,
                     rows=all_rows,
                     build_stats={
@@ -848,7 +860,7 @@ class DatasetBuildOrchestrator:
                     sources=list(self.config.sources),
                     actual_rows=len(all_rows),
                     market=str(self.config.sources[0].get("market") or "NIFTY") if self.config.sources else "NIFTY",
-                    interval_sec=step_sec,
+                    interval_sec=window_sec,
                     build_job_id=job_id,
                     preview_snapshot=self.config.preview_snapshot,
                 )

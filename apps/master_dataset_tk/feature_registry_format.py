@@ -11,7 +11,7 @@ def format_registry_meta(catalog: dict[str, Any]) -> str:
     count = catalog.get("feature_count") or len(catalog.get("features") or [])
     disabled = int((catalog.get("stats") or {}).get("disabled") or 0)
     if disabled:
-        return f"v{ver} · {count} features · {disabled} disabled"
+        return f"v{ver} · {count} features · {disabled} retired"
     return f"v{ver} · {count} features"
 
 

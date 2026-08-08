@@ -1042,18 +1042,6 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         outer_nb.add(auto_tab, text="Auto")
         outer_nb.add(analysis_tab, text="Analysis")
 
-        ttk.Label(
-            manual_tab,
-            text=(
-                "Lag · Difference · Return · Rolling Statistics · Exponential Rolling · "
-                "OHLC Aggregation · Interaction · Normalization · Regime / Bucket · "
-                "Math (Unary) — applied when creating a dataset."
-            ),
-            foreground="#666",
-            wraplength=720,
-            justify="left",
-        ).pack(anchor="w", padx=10, pady=(6, 6))
-
         xform_scroll = ScrollableFrame(manual_tab)
         xform_scroll.pack(fill="both", expand=True, padx=4, pady=(0, 8))
         self._xform_scroll = xform_scroll
@@ -2628,14 +2616,8 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
             command=self._clear_interaction_pairs,
         ).pack(side="left", padx=(6, 0))
 
-        ttk.Button(
-            bulk_tab,
-            text="Add to Pipeline",
-            command=self._add_interaction_pairs_to_pipeline,
-        ).pack(anchor="w", pady=(6, 2))
-
-        pairs_frame = ttk.LabelFrame(bulk_tab, text="Configured Pairs (with lineage)", padding=4)
-        pairs_frame.pack(fill="both", expand=True, pady=(0, 0))
+        pairs_frame = ttk.LabelFrame(body, text="Configured Pairs (with lineage)", padding=4)
+        pairs_frame.pack(fill="both", expand=True, pady=(6, 0))
         pairs_toolbar = ttk.Frame(pairs_frame)
         pairs_toolbar.pack(fill="x", pady=(0, 4))
         ttk.Button(
@@ -2643,12 +2625,17 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
             text="Remove selected",
             command=self._remove_interaction_pair,
         ).pack(side="left")
+        ttk.Button(
+            pairs_toolbar,
+            text="Add to Pipeline",
+            command=self._add_interaction_pairs_to_pipeline,
+        ).pack(side="left", padx=(6, 0))
         self._interaction_pairs_list = tk.Listbox(pairs_frame, height=8, font=("Consolas", 9))
         self._interaction_pairs_list.pack(fill="both", expand=True)
 
         self._interaction_lineage_var = tk.StringVar(value="")
         ttk.Label(
-            bulk_tab,
+            body,
             textvariable=self._interaction_lineage_var,
             foreground="#555",
             justify="left",
@@ -3223,6 +3210,11 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
             interval_sec=self._interval_sec(),
         )
 
+    def _registry_retired_features(self) -> set[str]:
+        from . import feature_registry_service as fr_svc
+
+        return fr_svc.disabled_registry_features(self.chart_dir)
+
     def _master_feature_columns(self) -> list[str]:
         d = self._preview_detail or self._detail or {}
         schema = d.get("build_schema") if isinstance(d.get("build_schema"), dict) else {}
@@ -3231,7 +3223,11 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
     def _laggable_feature_names(self) -> list[str]:
         from chain_replay_ml.dataset_builder.transformations.lag_ui import filter_laggable_features
 
-        return filter_laggable_features(self._master_feature_columns(), registry_only=True)
+        return filter_laggable_features(
+            self._master_feature_columns(),
+            registry_only=True,
+            exclude_names=self._registry_retired_features(),
+        )
 
     def _refresh_lag_feature_checkboxes(self) -> None:
         from chain_replay_ml.dataset_builder.transformations.lag_ui import default_selected_lag_features
@@ -4656,6 +4652,7 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         return registry_feature_count_from_master(
             self._master_feature_columns(),
             fallback_feature_count=fallback,
+            exclude_names=self._registry_retired_features(),
         )
 
     def _update_registry_export_panel(self) -> None:

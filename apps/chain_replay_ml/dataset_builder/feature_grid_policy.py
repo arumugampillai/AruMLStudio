@@ -335,6 +335,9 @@ def resolve_feature_grid_step_sec(
         if raw is not None and int(raw) > 0:
             return max(int(raw), 1)
     samp = sampling or {}
+    raw_stride = samp.get("slidingStrideSec") or samp.get("sliding_stride_sec")
+    if raw_stride is not None and int(raw_stride) > 0:
+        return max(int(raw_stride), 1)
     raw = samp.get("trainingIntervalSec") or samp.get("interval_sec")
     if raw is not None and int(raw) > 0:
         return max(int(raw), 1)

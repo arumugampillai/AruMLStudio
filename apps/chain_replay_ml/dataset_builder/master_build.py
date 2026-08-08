@@ -156,7 +156,17 @@ class MasterDatasetBuildOrchestrator:
         if schema_errors:
             raise RuntimeError("Schema integrity failed:\n" + "\n".join(f"• {e}" for e in schema_errors))
 
-        step_sec = int(self.config.sampling.get("trainingIntervalSec") or 10)
+        from .sliding_stride_policy import (
+            resolve_feature_window_sec,
+            resolve_sliding_stride_sec,
+            validate_sliding_stride,
+        )
+
+        window_sec = resolve_feature_window_sec(self.config.sampling)
+        stride_sec = resolve_sliding_stride_sec(self.config.sampling)
+        stride_err = validate_sliding_stride(window_sec, stride_sec)
+        if stride_err:
+            raise RuntimeError(f"Invalid sliding stride: {stride_err}")
         atm_band = int(self.config.strike_selection.get("atmBand") or 10)
         strike_selection = dict(self.config.strike_selection or {})
         data_dir = self.config.resolved_data_dir()
@@ -171,7 +181,7 @@ class MasterDatasetBuildOrchestrator:
         master_path = self.config.master_db_path or resolve_master_db_path(
             data_dir,
             market=market,
-            sampling_interval_sec=step_sec,
+            sampling_interval_sec=window_sec,
         )
         if master_path and not os.path.isabs(master_path):
             master_path = os.path.join(data_dir, master_path.replace("/", os.sep))
@@ -244,7 +254,8 @@ class MasterDatasetBuildOrchestrator:
         try:
             store.set_meta("master_config", {
                 "market": market,
-                "sampling_interval_sec": step_sec,
+                "sampling_interval_sec": window_sec,
+                "sliding_stride_sec": stride_sec,
                 "atm_band": atm_band,
                 "storage_backend": "master_sqlite",
             })
@@ -267,7 +278,7 @@ class MasterDatasetBuildOrchestrator:
                     target_columns=target_columns,
                     horizons_sec=horizons_sec,
                     chart_dir=_CHART_DIR,
-                    step_sec=step_sec,
+                    step_sec=stride_sec,
                     default_market=market,
                     cancel_check=self._cancelled,
                     on_progress=_on_backfill_progress,
@@ -333,7 +344,7 @@ class MasterDatasetBuildOrchestrator:
                 try:
                     _load_t0 = perf_counter()
                     with profile_block("stage.load_database"):
-                        ctx = load_day_context(_CHART_DIR, src, feature_grid_step_sec=step_sec)
+                        ctx = load_day_context(_CHART_DIR, src, feature_grid_step_sec=stride_sec)
                     phase_timings["loading_ticks_sec"] += perf_counter() - _load_t0
                 except (ChainReplayError, OSError) as exc:
                     progress.warnings.append(f"{src_msg}: skipped — {exc}")
@@ -452,7 +463,7 @@ class MasterDatasetBuildOrchestrator:
                 _feat_t0 = perf_counter()
                 day_rows, day_stats = build_production_day_rows(
                     ctx,
-                    step_sec=step_sec,
+                    step_sec=stride_sec,
                     strike_selection=strike_selection,
                     horizons_sec=horizons_sec,
                     enabled_groups=enabled_groups,
@@ -537,7 +548,7 @@ class MasterDatasetBuildOrchestrator:
                         registry_features=list(implemented),
                         meta_columns=_METADATA_COLS,
                         gap_max_sec=float(gap_max_sec),
-                        sampling_interval_sec=float(step_sec),
+                        sampling_interval_sec=float(window_sec),
                         build_version=build_ver,
                         category_by_name=category_by_name,
                         family_by_name=family_by_name,
@@ -598,7 +609,8 @@ class MasterDatasetBuildOrchestrator:
 
             build_summary = build_summary_metadata(
                 feature_names=implemented,
-                sampling_interval_sec=float(step_sec),
+                sampling_interval_sec=float(window_sec),
+                sliding_stride_sec=float(stride_sec),
                 strike_selection=strike_selection,
                 gap_policy=self.config.gap_policy,
                 prediction_targets=self.config.prediction_targets,
@@ -608,7 +620,8 @@ class MasterDatasetBuildOrchestrator:
             store.set_meta("build_summary", build_summary)
             store.set_meta("master_config", {
                 "market": market,
-                "sampling_interval_sec": step_sec,
+                "sampling_interval_sec": window_sec,
+                "sliding_stride_sec": stride_sec,
                 "atm_band": atm_band,
                 "storage_backend": "master_sqlite",
                 "feature_count": len(implemented),
@@ -641,7 +654,7 @@ class MasterDatasetBuildOrchestrator:
                 )
                 fp_manifest = finalize_build_policy_manifest(
                     implemented,
-                    sampling_interval_sec=float(step_sec),
+                    sampling_interval_sec=float(window_sec),
                     gap_max_sec=gap_max_sec,
                     rows=sample_rows,
                     build_stats={
@@ -665,7 +678,7 @@ class MasterDatasetBuildOrchestrator:
             lb_method = str(lb_policy_doc.get("method") or "calendar")
             store.update_build_identity(build_identity_from_build(
                 market=market,
-                sampling_interval_sec=step_sec,
+                sampling_interval_sec=window_sec,
                 atm_band=atm_band,
                 feature_count=len(implemented),
                 target_horizons_sec=horizons_sec,
@@ -720,7 +733,7 @@ class MasterDatasetBuildOrchestrator:
 
                 lb_method = lb_policy_doc["method"]
                 pipeline_fingerprint = build_pipeline_fingerprint(
-                    sampling_interval_sec=step_sec,
+                    sampling_interval_sec=window_sec,
                     atm_band=atm_band,
                     feature_count=len(implemented),
                     target_horizons_sec=horizons_sec,
@@ -737,7 +750,8 @@ class MasterDatasetBuildOrchestrator:
                     "sources": source_results,
                     "expected_spec": path_relative_to_data_dir(expected_path, data_dir),
                     "sampling": {
-                        "interval_sec": step_sec,
+                        "interval_sec": window_sec,
+                        "sliding_stride_sec": stride_sec,
                         "method": str(self.config.sampling.get("samplingMethod") or "fixed_interval"),
                     },
                     "strike_selection": strike_selection_metadata(strike_selection),
@@ -868,7 +882,7 @@ class MasterDatasetBuildOrchestrator:
                         sources=source_dicts,
                         actual_rows=total_rows,
                         market=market,
-                        interval_sec=step_sec,
+                        interval_sec=window_sec,
                         master_db_path=master_path,
                         build_job_id=job_id,
                         preview_snapshot=getattr(self.config, "preview_snapshot", None),

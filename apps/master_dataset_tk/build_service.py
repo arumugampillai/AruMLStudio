@@ -47,6 +47,15 @@ def build_master_insert_config(
     data_dir = chart_data_dir(chart_dir)
     sampling_doc = dict(sampling or default_master_sampling(interval_sec))
     sampling_doc["trainingIntervalSec"] = int(sampling_doc.get("trainingIntervalSec") or interval_sec)
+    if sampling_doc.get("slidingStrideSec") is None:
+        sampling_doc["slidingStrideSec"] = int(sampling_doc["trainingIntervalSec"])
+    from .feature_registry_service import sanitize_feature_selection
+
+    feat_sel = sanitize_feature_selection(
+        chart_dir,
+        dict(feature_selection or default_master_feature_selection(registry)),
+        registry,
+    )
     market = str(sources[0].get("market") or "NIFTY").upper() if sources else "NIFTY"
 
     from chain_replay_ml.dataset_builder.master_naming import resolve_master_db_path
@@ -63,7 +72,7 @@ def build_master_insert_config(
         sampling=sampling_doc,
         strike_selection=strike_selection_for_master(strike_selection),
         prediction_targets=dict(prediction_targets or default_master_prediction_targets()),
-        feature_selection=dict(feature_selection or default_master_feature_selection(registry)),
+        feature_selection=dict(feat_sel),
         feature_registry=registry,
         data_dir=data_dir,
         build_mode="new",

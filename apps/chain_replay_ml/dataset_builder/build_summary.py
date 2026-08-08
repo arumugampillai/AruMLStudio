@@ -17,6 +17,7 @@ def build_summary_metadata(
     *,
     feature_names: list[str],
     sampling_interval_sec: float,
+    sliding_stride_sec: float | None = None,
     strike_selection: dict[str, Any] | None = None,
     gap_policy: dict[str, Any] | None = None,
     prediction_targets: dict[str, Any] | None = None,
@@ -29,9 +30,13 @@ def build_summary_metadata(
     gap_doc = normalize_gap_policy(gap_policy)
     strike_doc = strike_selection_metadata(strike_selection or {})
     interval = float(sampling_interval_sec)
+    stride = float(sliding_stride_sec if sliding_stride_sec is not None else interval)
     return {
         "sampling_interval_sec": interval,
+        "sliding_stride_sec": stride,
+        "feature_window_sec": interval,
         "sampling_label": format_sampling_interval_label(interval) or f"{interval:g}s",
+        "sliding_stride_label": f"{stride:g}s",
         "strike_selection": strike_doc,
         "gap_policy": gap_doc,
         "prediction_targets": {
@@ -67,6 +72,7 @@ def build_summary_preview(
     feature_names: list[str],
     *,
     sampling_interval_sec: float = 10.0,
+    sliding_stride_sec: float | None = None,
     strike_selection: dict[str, Any] | None = None,
     gap_policy: dict[str, Any] | None = None,
     prediction_targets: dict[str, Any] | None = None,
@@ -95,9 +101,11 @@ def build_summary_preview(
         gap_policy=gap_policy,
         prediction_targets=prediction_targets,
     )
+    stride = float(sliding_stride_sec if sliding_stride_sec is not None else sampling_interval_sec)
     meta = build_summary_metadata(
         feature_names=feature_names,
         sampling_interval_sec=sampling_interval_sec,
+        sliding_stride_sec=stride,
         strike_selection=strike_selection,
         gap_policy=gap_policy,
         prediction_targets=prediction_targets,

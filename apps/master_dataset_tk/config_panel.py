@@ -56,11 +56,14 @@ class BuildConfigPanel(ttk.LabelFrame):
       self._gap_tab: GapPolicyTab | None = None
 
       self.interval_var = tk.IntVar(value=10)
+      self.stride_var = tk.IntVar(value=10)
+      self.stride_error_var = tk.StringVar(value="")
       self.low_memory_var = tk.BooleanVar(value=False)
       self.build_profiler_var = tk.BooleanVar(value=True)
 
       self._build_ui()
       self._apply_saved_prefs()
+      self._update_stride_validation()
       self.update_summary()
 
   def _notify(self) -> None:
@@ -94,6 +97,14 @@ class BuildConfigPanel(ttk.LabelFrame):
           interval = int(build.get("sampling_interval_sec") or 0)
           if interval >= 3:
               self.interval_var.set(interval)
+          try:
+              stride = int(build.get("sliding_stride_sec") or 0)
+              if stride >= 1:
+                  self.stride_var.set(stride)
+              else:
+                  self.stride_var.set(interval if interval >= 3 else 10)
+          except (TypeError, ValueError):
+              pass
       except (TypeError, ValueError):
           pass
       if "low_memory" in build:
@@ -145,6 +156,7 @@ class BuildConfigPanel(ttk.LabelFrame):
       save_build_config_prefs(self._chart_dir, {
           "build": {
               "sampling_interval_sec": self.interval_sec(),
+              "sliding_stride_sec": self.sliding_stride_sec(),
               "low_memory": self.low_memory(),
               "build_profiler": self.build_profiler(),
               "horizons_sec": self.horizons_sec(),
@@ -163,19 +175,34 @@ class BuildConfigPanel(ttk.LabelFrame):
       ttk.Label(row0, text="Sampling interval (s)").pack(side="left")
       spin = ttk.Spinbox(
           row0, from_=3, to=60, textvariable=self.interval_var, width=5,
-          command=self._notify,
+          command=self._on_sampling_changed,
       )
       spin.pack(side="left", padx=(6, 12))
-      spin.bind("<KeyRelease>", lambda _e: self._notify())
+      spin.bind("<KeyRelease>", lambda _e: self._on_sampling_changed())
 
-      ttk.Checkbutton(
+      ttk.Label(row0, text="Sliding stride (s)").pack(side="left")
+      stride_spin = ttk.Spinbox(
+          row0, from_=1, to=60, textvariable=self.stride_var, width=5,
+          command=self._on_sampling_changed,
+      )
+      stride_spin.pack(side="left", padx=(6, 12))
+      stride_spin.bind("<KeyRelease>", lambda _e: self._on_sampling_changed())
+      ttk.Label(
           row0,
+          textvariable=self.stride_error_var,
+          foreground="#C62828",
+      ).pack(side="left", padx=(4, 0))
+
+      row0_checks = ttk.Frame(self)
+      row0_checks.pack(fill="x", pady=(0, 6))
+      ttk.Checkbutton(
+          row0_checks,
           text="Low memory (reserved)",
           variable=self.low_memory_var,
           command=self._notify,
       ).pack(side="left")
       ttk.Checkbutton(
-          row0,
+          row0_checks,
           text="Build profiler (recommended)",
           variable=self.build_profiler_var,
           command=self._notify,
@@ -266,6 +293,33 @@ class BuildConfigPanel(ttk.LabelFrame):
               var.set(defaults.get(h, True))
       self._notify()
 
+  def _on_sampling_changed(self) -> None:
+      interval = self.interval_sec()
+      try:
+          stride = int(self.stride_var.get() or interval)
+      except (TypeError, ValueError):
+          stride = interval
+      if stride > interval:
+          self.stride_var.set(interval)
+      self._update_stride_validation()
+      self._notify()
+
+  def _update_stride_validation(self) -> None:
+      err = self.stride_validation_error()
+      self.stride_error_var.set(err or "")
+      self._refresh_build_button_state()
+
+  def stride_validation_error(self) -> str | None:
+      from chain_replay_ml.dataset_builder.sliding_stride_policy import validate_sliding_stride
+
+      return validate_sliding_stride(self.interval_sec(), self.sliding_stride_sec())
+
+  def sliding_stride_sec(self) -> int:
+      try:
+          return max(1, int(self.stride_var.get() or self.interval_sec()))
+      except (TypeError, ValueError):
+          return self.interval_sec()
+
   def interval_sec(self) -> int:
       try:
           return max(3, int(self.interval_var.get() or 10))
@@ -329,6 +383,7 @@ class BuildConfigPanel(ttk.LabelFrame):
       return {
           "configVersion": 1,
           "trainingIntervalSec": self.interval_sec(),
+          "slidingStrideSec": self.sliding_stride_sec(),
           "samplingMethod": "fixed_interval",
           "applied": True,
       }
@@ -371,11 +426,21 @@ class BuildConfigPanel(ttk.LabelFrame):
           parts.append("profiler on")
       self.summary_var.set(" · ".join(parts))
 
+  def _refresh_build_button_state(self) -> None:
+      if hasattr(self, "_build_btn"):
+          blocked = self.stride_validation_error() is not None
+          self._build_btn.configure(state="disabled" if blocked else "normal")
+
   def set_build_active(self, active: bool) -> None:
       if hasattr(self, "_build_btn"):
-          self._build_btn.configure(state="disabled" if active else "normal")
+          blocked = active or self.stride_validation_error() is not None
+          self._build_btn.configure(state="disabled" if blocked else "normal")
 
   def _on_build_click(self) -> None:
+      err = self.stride_validation_error()
+      if err:
+          messagebox.showerror("Sliding stride", err, parent=self.winfo_toplevel())
+          return
       if self._on_build:
           self._on_build()
 
@@ -399,6 +464,7 @@ class BuildConfigPanel(ttk.LabelFrame):
           self,
           feature_names=self.resolved_build_features(),
           sampling_interval_sec=float(self.interval_sec()),
+          sliding_stride_sec=float(self.sliding_stride_sec()),
           strike_selection=self.resolved_strike_selection(),
           gap_policy=self.gap_policy(),
           prediction_targets=self.prediction_targets(),

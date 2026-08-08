@@ -73,7 +73,14 @@ class FeatureSelectionTab:
         self._update_stats()
 
     def get_config(self) -> dict[str, Any]:
-        return self._picker.get_config()
+        cfg = self._picker.get_config()
+        if self._chart_dir:
+            from . import feature_registry_service as fr_svc
+
+            cfg = fr_svc.sanitize_feature_selection(
+                self._chart_dir, cfg, self._registry,
+            )
+        return cfg
 
     def _notify(self) -> None:
         self._update_stats()

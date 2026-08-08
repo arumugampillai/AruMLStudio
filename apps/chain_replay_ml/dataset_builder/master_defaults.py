@@ -33,10 +33,13 @@ def default_master_feature_selection(registry: dict[str, Any] | None = None) -> 
     }
 
 
-def default_master_sampling(interval_sec: int = 10) -> dict[str, Any]:
+def default_master_sampling(interval_sec: int = 10, *, sliding_stride_sec: int | None = None) -> dict[str, Any]:
+    window = int(interval_sec)
+    stride = int(sliding_stride_sec) if sliding_stride_sec is not None else window
     return {
         "configVersion": 1,
-        "trainingIntervalSec": int(interval_sec),
+        "trainingIntervalSec": window,
+        "slidingStrideSec": stride,
         "samplingMethod": "fixed_interval",
         "applied": True,
     }

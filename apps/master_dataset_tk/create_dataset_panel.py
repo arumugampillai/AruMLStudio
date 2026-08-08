@@ -184,6 +184,8 @@ class CreateDatasetPanel(ttk.Frame, LazyLoadMixin):
         self._config_paned_split_done = True
 
     def on_show(self) -> None:
+        if hasattr(self, "config_panel"):
+            self.config_panel.refresh_registry_exclusions()
         self.load_inventory(lazy=True, force=False)
 
     def load_inventory(self, *, lazy: bool = False, force: bool = False) -> str | None:
@@ -375,6 +377,7 @@ class CreateDatasetPanel(ttk.Frame, LazyLoadMixin):
         est = estimate_rows_for_sources(
             sources,
             interval_sec=self._interval_sec(),
+            stride_sec=self.config_panel.sliding_stride_sec(),
             horizons_sec=self.config_panel.horizons_sec(),
             atm_band=self.config_panel.resolved_atm_band(),
         )
@@ -566,6 +569,7 @@ class CreateDatasetPanel(ttk.Frame, LazyLoadMixin):
         est = estimate_rows_for_sources(
             pending,
             interval_sec=self._interval_sec(),
+            stride_sec=self.config_panel.sliding_stride_sec(),
             horizons_sec=self.config_panel.horizons_sec(),
             atm_band=self.config_panel.resolved_atm_band(),
         )
@@ -581,6 +585,7 @@ class CreateDatasetPanel(ttk.Frame, LazyLoadMixin):
             self,
             feature_names=features,
             sampling_interval_sec=float(self._interval_sec()),
+            sliding_stride_sec=float(self.config_panel.sliding_stride_sec()),
             strike_selection=self.config_panel.resolved_strike_selection(),
             gap_policy=self.config_panel.gap_policy(),
             prediction_targets=self.config_panel.prediction_targets(),

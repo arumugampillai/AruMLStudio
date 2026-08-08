@@ -94,16 +94,17 @@ def build_dataset_configuration(
             horizons_sec = [int(h) for h in (prediction_targets.get("horizonsSec") or [])]
         else:
             horizons_sec = []
-    interval = int(
-        sampling.get("trainingIntervalSec")
-        or sampling.get("interval_sec")
-        or 10
-    )
+    from .sliding_stride_policy import sampling_stride_fields
+
+    stride_fields = sampling_stride_fields(sampling)
+    interval = int(stride_fields["sampling_interval_sec"])
     method = normalize_policy_method(lookback_policy_method or POLICY_NEAREST_SNAPSHOT)
     policy = normalize_policy_doc({**DEFAULT_LOOKBACK_POLICY, "method": method})
     out = {
         "sampling_interval_sec": interval,
-        "feature_grid_step_sec": interval,
+        "feature_window_sec": stride_fields["feature_window_sec"],
+        "sliding_stride_sec": stride_fields["sliding_stride_sec"],
+        "feature_grid_step_sec": stride_fields["feature_grid_step_sec"],
         "lookback_policy": policy,
         "future_targets_sec": horizons_sec,
         "future_targets_labels": [horizon_label(h) for h in horizons_sec],

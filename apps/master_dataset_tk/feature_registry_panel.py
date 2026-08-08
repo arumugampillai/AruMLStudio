@@ -102,7 +102,7 @@ class FeatureRegistryPanel(ttk.Frame, LazyLoadMixin):
         self._toggle_active_btn.pack(side="left", padx=(8, 2))
         ttk.Checkbutton(
             row3,
-            text="Show disabled",
+            text="Show retired",
             variable=self._show_disabled_var,
         ).pack(side="left", padx=4)
         self._delete_btn = ttk.Button(row3, text="Delete Feature", command=self._open_delete_dialog, state="disabled")
@@ -303,20 +303,20 @@ class FeatureRegistryPanel(ttk.Frame, LazyLoadMixin):
     def _feature_is_active(self, f: dict[str, Any]) -> bool:
         return bool(f.get("registry_active", True))
 
-    def _filtered_features(self) -> list[dict[str, Any]]:
+    def _filtered_features(self, *, apply_search: bool = True) -> list[dict[str, Any]]:
         rows = (self._catalog or {}).get("features") or []
-        q = self._search_var.get().strip().lower()
+        q = self._search_var.get().strip().lower() if apply_search else ""
         status = self._filter_key(self._status_var.get())
         group = self._filter_key(self._group_var.get())
         category = pol_fmt.category_filter_key(self._category_var.get())
-        show_disabled = bool(self._show_disabled_var.get())
+        show_retired = bool(self._show_disabled_var.get())
         out: list[dict[str, Any]] = []
         for f in rows:
             if not self._feature_in_project(f):
                 continue
             active = self._feature_is_active(f)
-            # Checkbox on → disabled only; off → active only (unless Group=disabled).
-            if show_disabled:
+            # Checkbox on → retired only; off → active only (unless Group=disabled).
+            if show_retired:
                 if active:
                     continue
             elif not active and group != "disabled":
@@ -363,23 +363,11 @@ class FeatureRegistryPanel(ttk.Frame, LazyLoadMixin):
         if not self._catalog:
             return
         filtered = self._filtered_features()
-        project_ids = self._project_group_ids()
-        all_rows = (self._catalog.get("features") or [])
-        show_disabled = bool(self._show_disabled_var.get())
-        scope_total = sum(
-            1
-            for f in all_rows
-            if self._feature_in_project(f)
-            and (
-                (not self._feature_is_active(f))
-                if show_disabled
-                else self._feature_is_active(f)
-            )
-        )
-        if len(filtered) == scope_total:
-            self._list_meta_var.set(f"{scope_total} features")
+        base_filtered = self._filtered_features(apply_search=False)
+        if len(filtered) == len(base_filtered):
+            self._list_meta_var.set(f"{len(base_filtered)} features")
         else:
-            self._list_meta_var.set(f"{len(filtered)} of {scope_total}")
+            self._list_meta_var.set(f"{len(filtered)} of {len(base_filtered)}")
 
         self._tree.delete(*self._tree.get_children())
         names: list[str] = []

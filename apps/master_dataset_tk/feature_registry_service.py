@@ -149,6 +149,49 @@ def filter_active_registry_names(chart_dir: str | None, names: list[str]) -> lis
     return [n for n in names if n not in disabled]
 
 
+def sanitize_feature_selection(
+    chart_dir: str | None,
+    feature_selection: dict[str, Any],
+    registry: dict[str, Any],
+) -> dict[str, Any]:
+    """Remove retired registry features from a build feature_selection config."""
+    if not chart_dir:
+        return dict(feature_selection)
+    blocked = disabled_registry_features(chart_dir)
+    if not blocked:
+        return dict(feature_selection)
+    from .feature_selection_engine import (
+        all_group_ids,
+        normalize_enabled_groups,
+        read_feature_config,
+    )
+
+    cfg = dict(feature_selection)
+    groups = normalize_enabled_groups(
+        registry,
+        {str(g) for g in (cfg.get("enabledGroups") or all_group_ids(registry))},
+    )
+    explicit = [str(f) for f in (cfg.get("enabledFeatures") or []) if str(f) not in blocked]
+    profile = str(cfg.get("profile") or "default")
+    if profile != "custom" or not explicit:
+        from .feature_selection_engine import active_registry_feature_names
+
+        feats = set(active_registry_feature_names(registry, exclude=blocked))
+        groups = normalize_enabled_groups(registry, groups)
+        return read_feature_config(
+            registry,
+            profile="default" if profile == "default" else "custom",
+            enabled_groups=groups,
+            enabled_features=feats,
+        )
+    return read_feature_config(
+        registry,
+        profile=profile,
+        enabled_groups=groups,
+        enabled_features={f for f in explicit if f not in blocked},
+    )
+
+
 def create_project(
     chart_dir: str,
     *,

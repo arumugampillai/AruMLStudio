@@ -1193,6 +1193,8 @@ def format_build_summary_preview(preview: dict[str, Any]) -> str:
             "Build configuration",
             "-" * 40,
             f"  Sampling interval    {cfg.get('sampling_label') or cfg.get('sampling_interval_sec', '—')}",
+            f"  Sliding stride       {cfg.get('sliding_stride_label') or cfg.get('sliding_stride_sec', '—')}",
+            f"  Feature window       {cfg.get('feature_window_sec', cfg.get('sampling_interval_sec', '—'))} sec",
             f"  Strike selection     {cfg.get('strike_label') or '—'}",
             f"  Target labels        {cfg.get('target_labels_text') or ', '.join(cfg.get('target_labels') or []) or '—'}",
         ])

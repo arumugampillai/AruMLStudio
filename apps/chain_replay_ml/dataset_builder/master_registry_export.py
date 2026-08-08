@@ -638,6 +638,10 @@ def create_master_registry_dataset(
         )
 
         registry_names = canonical_registry_feature_names()
+        if data_dir:
+            from .feature_registry_store import disabled_registry_feature_names, load_store
+
+            registry_names -= disabled_registry_feature_names(load_store(data_dir))
         if feature_columns and registry_names and not keep_pipeline_owned:
             kept_features = filter_to_registry_features(feature_columns)
             stale_features = set(feature_columns) - set(kept_features)

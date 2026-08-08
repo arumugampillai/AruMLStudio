@@ -11,13 +11,14 @@ def estimate_rows_for_sources(
     sources: list[dict[str, Any]],
     *,
     interval_sec: int,
+    stride_sec: int | None = None,
     horizons_sec: list[int],
     atm_band: int | None = None,
 ) -> int:
     """Same formula as Create Dataset ``estimatedRowCountForSources``."""
     if not sources:
         return 0
-    step_sec = max(int(interval_sec or 10), 1)
+    step_sec = max(int(stride_sec if stride_sec is not None else interval_sec or 10), 1)
     horizons = [int(h) for h in horizons_sec if int(h) > 0] or [300]
     max_horizon = max(horizons)
     usable_sec = 22500 - 60 - max_horizon
