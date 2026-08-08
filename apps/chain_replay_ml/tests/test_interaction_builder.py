@@ -22,6 +22,7 @@ from chain_replay_ml.dataset_builder.transformations.interaction_ui import (
     group_features_by_source,
     merge_interaction_into_config,
     pipeline_feature_ledger,
+    register_staged_interaction_pairs_to_pipeline,
 )
 from chain_replay_ml.dataset_builder.transformations.time_shift import LagConfigError
 
@@ -204,6 +205,23 @@ class InteractionUiHelperTests(unittest.TestCase):
         self.assertIn("interaction", ids)
         ix = next(t for t in cfg["transformations"] if t["id"] == "interaction")
         self.assertEqual(ix["params"]["pairs"][0]["op"], "multiply")
+
+    def test_register_staged_skips_duplicate_pipeline_output(self) -> None:
+        staged = [
+            {"left": "a", "right": "b", "op": "multiply"},
+            {"left": "c", "right": "d", "op": "multiply"},
+        ]
+        pipeline = [{"left": "a", "right": "b", "op": "multiply", "output": "a_x_b"}]
+        updated, counts, errors = register_staged_interaction_pairs_to_pipeline(
+            staged,
+            pipeline,
+            available_features={"a", "b", "c", "d"},
+        )
+        self.assertEqual(counts["added"], 1)
+        self.assertEqual(counts["skipped"], 1)
+        self.assertEqual(counts["failed"], 0)
+        self.assertEqual(len(updated), 2)
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":

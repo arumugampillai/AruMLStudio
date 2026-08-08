@@ -97,7 +97,7 @@ class FeatureRegistryPanel(ttk.Frame, LazyLoadMixin):
         ):
             ttk.Button(row3, text=label, command=cmd).pack(side="left", padx=2)
         self._toggle_active_btn = ttk.Button(
-            row3, text="Disable", command=self._toggle_selected_active, state="disabled",
+            row3, text="Retire", command=self._toggle_selected_active, state="disabled",
         )
         self._toggle_active_btn.pack(side="left", padx=(8, 2))
         ttk.Checkbutton(
@@ -420,17 +420,17 @@ class FeatureRegistryPanel(ttk.Frame, LazyLoadMixin):
         if not hasattr(self, "_toggle_active_btn"):
             return
         if not self._selected_name:
-            self._toggle_active_btn.configure(state="disabled", text="Disable")
+            self._toggle_active_btn.configure(state="disabled", text="Retire")
             return
         feat = next(
             (r for r in (self._catalog or {}).get("features") or [] if r.get("name") == self._selected_name),
             None,
         )
         if not feat:
-            self._toggle_active_btn.configure(state="disabled", text="Disable")
+            self._toggle_active_btn.configure(state="disabled", text="Retire")
             return
         if self._feature_is_active(feat):
-            self._toggle_active_btn.configure(state="normal", text="Disable")
+            self._toggle_active_btn.configure(state="normal", text="Retire")
         else:
             self._toggle_active_btn.configure(state="normal", text="Enable")
 

@@ -253,11 +253,13 @@ class AutoFeatureTransformPanel(ttk.Frame):
         cards = ttk.Frame(self)
         cards.pack(fill="x", pady=(0, 4))
         self._pipe_card: ttk.LabelFrame | None = None
-        for col, (title, main_var, sub_var, clickable) in enumerate((
-            ("Registry Features", self._reg_status, None, False),
-            ("Pipeline Features", self._pipe_status, None, True),
-            ("Analysis Dataset", self._analysis_status, self._analysis_detail, False),
+        self._reg_card: ttk.LabelFrame | None = None
+        for col, spec in enumerate((
+            ("Registry Features", self._reg_status, None, True, "Click to Select Features", self._open_registry_selection),
+            ("Pipeline Features", self._pipe_status, None, True, "Click to view / delete features", self._open_pipeline_manager),
+            ("Analysis Dataset", self._analysis_status, self._analysis_detail, False, None, None),
         )):
+            title, main_var, sub_var, clickable, hint_text, click_cmd = spec
             cell = ttk.LabelFrame(cards, text=title, padding=8)
             cell.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 6, 0))
             cards.grid_columnconfigure(col, weight=1)
@@ -265,17 +267,20 @@ class AutoFeatureTransformPanel(ttk.Frame):
             main.pack(anchor="w")
             if sub_var is not None:
                 ttk.Label(cell, textvariable=sub_var, foreground="#666").pack(anchor="w", pady=(2, 0))
-            if clickable:
-                self._pipe_card = cell
+            if clickable and hint_text and click_cmd:
+                if title.startswith("Registry"):
+                    self._reg_card = cell
+                elif title.startswith("Pipeline"):
+                    self._pipe_card = cell
                 hint = ttk.Label(
                     cell,
-                    text="Click to view / delete features",
+                    text=hint_text,
                     foreground="#1565c0",
                     cursor="hand2",
                 )
                 hint.pack(anchor="w", pady=(4, 0))
                 for widget in (cell, main, hint):
-                    widget.bind("<Button-1>", lambda _e: self._open_pipeline_manager())
+                    widget.bind("<Button-1>", lambda _e, cmd=click_cmd: cmd())
                     try:
                         widget.configure(cursor="hand2")
                     except tk.TclError:
@@ -558,7 +563,17 @@ class AutoFeatureTransformPanel(ttk.Frame):
         pipe = sources.get(FEATURE_SOURCE_PIPELINE) or {}
         reg_n = int(reg.get("total") or 0)
         pipe_n = int(pipe.get("total") or 0)
-        self._reg_status.set(f"{reg_n} Features\n✓ Ready" if reg.get("ready") else f"{reg_n} Features")
+        try:
+            from chain_replay_ml.dataset_builder.registry_features_prefs import (
+                registry_export_selection_summary,
+            )
+
+            reg_sel = registry_export_selection_summary(chart_data_dir(self.chart_dir))
+            sel_n = int(reg_sel.get("selected") or reg_n)
+            reg_line = f"{sel_n} / {reg_n} Features" if sel_n != reg_n else f"{reg_n} Features"
+        except Exception:
+            reg_line = f"{reg_n} Features"
+        self._reg_status.set(f"{reg_line}\n✓ Ready" if reg.get("ready") else reg_line)
         retired_n = int(pipe.get("retired_count") or 0)
         if pipe.get("ready"):
             pipe_txt = f"{pipe_n} Features\n✓ Ready"
@@ -604,6 +619,15 @@ class AutoFeatureTransformPanel(ttk.Frame):
         from .pipeline_features_manager import open_pipeline_features_manager
 
         open_pipeline_features_manager(
+            self,
+            data_dir=chart_data_dir(self.chart_dir),
+            on_changed=self.refresh,
+        )
+
+    def _open_registry_selection(self) -> None:
+        from .registry_features_manager import open_registry_features_selection
+
+        open_registry_features_selection(
             self,
             data_dir=chart_data_dir(self.chart_dir),
             on_changed=self.refresh,
@@ -680,6 +704,23 @@ class AutoFeatureTransformPanel(ttk.Frame):
         if not self._include_registry.get() and not self._include_pipeline.get():
             messagebox.showwarning("Build", "Select at least one feature source.", parent=self)
             return
+        data_dir = chart_data_dir(self.chart_dir)
+        if self._include_registry.get():
+            try:
+                from chain_replay_ml.dataset_builder.registry_features_prefs import (
+                    resolve_registry_export_features,
+                )
+
+                if not resolve_registry_export_features(data_dir):
+                    messagebox.showwarning(
+                        "Build",
+                        "No Registry Features are selected for export.\n\n"
+                        "Use “Click to Select Features” on the Registry Features card.",
+                        parent=self,
+                    )
+                    return
+            except Exception:
+                pass
         if not self._include_pipeline.get():
             pipe_n = 0
             try:

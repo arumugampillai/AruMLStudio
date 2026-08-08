@@ -480,6 +480,7 @@ def create_master_registry_dataset(
     keep_pipeline_owned: bool = False,
     dataset_kind: str | None = None,
     pipeline_no_null_report: bool = False,
+    registry_export_features: frozenset[str] | None = None,
     on_progress: Callable[[str, int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Export filtered master rows to dataset registry as Parquet + metadata JSON.
@@ -1379,6 +1380,25 @@ def create_master_registry_dataset(
                 0,
             )
             del frame
+
+    if (
+        keep_pipeline_owned
+        and analysis_like
+        and registry_export_features is not None
+    ):
+        from .registry_export_prune import prune_registry_columns_in_parquet
+
+        prune_registry_columns_in_parquet(
+            parquet_path,
+            selected_registry=frozenset(registry_export_features),
+            on_progress=lambda msg: _progress(str(msg), 0, 0),
+        )
+        try:
+            import pyarrow.parquet as pq
+
+            final_column_count = len(pq.read_schema(parquet_path).names)
+        except Exception:
+            pass
 
     from .classification_labels import (
         classification_label_meta,

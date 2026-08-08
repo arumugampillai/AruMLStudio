@@ -598,3 +598,59 @@ def validate_interaction_for_export(
     except Exception as exc:
         return str(exc)
     return None
+
+
+def register_staged_interaction_pairs_to_pipeline(
+    staged_pairs: list[dict[str, Any]],
+    pipeline_pairs: list[dict[str, Any]],
+    *,
+    available_features: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int], list[str]]:
+    """Merge validated staged pairs into the pipeline collection (skip duplicate outputs)."""
+    from .interaction import LagConfigError, normalize_interaction_pair, validate_interaction_pairs
+
+    pipeline = [dict(p) for p in pipeline_pairs if isinstance(p, dict)]
+    existing_outputs = {
+        str(p.get("output") or "").strip()
+        for p in pipeline
+        if str(p.get("output") or "").strip()
+    }
+    available: set[str] = set(available_features or ())
+    check_sources = bool(available)
+    added = skipped = failed = 0
+    errors: list[str] = []
+
+    for raw in staged_pairs:
+        if not isinstance(raw, dict):
+            failed += 1
+            errors.append("Invalid pair entry (not a dict)")
+            continue
+        try:
+            norm = normalize_interaction_pair(raw)
+            output = str(norm.get("output") or "").strip()
+            if not output:
+                failed += 1
+                errors.append("Pair has no output name")
+                continue
+            if output in existing_outputs:
+                skipped += 1
+                continue
+            validate_interaction_pairs(
+                [norm],
+                existing_columns=available if check_sources else None,
+                fail_on_duplicate_output=True,
+                allow_overwrite=False,
+                check_sources=check_sources,
+            )
+            pipeline.append(norm)
+            existing_outputs.add(output)
+            available.add(output)
+            added += 1
+        except LagConfigError as exc:
+            failed += 1
+            errors.append(str(exc))
+        except Exception as exc:
+            failed += 1
+            errors.append(str(exc))
+
+    return pipeline, {"added": added, "skipped": skipped, "failed": failed}, errors

@@ -394,7 +394,16 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         self._interaction_source_a_ids: dict[str, str] = {"Master Features": "master"}
         self._interaction_source_b_ids: dict[str, str] = {"Master Features": "master"}
         self._interaction_output_var = tk.StringVar(value="")
+        self._interaction_search_a_var = tk.StringVar(value="")
+        self._interaction_search_b_var = tk.StringVar(value="")
+        self._interaction_bulk_search_a_var = tk.StringVar(value="")
+        self._interaction_bulk_search_b_var = tk.StringVar(value="")
+        self._interaction_feat_a_cols_full: list[str] = []
+        self._interaction_feat_b_cols_full: list[str] = []
+        self._interaction_bulk_a_meta: list[dict[str, Any]] = []
+        self._interaction_bulk_b_meta: list[dict[str, Any]] = []
         self._interaction_pairs: list[dict[str, Any]] = []
+        self._interaction_pipeline_pairs: list[dict[str, Any]] = []
         self._interaction_bulk_a_vars: dict[str, tk.BooleanVar] = {}
         self._interaction_bulk_b_vars: dict[str, tk.BooleanVar] = {}
         self._interaction_available: list[str] = []
@@ -633,6 +642,18 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
                 ]
             else:
                 self._interaction_pairs = []
+            raw_pipeline = applied.get("interaction_pipeline_pairs")
+            if isinstance(raw_pipeline, list):
+                self._interaction_pipeline_pairs = [
+                    dict(p) for p in raw_pipeline if isinstance(p, dict)
+                ]
+            elif self._interaction_pairs:
+                # Legacy: pairs were applied directly to the pipeline.
+                self._interaction_pipeline_pairs = [
+                    dict(p) for p in self._interaction_pairs
+                ]
+            else:
+                self._interaction_pipeline_pairs = []
             raw_prefs = load_master_data_prefs(self.chart_dir) or {}
             if "lag_seconds" in raw_prefs and self._lag_seconds_vars:
                 wanted = set()
@@ -884,6 +905,7 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
             ),
             interaction_enabled=self._interaction_enabled_var.get(),
             interaction_pairs=list(self._interaction_pairs),
+            interaction_pipeline_pairs=list(self._interaction_pipeline_pairs),
             normalization_enabled=self._normalization_enabled_var.get(),
             normalization_features=_list_or_existing(
                 "normalization_features", self._selected_normalization_features()
@@ -2447,33 +2469,49 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         ).pack(anchor="w")
 
         body = ttk.Frame(box)
-        body.pack(fill="x", expand=False, pady=(4, 0))
+        body.pack(fill="both", expand=True, pady=(4, 0))
         self._interaction_body = body
 
-        pick_row = ttk.Frame(body)
-        pick_row.pack(fill="x", pady=(0, 4))
+        notebook = ttk.Notebook(body)
+        notebook.pack(fill="both", expand=True)
+        single_tab = ttk.Frame(notebook, padding=4)
+        bulk_tab = ttk.Frame(notebook, padding=4)
+        notebook.add(single_tab, text="Single Interaction")
+        notebook.add(bulk_tab, text="Bulk Interaction")
 
-        ttk.Label(pick_row, text="Feature A Source").pack(side="left")
+        # --- Tab 1: Single Interaction ---
+        src_a_row = ttk.Frame(single_tab)
+        src_a_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(src_a_row, text="Feature A Source").pack(side="left")
         self._interaction_source_a_combo = ttk.Combobox(
-            pick_row,
+            src_a_row,
             textvariable=self._interaction_source_a_var,
             values=["Master Features"],
             state="readonly",
-            width=18,
+            width=22,
         )
-        self._interaction_source_a_combo.pack(side="left", padx=(4, 8))
+        self._interaction_source_a_combo.pack(side="left", padx=(6, 0))
         self._interaction_source_a_combo.bind(
             "<<ComboboxSelected>>", lambda *_: self._on_interaction_source_a_changed()
         )
 
-        ttk.Label(pick_row, text="Feature A").pack(side="left")
+        search_a_row = ttk.Frame(single_tab)
+        search_a_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(search_a_row, text="Feature A Search", width=16).pack(side="left")
+        ent_a = ttk.Entry(search_a_row, textvariable=self._interaction_search_a_var)
+        ent_a.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        ent_a.bind("<KeyRelease>", lambda _e: self._filter_interaction_single_features("a"))
+
+        feat_a_row = ttk.Frame(single_tab)
+        feat_a_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(feat_a_row, text="Feature A", width=16).pack(side="left")
         self._interaction_feat_a_combo = ttk.Combobox(
-            pick_row,
+            feat_a_row,
             textvariable=self._interaction_feat_a_var,
             values=[],
-            width=22,
+            width=40,
         )
-        self._interaction_feat_a_combo.pack(side="left", fill="x", expand=True, padx=(4, 10))
+        self._interaction_feat_a_combo.pack(side="left", fill="x", expand=True, padx=(4, 0))
         self._interaction_feat_a_combo.bind(
             "<<ComboboxSelected>>", lambda *_: self._on_interaction_builder_changed()
         )
@@ -2481,42 +2519,36 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
             "write", lambda *_: self._on_interaction_builder_changed()
         )
 
-        ttk.Label(pick_row, text="Operation").pack(side="left")
-        op_labels = [OP_DISPLAY_LABELS[k] for k in OP_CHOICES]
-        self._interaction_op_labels = {OP_DISPLAY_LABELS[k]: k for k in OP_CHOICES}
-        self._interaction_op_display = tk.StringVar(value=OP_DISPLAY_LABELS["multiply"])
-        op_combo = ttk.Combobox(
-            pick_row,
-            textvariable=self._interaction_op_display,
-            values=op_labels,
-            state="readonly",
-            width=14,
-        )
-        op_combo.pack(side="left", padx=(4, 10))
-        op_combo.bind("<<ComboboxSelected>>", lambda *_: self._on_interaction_builder_changed())
-
-        pick_row_b = ttk.Frame(body)
-        pick_row_b.pack(fill="x", pady=(0, 4))
-
-        ttk.Label(pick_row_b, text="Feature B Source").pack(side="left")
+        src_b_row = ttk.Frame(single_tab)
+        src_b_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(src_b_row, text="Feature B Source").pack(side="left")
         self._interaction_source_b_combo = ttk.Combobox(
-            pick_row_b,
+            src_b_row,
             textvariable=self._interaction_source_b_var,
             values=["Master Features"],
             state="readonly",
-            width=18,
+            width=22,
         )
-        self._interaction_source_b_combo.pack(side="left", padx=(4, 8))
+        self._interaction_source_b_combo.pack(side="left", padx=(6, 0))
         self._interaction_source_b_combo.bind(
             "<<ComboboxSelected>>", lambda *_: self._on_interaction_source_b_changed()
         )
 
-        ttk.Label(pick_row_b, text="Feature B").pack(side="left")
+        search_b_row = ttk.Frame(single_tab)
+        search_b_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(search_b_row, text="Feature B Search", width=16).pack(side="left")
+        ent_b = ttk.Entry(search_b_row, textvariable=self._interaction_search_b_var)
+        ent_b.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        ent_b.bind("<KeyRelease>", lambda _e: self._filter_interaction_single_features("b"))
+
+        feat_b_row = ttk.Frame(single_tab)
+        feat_b_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(feat_b_row, text="Feature B", width=16).pack(side="left")
         self._interaction_feat_b_combo = ttk.Combobox(
-            pick_row_b,
+            feat_b_row,
             textvariable=self._interaction_feat_b_var,
             values=[],
-            width=22,
+            width=40,
         )
         self._interaction_feat_b_combo.pack(side="left", fill="x", expand=True, padx=(4, 0))
         self._interaction_feat_b_combo.bind(
@@ -2526,62 +2558,97 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
             "write", lambda *_: self._on_interaction_builder_changed()
         )
 
-        out_row = ttk.Frame(body)
-        out_row.pack(fill="x", pady=(0, 4))
-        ttk.Label(out_row, text="Output", width=12).pack(side="left")
+        op_row = ttk.Frame(single_tab)
+        op_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(op_row, text="Operation", width=16).pack(side="left")
+        op_labels = [OP_DISPLAY_LABELS[k] for k in OP_CHOICES]
+        self._interaction_op_labels = {OP_DISPLAY_LABELS[k]: k for k in OP_CHOICES}
+        self._interaction_op_display = tk.StringVar(value=OP_DISPLAY_LABELS["multiply"])
+        op_combo = ttk.Combobox(
+            op_row,
+            textvariable=self._interaction_op_display,
+            values=op_labels,
+            state="readonly",
+            width=18,
+        )
+        op_combo.pack(side="left", padx=(4, 0))
+        op_combo.bind("<<ComboboxSelected>>", lambda *_: self._on_interaction_builder_changed())
+
+        out_row = ttk.Frame(single_tab)
+        out_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(out_row, text="Output Preview", width=16).pack(side="left")
         ttk.Label(
             out_row,
             textvariable=self._interaction_output_var,
             foreground="#333",
-        ).pack(side="left", fill="x", expand=True)
+        ).pack(side="left", fill="x", expand=True, padx=(4, 0))
 
-        btn_row = ttk.Frame(body)
-        btn_row.pack(fill="x", pady=(0, 6))
-        ttk.Button(btn_row, text="Add", command=self._add_interaction_pair).pack(
-            side="left", padx=(0, 6)
-        )
-        ttk.Button(btn_row, text="Remove selected", command=self._remove_interaction_pair).pack(
-            side="left", padx=(0, 6)
-        )
-        ttk.Button(btn_row, text="Clear pairs", command=self._clear_interaction_pairs).pack(
-            side="left",
+        ttk.Button(single_tab, text="Add", command=self._add_interaction_pair).pack(
+            anchor="w", pady=(4, 0)
         )
 
-        bulk = ttk.LabelFrame(body, text="Bulk Interaction Generator", padding=4)
-        bulk.pack(fill="x", expand=False, pady=(4, 4))
-        bulk_cols = ttk.Frame(bulk)
-        bulk_cols.pack(fill="x", expand=False)
-        # Feature A widened +25% vs prior 3:5 split → ~47% / ~53%.
+        # --- Tab 2: Bulk Interaction ---
+        bulk_search = ttk.Frame(bulk_tab)
+        bulk_search.pack(fill="x", pady=(0, 4))
+        bulk_search.columnconfigure(1, weight=1)
+        bulk_search.columnconfigure(3, weight=1)
+        ttk.Label(bulk_search, text="Feature A Search").grid(row=0, column=0, sticky="w")
+        ent_ba = ttk.Entry(bulk_search, textvariable=self._interaction_bulk_search_a_var)
+        ent_ba.grid(row=0, column=1, sticky="ew", padx=(6, 12))
+        ent_ba.bind("<KeyRelease>", lambda _e: self._apply_interaction_bulk_filter("a"))
+        ttk.Label(bulk_search, text="Feature B Search").grid(row=0, column=2, sticky="w")
+        ent_bb = ttk.Entry(bulk_search, textvariable=self._interaction_bulk_search_b_var)
+        ent_bb.grid(row=0, column=3, sticky="ew", padx=(6, 0))
+        ent_bb.bind("<KeyRelease>", lambda _e: self._apply_interaction_bulk_filter("b"))
+
+        bulk_cols = ttk.Frame(bulk_tab)
+        bulk_cols.pack(fill="both", expand=True, pady=(4, 4))
         bulk_cols.columnconfigure(0, weight=15, uniform="ix_bulk")
         bulk_cols.columnconfigure(1, weight=17, uniform="ix_bulk")
         left_bulk = ttk.Frame(bulk_cols)
         left_bulk.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         right_bulk = ttk.Frame(bulk_cols)
         right_bulk.grid(row=0, column=1, sticky="nsew")
-        ttk.Label(left_bulk, text="Feature A set").pack(anchor="w")
-        ttk.Label(right_bulk, text="Feature B set").pack(anchor="w")
-        # Height +100% vs previous 90px.
+        bulk_cols.rowconfigure(0, weight=1)
+        ttk.Label(left_bulk, text="Feature A Set").pack(anchor="w")
+        ttk.Label(right_bulk, text="Feature B Set").pack(anchor="w")
         self._interaction_bulk_a_host = self._make_scroll_host(left_bulk, height=180)
         self._interaction_bulk_b_host = self._make_scroll_host(right_bulk, height=180)
+
+        bulk_ctrl = ttk.LabelFrame(bulk_tab, text="Bulk Pair Generation", padding=4)
+        bulk_ctrl.pack(fill="x", pady=(4, 4))
         ttk.Button(
-            bulk,
-            text="Generate bulk pairs",
+            bulk_ctrl,
+            text="Generate Bulk Pairs",
             command=self._generate_bulk_interaction_pairs,
-        ).pack(side="left", pady=(4, 0))
+        ).pack(side="left")
         ttk.Button(
-            bulk,
+            bulk_ctrl,
             text="Clear",
             command=self._clear_interaction_pairs,
-        ).pack(side="left", padx=(6, 0), pady=(4, 0))
+        ).pack(side="left", padx=(6, 0))
 
-        pairs_frame = ttk.LabelFrame(body, text="Configured pairs (with lineage)", padding=4)
-        pairs_frame.pack(fill="both", expand=True, pady=(4, 0))
+        ttk.Button(
+            bulk_tab,
+            text="Add to Pipeline",
+            command=self._add_interaction_pairs_to_pipeline,
+        ).pack(anchor="w", pady=(6, 2))
+
+        pairs_frame = ttk.LabelFrame(bulk_tab, text="Configured Pairs (with lineage)", padding=4)
+        pairs_frame.pack(fill="both", expand=True, pady=(0, 0))
+        pairs_toolbar = ttk.Frame(pairs_frame)
+        pairs_toolbar.pack(fill="x", pady=(0, 4))
+        ttk.Button(
+            pairs_toolbar,
+            text="Remove selected",
+            command=self._remove_interaction_pair,
+        ).pack(side="left")
         self._interaction_pairs_list = tk.Listbox(pairs_frame, height=8, font=("Consolas", 9))
         self._interaction_pairs_list.pack(fill="both", expand=True)
 
         self._interaction_lineage_var = tk.StringVar(value="")
         ttk.Label(
-            body,
+            bulk_tab,
             textvariable=self._interaction_lineage_var,
             foreground="#555",
             justify="left",
@@ -3765,7 +3832,11 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
                     sample_interval_sec=interval,
                 )
             )
-        ix_n = len(self._interaction_pairs) if self._interaction_enabled_var.get() else 0
+        ix_n = (
+            len(self._interaction_pipeline_pairs)
+            if self._interaction_enabled_var.get()
+            else 0
+        )
         norm_feats = self._selected_normalization_features()
         norm_meths = self._selected_normalization_methods()
         norm_wins = self._selected_normalization_windows()
@@ -4172,7 +4243,7 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
 
         ix_outs = {
             str(p.get("output") or "")
-            for p in self._interaction_pairs
+            for p in self._interaction_pipeline_pairs
             if isinstance(p, dict)
         }
         # Bulk checkbox hosts must stay small — Master + Interaction only.
@@ -4200,20 +4271,68 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         if side == "a":
             combo = getattr(self, "_interaction_feat_a_combo", None)
             var = self._interaction_feat_a_var
+            self._interaction_feat_a_cols_full = list(cols)
         else:
             combo = getattr(self, "_interaction_feat_b_combo", None)
             var = self._interaction_feat_b_var
+            self._interaction_feat_b_cols_full = list(cols)
         if combo is None:
             return
+        self._filter_interaction_single_features(side)
+        full = self._interaction_feat_a_cols_full if side == "a" else self._interaction_feat_b_cols_full
+        cur = str(var.get() or "").strip()
+        if cur and cur not in full:
+            var.set(full[0] if full else "")
+        elif not cur and full:
+            var.set(full[0])
+
+    def _filter_interaction_single_features(self, side: str) -> None:
+        if side == "a":
+            combo = getattr(self, "_interaction_feat_a_combo", None)
+            full = list(self._interaction_feat_a_cols_full)
+            needle = str(self._interaction_search_a_var.get() or "").strip().lower()
+        else:
+            combo = getattr(self, "_interaction_feat_b_combo", None)
+            full = list(self._interaction_feat_b_cols_full)
+            needle = str(self._interaction_search_b_var.get() or "").strip().lower()
+        if combo is None:
+            return
+        if needle:
+            visible = [c for c in full if needle in str(c).lower()]
+        else:
+            visible = list(full)
         try:
-            combo.configure(values=cols)
+            combo.configure(values=visible)
         except tk.TclError:
             pass
-        cur = str(var.get() or "").strip()
-        if cur and cur not in cols:
-            var.set(cols[0] if cols else "")
-        elif not cur and cols:
-            var.set(cols[0])
+
+    def _apply_interaction_bulk_filter(self, side: str) -> None:
+        if side == "a":
+            meta = getattr(self, "_interaction_bulk_a_meta", [])
+            needle = str(self._interaction_bulk_search_a_var.get() or "").strip().lower()
+        else:
+            meta = getattr(self, "_interaction_bulk_b_meta", [])
+            needle = str(self._interaction_bulk_search_b_var.get() or "").strip().lower()
+        for block in meta:
+            group_label = block.get("group_label")
+            items = block.get("items") or []
+            any_visible = False
+            for item in items:
+                name = str(item.get("name") or "")
+                cb = item.get("checkbox")
+                if cb is None:
+                    continue
+                show = not needle or needle in name.lower()
+                if show:
+                    cb.pack(anchor="w")
+                    any_visible = True
+                else:
+                    cb.pack_forget()
+            if group_label is not None:
+                if any_visible:
+                    group_label.pack(anchor="w", pady=(4, 0))
+                else:
+                    group_label.pack_forget()
 
     def _on_interaction_source_a_changed(self) -> None:
         self._apply_interaction_source_feature_list("a")
@@ -4224,9 +4343,9 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         self._on_interaction_builder_changed()
 
     def _rebuild_interaction_bulk_lists(self, grouped: dict[str, list[str]]) -> None:
-        for host_name, var_map_name in (
-            ("_interaction_bulk_a_host", "_interaction_bulk_a_vars"),
-            ("_interaction_bulk_b_host", "_interaction_bulk_b_vars"),
+        for host_name, var_map_name, meta_name, side in (
+            ("_interaction_bulk_a_host", "_interaction_bulk_a_vars", "_interaction_bulk_a_meta", "a"),
+            ("_interaction_bulk_b_host", "_interaction_bulk_b_vars", "_interaction_bulk_b_meta", "b"),
         ):
             host = getattr(self, host_name, None)
             if host is None:
@@ -4238,19 +4357,26 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
                 for k, v in getattr(self, var_map_name, {}).items()
             }
             var_map: dict[str, tk.BooleanVar] = {}
+            meta_blocks: list[dict[str, Any]] = []
             for group, names in grouped.items():
-                ttk.Label(host, text=group, foreground="#666").pack(anchor="w", pady=(4, 0))
+                group_label = ttk.Label(host, text=group, foreground="#666")
+                group_label.pack(anchor="w", pady=(4, 0))
+                items: list[dict[str, Any]] = []
                 for name in names:
                     var = tk.BooleanVar(value=bool(previous.get(name, False)))
                     var_map[name] = var
-                    ttk.Checkbutton(
+                    cb = ttk.Checkbutton(
                         host,
                         text=f"  {name}",
                         variable=var,
                         command=self._on_interaction_bulk_selection_changed,
-                    ).pack(anchor="w")
+                    )
+                    cb.pack(anchor="w")
+                    items.append({"name": name, "checkbox": cb})
+                meta_blocks.append({"group_label": group_label, "items": items})
             setattr(self, var_map_name, var_map)
-        # Re-apply enable/disable to newly built checkbuttons only.
+            setattr(self, meta_name, meta_blocks)
+            self._apply_interaction_bulk_filter(side)
         self._sync_interaction_body_state()
 
     def _add_interaction_pair(self) -> None:
@@ -4307,6 +4433,52 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         self._refresh_interaction_feature_lists()
         self._update_lag_preview()
         self._save_prefs()
+
+    def _add_interaction_pairs_to_pipeline(self) -> None:
+        from chain_replay_ml.dataset_builder.transformations.interaction_ui import (
+            available_interaction_features_from_config,
+            register_staged_interaction_pairs_to_pipeline,
+        )
+
+        if not self._interaction_pairs:
+            messagebox.showinfo(
+                "Interaction",
+                "No configured pairs to add. Use Single or Bulk Interaction first.",
+                parent=self,
+            )
+            return
+        try:
+            cfg = self._build_transformation_config_through_interaction()
+        except Exception as exc:
+            messagebox.showerror("Add to Pipeline", str(exc), parent=self)
+            return
+        avail = available_interaction_features_from_config(
+            cfg,
+            master_features=self._laggable_feature_names(),
+            sample_interval_sec=self._interval_sec(),
+        )
+        pipeline, counts, errors = register_staged_interaction_pairs_to_pipeline(
+            list(self._interaction_pairs),
+            list(self._interaction_pipeline_pairs),
+            available_features=avail,
+        )
+        self._interaction_pipeline_pairs = pipeline
+        if int(counts.get("added") or 0) > 0:
+            self._interaction_enabled_var.set(True)
+        self._refresh_interaction_feature_lists()
+        self._update_lag_preview()
+        self._save_prefs()
+        summary = (
+            f"Added: {counts.get('added', 0)}\n"
+            f"Skipped (already exists): {counts.get('skipped', 0)}\n"
+            f"Failed: {counts.get('failed', 0)}"
+        )
+        if errors:
+            detail = "\n".join(errors[:5])
+            if len(errors) > 5:
+                detail += f"\n… +{len(errors) - 5} more"
+            summary = f"{summary}\n\n{detail}"
+        messagebox.showinfo("Add to Pipeline", summary, parent=self)
 
     def _generate_bulk_interaction_pairs(self) -> None:
         from chain_replay_ml.dataset_builder.transformations.interaction_ui import (
@@ -4461,7 +4633,7 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         return merge_interaction_into_config(
             with_ohlc,
             enabled=bool(self._interaction_enabled_var.get()),
-            pairs=list(self._interaction_pairs),
+            pairs=list(self._interaction_pipeline_pairs),
         )
 
     def _registry_feature_count(self) -> int:
@@ -4942,7 +5114,7 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         )
         ix_err = validate_interaction_for_export(
             enabled=bool(self._interaction_enabled_var.get()),
-            pairs=list(self._interaction_pairs),
+            pairs=list(self._interaction_pipeline_pairs),
             available_features=ix_avail,
         )
         if ix_err:

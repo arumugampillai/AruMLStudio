@@ -287,6 +287,7 @@ def master_data_prefs_snapshot(
     ohlc_aggregation_outputs: list[str] | None = None,
     interaction_enabled: bool = False,
     interaction_pairs: list[dict[str, Any]] | None = None,
+    interaction_pipeline_pairs: list[dict[str, Any]] | None = None,
     normalization_enabled: bool = False,
     normalization_features: list[str] | None = None,
     normalization_methods: list[str] | None = None,
@@ -440,6 +441,9 @@ def master_data_prefs_snapshot(
         "interaction_enabled": bool(interaction_enabled),
         "interaction_pairs": [
             dict(p) for p in (interaction_pairs or []) if isinstance(p, dict)
+        ],
+        "interaction_pipeline_pairs": [
+            dict(p) for p in (interaction_pipeline_pairs or []) if isinstance(p, dict)
         ],
         "normalization_enabled": bool(normalization_enabled),
         "normalization_features": _clean_feats(normalization_features),
@@ -661,6 +665,9 @@ def apply_master_data_prefs(
         "interaction_enabled": bool(src.get("interaction_enabled", False)),
         "interaction_pairs": [
             dict(p) for p in (src.get("interaction_pairs") or []) if isinstance(p, dict)
+        ],
+        "interaction_pipeline_pairs": [
+            dict(p) for p in (src.get("interaction_pipeline_pairs") or []) if isinstance(p, dict)
         ],
         "normalization_enabled": bool(src.get("normalization_enabled", False)),
         "normalization_features": _load_feat_list("normalization_features"),

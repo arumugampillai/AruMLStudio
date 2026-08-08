@@ -17,7 +17,6 @@ from .feature_sources_catalog import (
     FEATURE_SOURCE_REGISTRY,
     feature_sources_catalog,
     pipeline_feature_names,
-    registry_feature_names,
 )
 from .master_naming import resolve_master_db_path
 from .master_registry_export import MasterRegistryExportError, create_master_registry_dataset
@@ -128,7 +127,15 @@ def create_analysis_dataset(
 
     retired = load_retired_pipeline_features(data_dir)
     catalog = feature_sources_catalog(data_dir=data_dir, retired=retired)
-    reg_names = registry_feature_names() if include_registry else []
+    from .registry_features_prefs import resolve_registry_export_features
+
+    reg_export = resolve_registry_export_features(data_dir) if include_registry else frozenset()
+    reg_names = sorted(reg_export) if include_registry else []
+    if include_registry and not reg_names:
+        raise MasterRegistryExportError(
+            "No Registry Features selected for export. "
+            "Open “Click to Select Features” and select at least one."
+        )
     pipe_names = pipeline_feature_names(data_dir=data_dir, retired=retired) if include_pipeline else []
     reg_total = len(reg_names)
     pipe_total = len(pipe_names)
@@ -417,6 +424,7 @@ def create_analysis_dataset(
             delta_min=delta_min,
             delta_max=delta_max,
             on_progress=_export_progress,
+            registry_export_features=reg_export if include_registry else None,
         )
     except MasterRegistryExportError:
         raise
