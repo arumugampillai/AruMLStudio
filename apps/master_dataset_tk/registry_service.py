@@ -33,6 +33,7 @@ def load_dataset_summary(chart_dir: str, dataset_name: str) -> dict[str, Any]:
 
 def load_dataset_metadata(chart_dir: str, dataset_name: str) -> dict[str, Any]:
     from chain_replay_ml.dataset_builder.dataset_validator import load_audit_cache, load_validation_cache
+    from chain_replay_ml.dataset_builder.dataset_csv_export import build_csv_export_metadata
     from chain_replay_ml.dataset_builder.expected_spec import expected_spec_path
     from chain_replay_ml.dataset_builder.writer import _safe_filename, datasets_dir
 
@@ -49,12 +50,23 @@ def load_dataset_metadata(chart_dir: str, dataset_name: str) -> dict[str, Any]:
     if os.path.isfile(expected_path):
         with open(expected_path, encoding="utf-8") as fh:
             expected_doc = json.load(fh)
+    parquet_path = os.path.join(out_dir, f"{safe_name}.parquet")
     return {
         "dataset_name": safe_name,
         "metadata": meta,
         "expected_spec": expected_doc,
         "audit_cache": load_audit_cache(data_dir, safe_name),
         "validation_cache": load_validation_cache(data_dir, safe_name),
+        "source_dataset": {
+            "kind": "parquet",
+            "dataset_name": safe_name,
+            "dataset_id": str(meta.get("dataset_id") or safe_name),
+            "dataset_version": str(
+                meta.get("dataset_version") or meta.get("builder_version") or ""
+            ),
+            "path": parquet_path,
+        },
+        "csv_export": build_csv_export_metadata(data_dir, safe_name),
     }
 
 
@@ -220,3 +232,24 @@ def enrich_dataset_with_rr_labels(
         dataset_name,
         lab_db_path,
     )
+
+
+def generate_registry_csv(
+    chart_dir: str,
+    dataset_name: str,
+    *,
+    replace: bool = False,
+) -> dict[str, Any]:
+    from chain_replay_ml.dataset_builder.dataset_csv_export import generate_dataset_csv_export
+
+    return generate_dataset_csv_export(
+        data_dir_for(chart_dir),
+        dataset_name,
+        replace=replace,
+    )
+
+
+def delete_registry_csv(chart_dir: str, dataset_name: str) -> dict[str, Any]:
+    from chain_replay_ml.dataset_builder.dataset_csv_export import delete_dataset_csv_export
+
+    return delete_dataset_csv_export(data_dir_for(chart_dir), dataset_name)

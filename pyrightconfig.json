@@ -1,0 +1,6 @@
+{
+  "include": ["apps", "master_dataset_manager.py", "ormp", "research", "tests"],
+  "extraPaths": ["apps"],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic"
+}

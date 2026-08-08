@@ -165,6 +165,7 @@ def _dataset_artifact_files(data_dir: str, safe_name: str) -> list[dict[str, Any
         ("audit_cache", "Audit cache", f"{safe_name}.audit-cache.json"),
         ("validation", "Validation", f"{safe_name}.validation.json"),
         ("investigation_history", "Investigation history", f"{safe_name}.investigation-history.json"),
+        ("csv_export", "CSV export", f"{safe_name}.csv"),
     ]
     rows: list[dict[str, Any]] = []
     for key, label, fname in artifacts:
@@ -187,7 +188,12 @@ def list_datasets(data_dir: str) -> list[dict[str, Any]]:
 
     rows: list[dict[str, Any]] = []
     skip_names = frozenset({"golden.manifest", "golden.regression-last"})
-    skip_suffixes = (".audit-cache.json", ".validation.json", ".investigation-history.json")
+    skip_suffixes = (
+        ".audit-cache.json",
+        ".validation.json",
+        ".investigation-history.json",
+        ".csv-export.json",
+    )
     for fname in os.listdir(out_dir):
         if not fname.endswith(".json") or fname.endswith(".expected.json"):
             continue
@@ -292,6 +298,12 @@ def delete_dataset(*, data_dir: str, dataset_name: str) -> dict[str, Any]:
         validation_cache_path(data_dir, safe_name),
         os.path.join(out_dir, f"{safe_name}.investigation-history.json"),
     ]
+    from .dataset_csv_export import csv_export_path, csv_export_sidecar_path
+
+    paths.extend([
+        csv_export_path(data_dir, safe_name),
+        csv_export_sidecar_path(data_dir, safe_name),
+    ])
     deleted: list[str] = []
     missing: list[str] = []
     for path in paths:

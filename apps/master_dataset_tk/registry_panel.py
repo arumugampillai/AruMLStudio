@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import tkinter as tk
@@ -181,6 +182,8 @@ class RegistryPanel(ttk.Frame, LazyLoadMixin):
             ("Append RR Labels", self._open_rr_enrich_dialog),
             ("Train", self._open_train),
             ("Metadata", self._open_metadata),
+            ("Generate CSV", self._generate_csv),
+            ("Delete CSV", self._delete_csv),
             ("Delete", self._delete_selected),
         )
         for label, cmd in actions:
@@ -715,6 +718,9 @@ class RegistryPanel(ttk.Frame, LazyLoadMixin):
         name = self._require_selection()
         if not name:
             return
+        self._show_metadata_dialog(name)
+
+    def _show_metadata_dialog(self, name: str) -> None:
         try:
             data = svc.load_dataset_metadata(self.chart_dir, name)
         except Exception as exc:
@@ -726,8 +732,25 @@ class RegistryPanel(ttk.Frame, LazyLoadMixin):
         dlg.transient(self.winfo_toplevel())
         txt = scrolledtext.ScrolledText(dlg, wrap="none", font=("Consolas", 9))
         txt.pack(fill="both", expand=True, padx=8, pady=8)
-        txt.insert("1.0", fmt.format_json(data))
-        txt.configure(state="disabled")
+
+        def refresh_body() -> None:
+            try:
+                fresh = svc.load_dataset_metadata(self.chart_dir, name)
+            except Exception as exc:
+                messagebox.showerror("Metadata", str(exc), parent=dlg)
+                return
+            txt.configure(state="normal")
+            txt.delete("1.0", tk.END)
+            txt.insert("1.0", fmt.format_metadata_view(fresh))
+            txt.configure(state="disabled")
+            csv_info = fresh.get("csv_export") or {}
+            has_csv = csv_info.get("status") == "Generated"
+            open_csv_btn.configure(state="normal" if has_csv else "disabled")
+            open_folder_btn.configure(state="normal" if has_csv else "disabled")
+            delete_csv_btn.configure(state="normal" if has_csv else "disabled")
+
+        refresh_body()
+
         row = ttk.Frame(dlg, padding=8)
         row.pack(fill="x")
         meta_path = None
@@ -737,7 +760,115 @@ class RegistryPanel(ttk.Frame, LazyLoadMixin):
                 break
         if meta_path:
             ttk.Button(row, text="Open metadata file", command=lambda: open_path(meta_path)).pack(side="left")
+
+        def open_csv() -> None:
+            try:
+                info = svc.load_dataset_metadata(self.chart_dir, name).get("csv_export") or {}
+            except Exception as exc:
+                messagebox.showerror("Open CSV", str(exc), parent=dlg)
+                return
+            path = info.get("csv_path")
+            if not path or not os.path.isfile(path):
+                messagebox.showinfo("Open CSV", "No CSV export found.", parent=dlg)
+                refresh_body()
+                return
+            open_path(path)
+
+        def open_csv_folder() -> None:
+            try:
+                info = svc.load_dataset_metadata(self.chart_dir, name).get("csv_export") or {}
+            except Exception as exc:
+                messagebox.showerror("Open CSV folder", str(exc), parent=dlg)
+                return
+            path = info.get("csv_path")
+            if not path:
+                messagebox.showinfo("Open CSV folder", "No CSV export found.", parent=dlg)
+                return
+            open_path(os.path.dirname(path))
+
+        open_csv_btn = ttk.Button(row, text="Open CSV", command=open_csv)
+        open_csv_btn.pack(side="left", padx=4)
+        open_folder_btn = ttk.Button(row, text="Open CSV folder", command=open_csv_folder)
+        open_folder_btn.pack(side="left", padx=4)
+
+        def delete_csv_from_dialog() -> None:
+            self._delete_csv(dataset_name=name, on_done=refresh_body, parent=dlg)
+
+        delete_csv_btn = ttk.Button(row, text="Delete CSV", command=delete_csv_from_dialog)
+        delete_csv_btn.pack(side="left", padx=4)
         ttk.Button(row, text="Close", command=dlg.destroy).pack(side="right")
+
+    def _generate_csv(self) -> None:
+        name = self._require_selection()
+        if not name:
+            return
+        replace = False
+        try:
+            info = svc.load_dataset_metadata(self.chart_dir, name).get("csv_export") or {}
+        except Exception as exc:
+            messagebox.showerror("Generate CSV", str(exc))
+            return
+        if info.get("status") == "Generated":
+            if not messagebox.askyesno(
+                "Regenerate CSV",
+                f'A CSV export already exists for "{name}".\n\n'
+                "Regenerate it? Only the CSV file will be replaced; the Parquet dataset stays unchanged.",
+            ):
+                return
+            replace = True
+
+        def worker() -> dict[str, Any]:
+            return svc.generate_registry_csv(self.chart_dir, name, replace=replace)
+
+        def on_done(_result: Any) -> None:
+            messagebox.showinfo("Generate CSV", f'CSV export created for "{name}".')
+
+        self._run_background(
+            f"csv:{name}",
+            lambda: worker(),
+            on_done=on_done,
+            refresh_on_done=True,
+        )
+
+    def _delete_csv(
+        self,
+        *,
+        dataset_name: str | None = None,
+        on_done: Callable[[], None] | None = None,
+        parent: tk.Misc | None = None,
+    ) -> None:
+        name = dataset_name or self._require_selection()
+        if not name:
+            return
+        try:
+            info = svc.load_dataset_metadata(self.chart_dir, name).get("csv_export") or {}
+        except Exception as exc:
+            messagebox.showerror("Delete CSV", str(exc), parent=parent)
+            return
+        if info.get("status") != "Generated":
+            messagebox.showinfo(
+                "Delete CSV",
+                "No CSV export exists for this dataset.",
+                parent=parent,
+            )
+            return
+        if not messagebox.askyesno(
+            "Delete CSV",
+            f'Delete the CSV export for "{name}"?\n\n'
+            "The Parquet dataset and registry entry will not be removed.",
+            parent=parent,
+        ):
+            return
+        try:
+            svc.delete_registry_csv(self.chart_dir, name)
+        except Exception as exc:
+            messagebox.showerror("Delete CSV", str(exc), parent=parent)
+            return
+        if on_done:
+            on_done()
+        else:
+            messagebox.showinfo("Delete CSV", "CSV export deleted.", parent=parent)
+        self.refresh_registry()
 
     def _delete_selected(self) -> None:
         name = self._require_selection()

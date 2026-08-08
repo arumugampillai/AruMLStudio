@@ -1,5 +1,8 @@
-# IDE / tooling
-.idea/
+# IDE / tooling (PyCharm: apps/ is Sources Root via AruMLStudio.iml)
+.idea/*
+!.idea/misc.xml
+!.idea/modules.xml
+!.idea/.name
 .vscode/
 
 # Python environments and bytecode

@@ -18,7 +18,7 @@ APPS_DIR = ROOT / "apps"
 if str(APPS_DIR) not in sys.path:
     sys.path.insert(0, str(APPS_DIR))
 
-from master_dataset_tk.app import main
+from master_dataset_tk.app import main  # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:

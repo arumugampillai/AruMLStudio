@@ -459,3 +459,57 @@ def format_merge_plan(plan: dict[str, Any]) -> str:
 
 def format_json(data: Any) -> str:
     return json.dumps(data, indent=2, default=str)
+
+
+def format_metadata_view(data: dict[str, Any]) -> str:
+    lines: list[str] = []
+    name = data.get("dataset_name") or "—"
+    lines.append(f"Dataset Metadata — {name}")
+    lines.append("=" * 60)
+
+    source = data.get("source_dataset") or {}
+    lines.append("")
+    lines.append("Source dataset (Parquet)")
+    lines.append("-" * 40)
+    lines.append(f"  Kind: {source.get('kind') or 'parquet'}")
+    lines.append(f"  Name: {source.get('dataset_name') or name}")
+    if source.get("dataset_id"):
+        lines.append(f"  Dataset ID: {source.get('dataset_id')}")
+    if source.get("dataset_version"):
+        lines.append(f"  Version: {source.get('dataset_version')}")
+    if source.get("path"):
+        lines.append(f"  Path: {source.get('path')}")
+
+    csv_block = data.get("csv_export") or {}
+    lines.append("")
+    lines.append("Export artifact (CSV)")
+    lines.append("-" * 40)
+    lines.append(f"  CSV status: {csv_block.get('status') or 'Not Generated'}")
+    lines.append(f"  CSV filename: {csv_block.get('csv_filename') or '—'}")
+    lines.append(f"  CSV path: {csv_block.get('csv_path') or '—'}")
+    rc = csv_block.get("row_count")
+    cc = csv_block.get("column_count")
+    lines.append(f"  CSV row count: {fmt_num(rc) if rc is not None else '—'}")
+    lines.append(f"  CSV column count: {fmt_num(cc) if cc is not None else '—'}")
+    size = csv_block.get("file_size_bytes")
+    if size is not None:
+        try:
+            size_label = f"{int(size):,} bytes"
+        except (TypeError, ValueError):
+            size_label = str(size)
+    else:
+        size_label = "—"
+    lines.append(f"  CSV file size: {size_label}")
+    lines.append(f"  Generated: {csv_block.get('generated_at') or '—'}")
+    src = csv_block.get("source_dataset") or source
+    if src.get("dataset_id") or src.get("dataset_version"):
+        lines.append(
+            f"  Source dataset ID/version: {src.get('dataset_id') or '—'} / "
+            f"{src.get('dataset_version') or '—'}"
+        )
+
+    lines.append("")
+    lines.append("Full metadata (JSON)")
+    lines.append("=" * 60)
+    lines.append(format_json(data))
+    return "\n".join(lines)
