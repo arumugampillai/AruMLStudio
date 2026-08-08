@@ -47,7 +47,7 @@ def load_registry_export_selected_names(data_dir: str) -> frozenset[str]:
     raw = doc.get("selected") if isinstance(doc, dict) else None
     if not isinstance(raw, list):
         return frozenset()
-    canonical = set(registry_feature_names())
+    canonical = set(registry_feature_names(data_dir=data_dir))
     return frozenset(str(n).strip() for n in raw if str(n).strip() in canonical)
 
 
@@ -60,7 +60,7 @@ def save_registry_export_selection(
     path = storage_path(data_dir)
     if not path:
         raise ValueError("data_dir is required")
-    canonical = set(registry_feature_names())
+    canonical = set(registry_feature_names(data_dir=data_dir))
     cleaned = sorted({str(n).strip() for n in selected if str(n).strip() in canonical})
     mode_norm = str(mode or MODE_CUSTOM).strip().lower()
     if mode_norm == MODE_ALL or len(cleaned) >= len(canonical):
@@ -76,7 +76,7 @@ def save_registry_export_selection(
 
 def resolve_registry_export_features(data_dir: str) -> frozenset[str]:
     """Registry feature names to include in the Analysis Dataset export."""
-    all_names = frozenset(registry_feature_names())
+    all_names = frozenset(registry_feature_names(data_dir=data_dir))
     if load_registry_export_mode(data_dir) != MODE_CUSTOM:
         return all_names
     selected = load_registry_export_selected_names(data_dir)
@@ -85,7 +85,7 @@ def resolve_registry_export_features(data_dir: str) -> frozenset[str]:
 
 def registry_export_selection_summary(data_dir: str) -> dict[str, int | str]:
     """Counts for UI: total, selected, mode."""
-    total = len(registry_feature_names())
+    total = len(registry_feature_names(data_dir=data_dir))
     selected = resolve_registry_export_features(data_dir)
     mode = load_registry_export_mode(data_dir)
     return {

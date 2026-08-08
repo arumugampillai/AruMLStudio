@@ -35,7 +35,7 @@ class RegistryFeaturesSelectionDialog(tk.Toplevel):
         self._count_var = tk.StringVar(value="")
         self._feature_vars: dict[str, tk.BooleanVar] = {}
         self._group_frames: list[ttk.LabelFrame] = []
-        self._source = registry_feature_source()
+        self._source = registry_feature_source(data_dir=data_dir)
 
         self._build_ui()
         self._load_selection()

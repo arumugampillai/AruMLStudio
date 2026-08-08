@@ -570,7 +570,10 @@ class AutoFeatureTransformPanel(ttk.Frame):
 
             reg_sel = registry_export_selection_summary(chart_data_dir(self.chart_dir))
             sel_n = int(reg_sel.get("selected") or reg_n)
+            retired_reg = int(reg.get("retired_count") or 0)
             reg_line = f"{sel_n} / {reg_n} Features" if sel_n != reg_n else f"{reg_n} Features"
+            if retired_reg:
+                reg_line = f"{reg_line} ({retired_reg} retired)"
         except Exception:
             reg_line = f"{reg_n} Features"
         self._reg_status.set(f"{reg_line}\n✓ Ready" if reg.get("ready") else reg_line)

@@ -51,8 +51,20 @@ _GENERATOR_TO_FAMILY: dict[str, str] = {
 }
 
 
-def registry_feature_names() -> list[str]:
-    return sorted(canonical_registry_features())
+def registry_retired_feature_names(data_dir: str | None = None) -> frozenset[str]:
+    if not data_dir:
+        return frozenset()
+    from .feature_registry_store import disabled_registry_feature_names, load_store
+
+    return frozenset(disabled_registry_feature_names(load_store(data_dir)))
+
+
+def registry_feature_names(*, data_dir: str | None = None) -> list[str]:
+    names = sorted(canonical_registry_features())
+    retired = registry_retired_feature_names(data_dir)
+    if retired:
+        names = [n for n in names if n not in retired]
+    return names
 
 
 def pipeline_feature_names(
@@ -88,27 +100,31 @@ def pipeline_features_by_family(
     return out
 
 
-def registry_feature_source() -> dict[str, Any]:
+def registry_feature_source(*, data_dir: str | None = None) -> dict[str, Any]:
+    retired = registry_retired_feature_names(data_dir)
+    active = set(registry_feature_names(data_dir=data_dir))
     by_domain = features_by_domain()
     coverage = validate_domain_coverage(expected_total=206)
     groups = [
         {
             "id": domain_id,
             "label": DOMAIN_LABELS[domain_id],
-            "count": len(by_domain.get(domain_id, [])),
-            "features": list(by_domain.get(domain_id, [])),
+            "count": len([f for f in by_domain.get(domain_id, []) if f in active]),
+            "features": [f for f in by_domain.get(domain_id, []) if f in active],
         }
         for domain_id in DOMAIN_ORDER
-        if by_domain.get(domain_id)
+        if any(f in active for f in (by_domain.get(domain_id) or []))
     ]
-    names = registry_feature_names()
+    names = sorted(active)
+    canonical_total = len(canonical_registry_features())
     return {
         "id": FEATURE_SOURCE_REGISTRY,
         "label": "Registry Features",
         "description": "Canonical Feature Registry",
         "total": len(names),
         "expected_total": 206,
-        "ready": bool(coverage.get("ok")) and len(names) == 206,
+        "retired_count": len(retired),
+        "ready": bool(coverage.get("ok")) and canonical_total == 206,
         "groups": groups,
         "features": names,
     }
@@ -167,7 +183,7 @@ def feature_sources_catalog(
     retired: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Phase 1A catalogue payload for UI + analysis builds."""
-    registry = registry_feature_source()
+    registry = registry_feature_source(data_dir=data_dir)
     pipeline = pipeline_feature_source(data_dir=data_dir, retired=retired)
     return {
         "version": 1,
@@ -193,4 +209,5 @@ __all__ = [
     "pipeline_family_of",
     "registry_feature_names",
     "registry_feature_source",
+    "registry_retired_feature_names",
 ]

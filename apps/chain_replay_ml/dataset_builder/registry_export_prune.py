@@ -11,10 +11,11 @@ def prune_registry_columns_in_parquet(
     parquet_path: str,
     *,
     selected_registry: frozenset[str],
+    data_dir: str | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> list[str]:
     """Remove registry feature columns not in ``selected_registry``. Returns dropped names."""
-    reg_all = frozenset(registry_feature_names())
+    reg_all = frozenset(registry_feature_names(data_dir=data_dir))
     if not selected_registry or selected_registry >= reg_all:
         return []
 

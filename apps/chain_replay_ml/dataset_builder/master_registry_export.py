@@ -1395,6 +1395,7 @@ def create_master_registry_dataset(
         prune_registry_columns_in_parquet(
             parquet_path,
             selected_registry=frozenset(registry_export_features),
+            data_dir=data_dir,
             on_progress=lambda msg: _progress(str(msg), 0, 0),
         )
         try:

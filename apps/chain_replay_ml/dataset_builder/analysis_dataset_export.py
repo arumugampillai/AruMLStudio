@@ -123,9 +123,13 @@ def create_analysis_dataset(
     if not include_registry and not include_pipeline:
         raise MasterRegistryExportError("Select at least one feature source")
 
-    from .pipeline_features_prefs import load_retired_pipeline_features
+    from .pipeline_features_prefs import (
+        load_pipeline_build_exclude_features,
+        load_retired_pipeline_features,
+    )
 
     retired = load_retired_pipeline_features(data_dir)
+    exclude_for_pipeline = load_pipeline_build_exclude_features(data_dir)
     catalog = feature_sources_catalog(data_dir=data_dir, retired=retired)
     from .registry_features_prefs import resolve_registry_export_features
 
@@ -157,7 +161,7 @@ def create_analysis_dataset(
 
         transformation_config = build_pipeline_features_transformation_config(
             sample_interval_sec=float(interval_sec),
-            exclude_features=retired,
+            exclude_features=exclude_for_pipeline,
         )
 
     def _emit(payload: dict[str, Any]) -> None:

@@ -94,5 +94,28 @@ class PipelineFeaturesConfigTests(unittest.TestCase):
         self.assertNotIn("atm_straddle_zscore_30m", str(via_build))
 
 
+    def test_prune_registry_retired_base_drops_lag_and_ratios(self) -> None:
+        cfg = build_pipeline_features_transformation_config(sample_interval_sec=6.0)
+        pruned = prune_pipeline_transformation_config(cfg, {"dgt_reiv_pred"})
+        for t in pruned.get("transformations") or []:
+            params = t.get("params") or {}
+            for feat in params.get("features") or []:
+                self.assertNotEqual(str(feat), "dgt_reiv_pred")
+            if str(t.get("id") or "") == "interaction":
+                for pair in params.get("pairs") or []:
+                    self.assertNotIn(
+                        "dgt_reiv_pred",
+                        {str(pair.get("left") or ""), str(pair.get("right") or "")},
+                    )
+        via_build = build_pipeline_features_transformation_config(
+            sample_interval_sec=6.0,
+            exclude_features={"dgt_reiv_pred"},
+        )
+        self.assertNotIn(
+            "dgt_reiv_pred",
+            str(via_build.get("transformations") or []),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

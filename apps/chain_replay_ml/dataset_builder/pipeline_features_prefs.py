@@ -70,9 +70,19 @@ def active_pipeline_feature_names(
     return [n for n in all_names if n not in skip]
 
 
+def load_pipeline_build_exclude_features(data_dir: str) -> frozenset[str]:
+    """Names to omit from Pipeline regeneration (deleted pipeline + registry retired)."""
+    skip = set(load_retired_pipeline_features(data_dir))
+    from .feature_sources_catalog import registry_retired_feature_names
+
+    skip |= set(registry_retired_feature_names(data_dir))
+    return frozenset(skip)
+
+
 __all__ = [
     "STORAGE",
     "active_pipeline_feature_names",
+    "load_pipeline_build_exclude_features",
     "load_retired_pipeline_features",
     "retire_pipeline_features",
     "save_retired_pipeline_features",

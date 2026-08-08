@@ -646,10 +646,18 @@ def prune_pipeline_transformation_config(
         sid = str(stage.get("id") or "")
         params = dict(stage.get("params") or {})
         if sid == "interaction":
-            pairs = [
-                p for p in list(params.get("pairs") or [])
-                if str((p or {}).get("output") or "").strip() not in skip
-            ]
+            pairs = []
+            for p in list(params.get("pairs") or []):
+                if not isinstance(p, dict):
+                    continue
+                pair_out = str(p.get("output") or "").strip()
+                if pair_out in skip:
+                    continue
+                left = str(p.get("left") or "").strip()
+                right = str(p.get("right") or "").strip()
+                if left in skip or right in skip:
+                    continue
+                pairs.append(p)
             if not pairs:
                 continue
             params["pairs"] = pairs
@@ -708,7 +716,10 @@ def prune_pipeline_transformation_config(
                         or item.get("column")
                         or ""
                     ).strip()
+                    base = str(item.get("feature") or "").strip()
                     if name and name in skip:
+                        continue
+                    if base and base in skip:
                         continue
                     kept_out.append(item)
                 else:
@@ -723,11 +734,15 @@ def prune_pipeline_transformation_config(
             kept_stages.append(stage)
             continue
 
-        # Feature lists on lag/diff/return without per-horizon columns: drop if
-        # every declared source feature is retired (best-effort).
+        # Feature lists on lag/diff/return: drop retired sources; remove stage if empty.
         features = [str(f).strip() for f in (params.get("features") or []) if str(f).strip()]
-        if features and all(f in skip for f in features):
-            continue
+        if features:
+            kept_feats = [f for f in features if f not in skip]
+            if not kept_feats:
+                continue
+            if kept_feats != features:
+                params["features"] = kept_feats
+                stage["params"] = params
         kept_stages.append(stage)
 
     out["transformations"] = kept_stages
