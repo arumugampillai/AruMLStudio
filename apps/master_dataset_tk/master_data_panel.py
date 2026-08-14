@@ -1036,9 +1036,11 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         self._feature_xform_outer_nb = outer_nb
 
         manual_tab = ttk.Frame(outer_nb)
+        pipeline_tab = ttk.Frame(outer_nb)
         auto_tab = ttk.Frame(outer_nb)
         analysis_tab = ttk.Frame(outer_nb)
         outer_nb.add(manual_tab, text="Manual")
+        outer_nb.add(pipeline_tab, text="Pipeline Feature Registry")
         outer_nb.add(auto_tab, text="Auto")
         outer_nb.add(analysis_tab, text="Analysis")
 
@@ -1050,8 +1052,21 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         self._build_interaction_builder_section(xform_scroll.inner, populate=False)
         self._xform_ui_built = True
 
-        # Phase 1A Auto workspace — second tab; Manual tab unchanged.
-        self._auto_feature_panel = AutoFeatureTransformPanel(auto_tab, chart_dir=self.chart_dir)
+        from .pipeline_registry_panel import PipelineRegistryPanel
+
+        self._pipeline_registry_panel = PipelineRegistryPanel(
+            pipeline_tab,
+            chart_dir=self.chart_dir,
+            on_pipelines_changed=self._on_pipeline_registry_changed,
+        )
+        self._pipeline_registry_panel.pack(fill="both", expand=True)
+
+        # Phase 1A Auto workspace — Auto tab; Manual tab unchanged.
+        self._auto_feature_panel = AutoFeatureTransformPanel(
+            auto_tab,
+            chart_dir=self.chart_dir,
+            on_pipelines_changed=self._on_pipeline_registry_changed,
+        )
         self._auto_feature_panel.pack(fill="both", expand=True)
 
         # Phase 2 Analysis Lab — build lazily on first Analysis-tab select.
@@ -1085,8 +1100,24 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         except tk.TclError:
             return
         if str(tab_text) != "Analysis":
+            if str(tab_text) == "Pipeline Feature Registry":
+                panel = getattr(self, "_pipeline_registry_panel", None)
+                if panel is not None:
+                    panel.refresh()
+            elif str(tab_text) == "Auto":
+                auto = getattr(self, "_auto_feature_panel", None)
+                if auto is not None and hasattr(auto, "refresh_target_pipelines"):
+                    auto.refresh_target_pipelines()
             return
         self._ensure_feature_analysis_panel()
+
+    def _on_pipeline_registry_changed(self, *, select_pipeline_id: str | None = None) -> None:
+        panel = getattr(self, "_pipeline_registry_panel", None)
+        if panel is not None:
+            panel.refresh()
+        auto = getattr(self, "_auto_feature_panel", None)
+        if auto is not None and hasattr(auto, "refresh_target_pipelines"):
+            auto.refresh_target_pipelines(select_pipeline_id=select_pipeline_id)
 
     def _ensure_feature_analysis_panel(self) -> None:
         if getattr(self, "_feature_analysis_panel", None) is not None:

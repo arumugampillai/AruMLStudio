@@ -173,6 +173,7 @@ def auto_feature_transform_prefs_snapshot(
     premium_enabled: bool,
     premium_min: str | float,
     premium_max: str | float,
+    target_pipeline_id: str | None = None,
 ) -> dict[str, Any]:
     try:
         interval = max(1, int(interval_sec))
@@ -194,6 +195,7 @@ def auto_feature_transform_prefs_snapshot(
         "premium_enabled": bool(premium_enabled),
         "premium_min": str(premium_min if premium_min is not None else "15"),
         "premium_max": str(premium_max if premium_max is not None else "40"),
+        "target_pipeline_id": str(target_pipeline_id or "").strip().upper(),
     }
 
 
@@ -214,6 +216,8 @@ def apply_auto_feature_transform_prefs(
     all_days = bool(src.get("all_days", True))
     scope = _normalize_day_scope(src.get("day_scope"), all_days=all_days)
     selected_days = sorted({str(d).strip() for d in (src.get("selected_days") or []) if str(d).strip()})
+    from .auto_candidate_generation import normalize_candidate_generation_prefs
+
     return {
         "market": market,
         "interval_sec": interval,
@@ -227,6 +231,10 @@ def apply_auto_feature_transform_prefs(
         "premium_enabled": bool(src.get("premium_enabled", True)),
         "premium_min": str(src.get("premium_min") if src.get("premium_min") is not None else "15"),
         "premium_max": str(src.get("premium_max") if src.get("premium_max") is not None else "40"),
+        "target_pipeline_id": str(src.get("target_pipeline_id") or "").strip().upper(),
+        "candidate_generation": normalize_candidate_generation_prefs(
+            src.get("candidate_generation") if isinstance(src.get("candidate_generation"), dict) else None
+        ),
     }
 
 

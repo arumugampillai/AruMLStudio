@@ -749,25 +749,35 @@ def prune_pipeline_transformation_config(
     return out
 
 
-def expected_pipeline_outputs_from_config(config: dict[str, Any] | None) -> list[str]:
+def expected_pipeline_outputs_from_config(
+    config: dict[str, Any] | None,
+    *,
+    master_features: list[str] | None = None,
+) -> list[str]:
     """Best-effort list of output column names the config intends to create."""
     from .feature_migration import PIPELINE_OWNED_FEATURES
-    from .transformations import describe_pipeline
+    from .transformations.describe import MASTER_STAGE_ID, describe_pipeline_stages
 
     if not config:
         return sorted(PIPELINE_OWNED_FEATURES)
     try:
-        plan = describe_pipeline(config)
+        master = [str(f).strip() for f in (master_features or []) if str(f).strip()]
+        plan = describe_pipeline_stages(
+            config,
+            master_features=master,
+            include_disabled=False,
+        )
         names: list[str] = []
-        for stage in getattr(plan, "stages", []) or []:
-            for out in getattr(stage, "outputs", []) or []:
-                name = getattr(out, "name", None) or (out.get("name") if isinstance(out, dict) else None)
+        for stage in plan.stages:
+            if str(stage.id) == MASTER_STAGE_ID:
+                continue
+            if not stage.enabled:
+                continue
+            for out in stage.output_descriptors:
+                name = str(out.name or "").strip()
                 if name:
-                    names.append(str(name))
-        # Prefer intersection with catalogue when available.
-        owned = set(PIPELINE_OWNED_FEATURES)
-        owned_hits = [n for n in names if n in owned]
-        return owned_hits or names
+                    names.append(name)
+        return list(dict.fromkeys(names))
     except Exception:
         return sorted(PIPELINE_OWNED_FEATURES)
 

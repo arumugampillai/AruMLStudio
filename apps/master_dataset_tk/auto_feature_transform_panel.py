@@ -10,7 +10,7 @@ import os
 import queue
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, ttk
-from typing import Any
+from typing import Any, Callable
 
 from chain_replay_ml.dataset_builder.feature_sources_catalog import (
     FEATURE_SOURCE_PIPELINE,
@@ -64,9 +64,16 @@ def _fmt_int(n: int | float | None) -> str:
 class AutoFeatureTransformPanel(ttk.Frame):
     """Phase 1A Auto Feature Transformation page."""
 
-    def __init__(self, master: tk.Misc, *, chart_dir: str) -> None:
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        chart_dir: str,
+        on_pipelines_changed: Callable[..., None] | None = None,
+    ) -> None:
         super().__init__(master, padding=8)
         self.chart_dir = chart_dir
+        self._on_pipelines_changed = on_pipelines_changed
         self._runner = AnalysisDatasetRunner(chart_dir)
         self._progress_q: queue.Queue[dict[str, Any]] = queue.Queue()
         self._catalog: dict[str, Any] | None = None
@@ -86,6 +93,33 @@ class AutoFeatureTransformPanel(ttk.Frame):
         self._prem_en_var = tk.BooleanVar(value=True)
         self._prem_min_var = tk.StringVar(value="15")
         self._prem_max_var = tk.StringVar(value="40")
+        self._target_pipeline_var = tk.StringVar(value="")
+        self._pipeline_label_to_id: dict[str, str] = {}
+
+        from .auto_candidate_generation import (
+            DEFAULT_HORIZONS_SEC,
+            INTERACTION_OP_LABELS,
+            TRANSFORM_LABELS,
+            default_candidate_generation_prefs,
+        )
+
+        cg = default_candidate_generation_prefs()
+        self._candidate_source_mode = tk.StringVar(value=str(cg["source"]))
+        self._transform_vars = {
+            key: tk.BooleanVar(value=bool(cg["transformations"].get(key)))
+            for key, _ in TRANSFORM_LABELS
+        }
+        self._horizon_vars = {
+            int(h): tk.BooleanVar(value=int(h) in cg["horizons_sec"])
+            for h in DEFAULT_HORIZONS_SEC
+        }
+        self._interaction_op_vars = {
+            key: tk.BooleanVar(value=bool(cg["interaction_ops"].get(key)))
+            for key, _ in INTERACTION_OP_LABELS
+        }
+        self._gen_generated = tk.StringVar(value="0")
+        self._gen_skipped = tk.StringVar(value="0")
+        self._gen_errors = tk.StringVar(value="0")
 
         self._reg_status = tk.StringVar(value="—")
         self._pipe_status = tk.StringVar(value="—")
@@ -152,6 +186,25 @@ class AutoFeatureTransformPanel(ttk.Frame):
             self._prem_en_var.set(bool(applied["premium_enabled"]))
             self._prem_min_var.set(str(applied["premium_min"]))
             self._prem_max_var.set(str(applied["premium_max"]))
+            saved_pid = str(applied.get("target_pipeline_id") or "").strip().upper()
+            if saved_pid:
+                self._target_pipeline_var.set(saved_pid)
+            cg = applied.get("candidate_generation") or {}
+            if isinstance(cg, dict):
+                self._candidate_source_mode.set(str(cg.get("source") or "registry"))
+                transforms = cg.get("transformations") if isinstance(cg.get("transformations"), dict) else {}
+                for key, var in self._transform_vars.items():
+                    if key in transforms:
+                        var.set(bool(transforms[key]))
+                horizons = cg.get("horizons_sec") or []
+                if isinstance(horizons, list):
+                    hset = {int(h) for h in horizons if int(h) > 0}
+                    for h, var in self._horizon_vars.items():
+                        var.set(h in hset)
+                ops = cg.get("interaction_ops") if isinstance(cg.get("interaction_ops"), dict) else {}
+                for key, var in self._interaction_op_vars.items():
+                    if key in ops:
+                        var.set(bool(ops[key]))
         finally:
             self._prefs_loading = False
         self._update_day_scope_state()
@@ -177,6 +230,15 @@ class AutoFeatureTransformPanel(ttk.Frame):
             premium_enabled=bool(self._prem_en_var.get()),
             premium_min=str(self._prem_min_var.get() or "15"),
             premium_max=str(self._prem_max_var.get() or "40"),
+            target_pipeline_id=str(self._target_pipeline_var.get() or "").strip().upper(),
+        )
+        from .auto_candidate_generation import candidate_generation_prefs_snapshot
+
+        snapshot["candidate_generation"] = candidate_generation_prefs_snapshot(
+            source=str(self._candidate_source_mode.get() or "registry"),
+            transformations={k: bool(v.get()) for k, v in self._transform_vars.items()},
+            horizons_sec=[h for h, v in self._horizon_vars.items() if v.get()],
+            interaction_ops={k: bool(v.get()) for k, v in self._interaction_op_vars.items()},
         )
         try:
             save_auto_feature_transform_prefs(self.chart_dir, snapshot)
@@ -195,6 +257,17 @@ class AutoFeatureTransformPanel(ttk.Frame):
             self._prem_en_var,
             self._prem_min_var,
             self._prem_max_var,
+            self._target_pipeline_var,
+            self._candidate_source_mode,
+        ):
+            try:
+                var.trace_add("write", self._persist_build_prefs)
+            except Exception:
+                pass
+        for var in (
+            *self._transform_vars.values(),
+            *self._horizon_vars.values(),
+            *self._interaction_op_vars.values(),
         ):
             try:
                 var.trace_add("write", self._persist_build_prefs)
@@ -211,6 +284,34 @@ class AutoFeatureTransformPanel(ttk.Frame):
             return
         self._render_status_cards()
         self._render_source_trees()
+        self.refresh_target_pipelines()
+
+    def refresh_target_pipelines(self, *, select_pipeline_id: str | None = None) -> None:
+        if not hasattr(self, "_target_pipeline_cb"):
+            return
+        from .pipeline_registry_service import load_pipelines
+
+        rows = load_pipelines(self.chart_dir)
+        labels: list[str] = []
+        id_by_label: dict[str, str] = {}
+        for row in rows:
+            pid = str(row.get("pipeline_id") or "")
+            name = str(row.get("name") or pid)
+            label = f"{name} ({pid})"
+            labels.append(label)
+            id_by_label[label] = pid
+        self._pipeline_label_to_id = id_by_label
+        self._target_pipeline_cb["values"] = labels
+        want = str(select_pipeline_id or self._target_pipeline_var.get() or "").strip().upper()
+        if want:
+            for label, pid in id_by_label.items():
+                if pid == want:
+                    self._target_pipeline_cb.set(label)
+                    self._target_pipeline_var.set(pid)
+                    return
+        if labels:
+            self._target_pipeline_cb.set(labels[0])
+            self._target_pipeline_var.set(id_by_label[labels[0]])
 
     def poll_progress(self) -> None:
         try:
@@ -236,17 +337,24 @@ class AutoFeatureTransformPanel(ttk.Frame):
         ).pack(side="left", padx=(12, 0))
 
         self._build_status_cards()
-        body = ttk.Panedwindow(self, orient="horizontal")
-        body.pack(fill="both", expand=True, pady=(8, 0))
 
-        left = ttk.Frame(body, padding=(0, 0, 6, 0))
-        right = ttk.Frame(body, padding=(6, 0, 0, 0))
-        body.add(left, weight=1)
-        body.add(right, weight=1)
+        main_nb = ttk.Notebook(self)
+        main_nb.pack(fill="both", expand=True, pady=(8, 0))
+
+        monitor_tab = ttk.Frame(main_nb, padding=4)
+        candidate_tab = ttk.Frame(main_nb, padding=4)
+        main_nb.add(monitor_tab, text="Live Build Monitor")
+        main_nb.add(candidate_tab, text="Auto Candidate Generation")
+
+        monitor_body = ttk.Panedwindow(monitor_tab, orient=tk.HORIZONTAL)
+        monitor_body.pack(fill="both", expand=True)
+        left = ttk.Frame(monitor_body, padding=(0, 0, 6, 0))
+        right = ttk.Frame(monitor_body, padding=(6, 0, 0, 0))
+        monitor_body.add(left, weight=1)
+        monitor_body.add(right, weight=1)
 
         left_nb = ttk.Notebook(left)
         left_nb.pack(fill="both", expand=True)
-
         build_tab = ttk.Frame(left_nb, padding=4)
         sources_tab = ttk.Frame(left_nb, padding=4)
         build_tab.columnconfigure(0, weight=1)
@@ -255,11 +363,12 @@ class AutoFeatureTransformPanel(ttk.Frame):
         sources_tab.rowconfigure(0, weight=1)
         left_nb.add(build_tab, text="Build Configuration")
         left_nb.add(sources_tab, text="Feature Sources")
-
         self._build_build_panel(build_tab)
         self._build_sources_panel(sources_tab)
         self._build_monitor_panel(right)
         self._build_summary_panel(right)
+
+        self._build_candidate_generation_panel(candidate_tab)
 
     def _build_status_cards(self) -> None:
         cards = ttk.Frame(self)
@@ -488,6 +597,225 @@ class AutoFeatureTransformPanel(ttk.Frame):
         )
         self._btn_cancel.pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Refresh Catalogues", command=self.refresh).pack(side="right")
+
+    def _on_target_pipeline_selected(self) -> None:
+        label = str(self._target_pipeline_cb.get() or "")
+        pid = self._pipeline_label_to_id.get(label)
+        if pid:
+            self._target_pipeline_var.set(pid)
+            self._persist_build_prefs()
+
+    def _candidate_prefs_snapshot(self) -> dict[str, Any]:
+        from .auto_candidate_generation import candidate_generation_prefs_snapshot
+
+        return candidate_generation_prefs_snapshot(
+            source=str(self._candidate_source_mode.get() or "registry"),
+            transformations={k: bool(v.get()) for k, v in self._transform_vars.items()},
+            horizons_sec=[h for h, v in self._horizon_vars.items() if v.get()],
+            interaction_ops={k: bool(v.get()) for k, v in self._interaction_op_vars.items()},
+        )
+
+    def _build_candidate_generation_panel(self, parent: tk.Misc) -> None:
+        from .auto_candidate_generation import (
+            DEFAULT_HORIZONS_SEC,
+            INTERACTION_OP_LABELS,
+            SOURCE_OPTIONS,
+            TRANSFORM_LABELS,
+        )
+
+        outer = ttk.Frame(parent)
+        outer.pack(fill="both", expand=True)
+        scroll = ttk.Scrollbar(outer, orient=tk.VERTICAL)
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        scroll.config(command=canvas.yview)
+        canvas.config(yscrollcommand=scroll.set)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill="both", expand=True)
+        inner = ttk.Frame(canvas, padding=(0, 0, 8, 0))
+        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_inner_configure(_event: tk.Event) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_configure(event: tk.Event) -> None:
+            canvas.itemconfigure(canvas_window, width=event.width)
+
+        inner.bind("<Configure>", _on_inner_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        ttk.Label(inner, text="AUTO CANDIDATE GENERATION", font=("", 10, "bold")).pack(
+            anchor="w", pady=(0, 8)
+        )
+
+        tp_row = ttk.Frame(inner)
+        tp_row.pack(fill="x")
+        ttk.Label(tp_row, text="Target Pipeline").pack(side="left")
+        self._target_pipeline_cb = ttk.Combobox(
+            tp_row,
+            width=32,
+            state="readonly",
+        )
+        self._target_pipeline_cb.pack(side="left", padx=(8, 0))
+        self._target_pipeline_cb.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: self._on_target_pipeline_selected(),
+        )
+
+        src_box = ttk.LabelFrame(inner, text="Source Features", padding=6)
+        src_box.pack(fill="x", pady=(10, 0))
+        for mode, label in SOURCE_OPTIONS:
+            ttk.Radiobutton(
+                src_box,
+                text=label,
+                variable=self._candidate_source_mode,
+                value=mode,
+            ).pack(anchor="w")
+
+        tx_box = ttk.LabelFrame(inner, text="Transformations", padding=6)
+        tx_box.pack(fill="x", pady=(10, 0))
+        tx_grid = ttk.Frame(tx_box)
+        tx_grid.pack(fill="x")
+        for idx, (key, label) in enumerate(TRANSFORM_LABELS):
+            ttk.Checkbutton(
+                tx_grid,
+                text=label,
+                variable=self._transform_vars[key],
+            ).grid(row=idx // 3, column=idx % 3, sticky="w", padx=(0, 12), pady=2)
+
+        hz_box = ttk.LabelFrame(inner, text="Horizons", padding=6)
+        hz_box.pack(fill="x", pady=(10, 0))
+        hz_grid = ttk.Frame(hz_box)
+        hz_grid.pack(fill="x")
+        for idx, horizon in enumerate(DEFAULT_HORIZONS_SEC):
+            ttk.Checkbutton(
+                hz_grid,
+                text=f"{horizon}s",
+                variable=self._horizon_vars[int(horizon)],
+            ).grid(row=0, column=idx, sticky="w", padx=(0, 10))
+
+        ix_box = ttk.LabelFrame(inner, text="Interaction Operations", padding=6)
+        ix_box.pack(fill="x", pady=(10, 0))
+        ix_grid = ttk.Frame(ix_box)
+        ix_grid.pack(fill="x")
+        for idx, (key, label) in enumerate(INTERACTION_OP_LABELS):
+            ttk.Checkbutton(
+                ix_grid,
+                text=label,
+                variable=self._interaction_op_vars[key],
+            ).grid(row=idx // 3, column=idx % 3, sticky="w", padx=(0, 12), pady=2)
+
+        ttk.Button(
+            inner,
+            text="Generate Candidates",
+            command=self._generate_candidates,
+        ).pack(anchor="w", pady=(14, 0))
+
+        ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill="x", pady=(14, 10))
+
+        prog_box = ttk.LabelFrame(inner, text="Generation Progress", padding=6)
+        prog_box.pack(fill="x")
+        for label, var in (
+            ("Generated", self._gen_generated),
+            ("Skipped", self._gen_skipped),
+            ("Errors", self._gen_errors),
+        ):
+            row = ttk.Frame(prog_box)
+            row.pack(fill="x", pady=1)
+            ttk.Label(row, text=f"{label}:").pack(side="left")
+            ttk.Label(row, textvariable=var).pack(side="left", padx=(6, 0))
+
+    def _generate_candidates(self) -> None:
+        pid = str(self._target_pipeline_var.get() or "").strip().upper()
+        if not pid:
+            messagebox.showwarning(
+                "Generate Candidates",
+                "Select a target pipeline first.",
+                parent=self,
+            )
+            return
+        from .pipeline_registry_service import add_pipeline_candidates, get_pipeline
+
+        row = get_pipeline(self.chart_dir, pid)
+        if not row:
+            messagebox.showerror("Generate Candidates", f"Pipeline {pid} not found.", parent=self)
+            return
+        if str(row.get("type") or "") == "existing":
+            messagebox.showinfo(
+                "Generate Candidates",
+                "The existing default pipeline already contains legacy pipeline features.",
+                parent=self,
+            )
+            return
+
+        from .auto_candidate_generation import generate_pipeline_candidate_names
+
+        try:
+            interval = max(1, int(str(self._interval_var.get() or "3").strip()))
+        except (TypeError, ValueError):
+            interval = 3
+
+        prefs = self._candidate_prefs_snapshot()
+        report = generate_pipeline_candidate_names(
+            chart_dir=self.chart_dir,
+            pipeline_id=pid,
+            interval_sec=interval,
+            candidate_prefs=prefs,
+        )
+        new_names = list(report.new_names)
+        skipped = list(report.duplicate_names)
+
+        self._gen_generated.set(str(report.candidates_generated))
+        self._gen_skipped.set(str(report.candidates_rejected_duplicates))
+        self._gen_errors.set(str(report.candidates_rejected_policy + len(report.errors)))
+
+        self._append_log("Auto Candidate Generation")
+        self._append_log(f"  Target pipeline: {report.target_pipeline_id}")
+        self._append_log(f"  Source feature count: {report.source_feature_count}")
+        self._append_log(f"  Selected transformations: {report.selected_transformations}")
+        self._append_log(f"  Selected horizons: {report.selected_horizons}")
+        self._append_log(f"  Selected interaction operations: {report.selected_interaction_ops}")
+        self._append_log(f"  Candidate combinations estimated: {report.combinations_estimated}")
+        self._append_log(f"  Candidates generated: {report.candidates_generated}")
+        self._append_log(f"  Candidates rejected by policy: {report.candidates_rejected_policy}")
+        self._append_log(f"  Candidates rejected as duplicates: {report.candidates_rejected_duplicates}")
+        self._append_log(f"  Candidates finally added: {report.candidates_added}")
+
+        if report.errors:
+            messagebox.showerror(
+                "Generate Candidates",
+                "\n".join(report.errors),
+                parent=self,
+            )
+            if not new_names:
+                return
+
+        if not new_names:
+            messagebox.showwarning(
+                "Generate Candidates",
+                "No new candidate features to add (all outputs already exist or none were produced).",
+                parent=self,
+            )
+            return
+
+        try:
+            updated = add_pipeline_candidates(self.chart_dir, pid, new_names, replace=False)
+        except Exception as exc:
+            messagebox.showerror("Generate Candidates", str(exc), parent=self)
+            return
+        n_new = len(new_names)
+        total = int((updated or {}).get("candidate_count") or 0)
+        messagebox.showinfo(
+            "Generate Candidates",
+            f"Added {n_new} candidate feature name(s) to {updated.get('name') or pid}.\n"
+            f"Skipped {len(skipped)} existing name(s).\n"
+            f"Pipeline now has {total} candidate feature(s).",
+            parent=self,
+        )
+        if callable(self._on_pipelines_changed):
+            try:
+                self._on_pipelines_changed()
+            except Exception:
+                pass
 
     def _build_monitor_panel(self, parent: tk.Misc) -> None:
         box = ttk.LabelFrame(parent, text="Live Build Monitor", padding=6)

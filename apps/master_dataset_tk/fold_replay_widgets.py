@@ -417,3 +417,21 @@ def place_toplevel_over_main(
     y = ry + max(0, (rh - h) // 2)
     win.geometry(f"{w}x{h}+{x}+{y}")
     win.minsize(min(420, w), min(320, h))
+
+
+def center_toplevel_on_widget(win: tk.Toplevel, anchor: tk.Misc) -> None:
+    """Center a toplevel over a widget (e.g. Feature Transformations panel)."""
+    win.update_idletasks()
+    try:
+        anchor.update_idletasks()
+    except tk.TclError:
+        pass
+    aw = max(int(anchor.winfo_width()), 1)
+    ah = max(int(anchor.winfo_height()), 1)
+    ax = int(anchor.winfo_rootx())
+    ay = int(anchor.winfo_rooty())
+    ww = max(int(win.winfo_width()), int(win.winfo_reqwidth()), 1)
+    wh = max(int(win.winfo_height()), int(win.winfo_reqheight()), 1)
+    x = ax + max(0, (aw - ww) // 2)
+    y = ay + max(0, (ah - wh) // 2)
+    win.geometry(f"+{x}+{y}")
