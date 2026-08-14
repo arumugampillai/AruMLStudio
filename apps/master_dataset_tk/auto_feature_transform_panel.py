@@ -244,8 +244,20 @@ class AutoFeatureTransformPanel(ttk.Frame):
         body.add(left, weight=1)
         body.add(right, weight=1)
 
-        self._build_sources_panel(left)
-        self._build_build_panel(left)
+        left_nb = ttk.Notebook(left)
+        left_nb.pack(fill="both", expand=True)
+
+        build_tab = ttk.Frame(left_nb, padding=4)
+        sources_tab = ttk.Frame(left_nb, padding=4)
+        build_tab.columnconfigure(0, weight=1)
+        build_tab.rowconfigure(0, weight=1)
+        sources_tab.columnconfigure(0, weight=1)
+        sources_tab.rowconfigure(0, weight=1)
+        left_nb.add(build_tab, text="Build Configuration")
+        left_nb.add(sources_tab, text="Feature Sources")
+
+        self._build_build_panel(build_tab)
+        self._build_sources_panel(sources_tab)
         self._build_monitor_panel(right)
         self._build_summary_panel(right)
 
@@ -286,10 +298,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
                     except tk.TclError:
                         pass
     def _build_sources_panel(self, parent: tk.Misc) -> None:
-        box = ttk.LabelFrame(parent, text="Feature Sources", padding=6)
-        box.pack(fill="both", expand=True)
-
-        nb = ttk.Notebook(box)
+        nb = ttk.Notebook(parent)
         nb.pack(fill="both", expand=True)
 
         reg_tab = ttk.Frame(nb, padding=4)
@@ -322,17 +331,21 @@ class AutoFeatureTransformPanel(ttk.Frame):
         return tree
 
     def _build_build_panel(self, parent: tk.Misc) -> None:
-        box = ttk.LabelFrame(parent, text="Build Configuration", padding=6)
-        box.pack(fill="x", pady=(8, 0))
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
 
-        # Scrollable options (hints made the panel taller than the left column).
-        scroll_wrap = ttk.Frame(box)
-        scroll_wrap.pack(fill="x", expand=False)
-        canvas = tk.Canvas(scroll_wrap, highlightthickness=0, height=210)
+        scroll_wrap = ttk.Frame(parent)
+        scroll_wrap.grid(row=0, column=0, sticky="nsew")
+        scroll_wrap.columnconfigure(0, weight=1)
+        scroll_wrap.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(scroll_wrap, highlightthickness=0)
         sb = ttk.Scrollbar(scroll_wrap, orient="vertical", command=canvas.yview)
         inner = ttk.Frame(canvas, padding=(0, 0, 4, 0))
         inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
         canvas.configure(yscrollcommand=sb.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
 
         def _sync_scroll(_event: tk.Event | None = None) -> None:
             canvas.configure(scrollregion=canvas.bbox("all"))
@@ -357,9 +370,6 @@ class AutoFeatureTransformPanel(ttk.Frame):
             w.bind("<Leave>", lambda _e, widget=w: widget.unbind_all("<MouseWheel>"), add="+")
             w.bind("<Button-4>", _on_wheel, add="+")
             w.bind("<Button-5>", _on_wheel, add="+")
-
-        canvas.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
 
         row = ttk.Frame(inner)
         row.pack(fill="x")
@@ -462,16 +472,8 @@ class AutoFeatureTransformPanel(ttk.Frame):
             wraplength=360,
         ).pack(anchor="w", pady=(0, 2))
 
-        ttk.Label(
-            src,
-            text="Phase 1A builds the union of selected sources. No pruning, rules, or Interaction Features.",
-            foreground="#666",
-            wraplength=360,
-        ).pack(anchor="w", pady=(8, 0))
-
-        # Always visible — outside the scroll area.
-        actions = ttk.Frame(box)
-        actions.pack(fill="x", pady=(8, 0))
+        actions = ttk.Frame(inner)
+        actions.pack(fill="x", pady=(12, 4))
         self._btn_build = ttk.Button(
             actions,
             text="Create Analysis Dataset",

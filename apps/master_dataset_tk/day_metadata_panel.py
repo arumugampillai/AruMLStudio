@@ -1,4 +1,4 @@
-"""Day Metadata panel — facts vs assessment, coverage / gaps / timestamps / registry."""
+"""Day Metadata panel — Data Overview tab + Build Info tab."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ class DayMetadataPanel(ttk.Frame):
         self._ov: dict[str, Any] = {}
         self._fact_vars: dict[str, tk.StringVar] = {}
         self._health_vars: dict[str, tk.StringVar] = {}
-        self._ingest_vars: dict[str, tk.StringVar] = {}
+        self._build_vars: dict[str, tk.StringVar] = {}
         self._build_ui()
         if self._days:
             self.after_idle(self.refresh)
@@ -108,20 +108,19 @@ class DayMetadataPanel(ttk.Frame):
         ttk.Button(top, text="Rebuild metadata…", command=self._rebuild).pack(side="left")
         ttk.Label(top, textvariable=self._status, foreground="#888").pack(side="right")
 
-        body = ttk.Panedwindow(self, orient=tk.VERTICAL)
-        body.pack(fill="both", expand=True, padx=8, pady=4)
-        upper = ttk.Frame(body)
-        body.add(upper, weight=2)
-        lower = ttk.Frame(body)
-        body.add(lower, weight=3)
+        main_nb = ttk.Notebook(self)
+        main_nb.pack(fill="both", expand=True, padx=8, pady=4)
 
-        # Row 1: Overview | Day Statistics
-        row1 = ttk.Frame(upper)
+        # Tab 1 — Data Overview (day facts + detail sub-tabs)
+        data_tab = ttk.Frame(main_nb, padding=4)
+        main_nb.add(data_tab, text="Data Overview")
+
+        row1 = ttk.Frame(data_tab)
         row1.pack(fill="x")
         row1.columnconfigure(0, weight=3)
         row1.columnconfigure(1, weight=1)
 
-        facts = ttk.LabelFrame(row1, text="Overview (facts)", padding=8)
+        facts = ttk.LabelFrame(row1, text="Data Overview", padding=8)
         facts.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         self._kv_grid(
             facts,
@@ -129,18 +128,15 @@ class DayMetadataPanel(ttk.Frame):
                 ("trading_day", "Trading Day"),
                 ("total_rows", "Rows"),
                 ("total_columns", "Columns"),
-                ("registry_features", "Registry Features"),
                 ("meta_columns", "Meta Columns"),
                 ("first_timestamp", "First Timestamp"),
                 ("last_timestamp", "Last Timestamp"),
-                ("sampling_interval_sec", "Interval"),
-                ("gap_policy_sec", "Gap Policy"),
                 ("token_count", "Token Count"),
                 ("expiry", "Expiry"),
                 ("trading_duration_sec", "Trading Duration"),
             ),
             self._fact_vars,
-            cols=4,
+            cols=3,
         )
 
         day_stats = ttk.LabelFrame(row1, text="Day Statistics", padding=8)
@@ -157,31 +153,12 @@ class DayMetadataPanel(ttk.Frame):
             cols=2,
         )
 
-        # Row 2: Ingestion Metadata | Health Assessment
-        row2 = ttk.Frame(upper)
+        row2 = ttk.Frame(data_tab)
         row2.pack(fill="x", pady=(8, 0))
         row2.columnconfigure(0, weight=1)
-        row2.columnconfigure(1, weight=1)
-
-        ingest = ttk.LabelFrame(row2, text="Ingestion Metadata", padding=8)
-        ingest.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
-        self._kv_grid(
-            ingest,
-            (
-                ("dataset_version", "Dataset Version"),
-                ("registry_version", "Registry Version"),
-                ("feature_engine_version", "Feature Engine Version"),
-                ("gap_policy_version", "Gap Policy Version"),
-                ("imported_at", "Imported At"),
-                ("build_duration_sec", "Build Duration"),
-                ("metadata_generated_at", "Metadata Generated At"),
-            ),
-            self._ingest_vars,
-            cols=2,
-        )
 
         health = ttk.LabelFrame(row2, text="Health Assessment (derived)", padding=8)
-        health.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        health.grid(row=0, column=0, sticky="nsew")
         self._kv_grid(
             health,
             (
@@ -206,12 +183,12 @@ class DayMetadataPanel(ttk.Frame):
             health, textvariable=self._score_detail, foreground="#666", justify="left"
         ).pack(anchor="w", pady=(4, 0))
 
-        nb = ttk.Notebook(lower)
-        nb.pack(fill="both", expand=True)
+        detail_nb = ttk.Notebook(data_tab)
+        detail_nb.pack(fill="both", expand=True, pady=(8, 0))
 
         # Coverage
-        cov_tab = ttk.Frame(nb, padding=4)
-        nb.add(cov_tab, text="Coverage")
+        cov_tab = ttk.Frame(detail_nb, padding=4)
+        detail_nb.add(cov_tab, text="Coverage")
         filt = ttk.Frame(cov_tab)
         filt.pack(fill="x", pady=(0, 4))
         for value, label in (
@@ -277,8 +254,8 @@ class DayMetadataPanel(ttk.Frame):
         )
 
         # Gaps
-        gap_tab = ttk.Frame(nb, padding=4)
-        nb.add(gap_tab, text="Gap Analysis")
+        gap_tab = ttk.Frame(detail_nb, padding=4)
+        detail_nb.add(gap_tab, text="Gap Analysis")
         self._gap_summary = tk.StringVar(value="")
         ttk.Label(gap_tab, textvariable=self._gap_summary, justify="left").pack(anchor="w", pady=(0, 6))
         gcols = ("start", "end", "duration", "missing", "token", "action")
@@ -299,8 +276,8 @@ class DayMetadataPanel(ttk.Frame):
         gsb.pack(side="right", fill="y")
 
         # Timestamps
-        ts_tab = ttk.Frame(nb, padding=8)
-        nb.add(ts_tab, text="Timestamp Quality")
+        ts_tab = ttk.Frame(detail_nb, padding=8)
+        detail_nb.add(ts_tab, text="Timestamp Quality")
         self._ts_vars: dict[str, tk.StringVar] = {}
         self._kv_grid(
             ts_tab,
@@ -321,8 +298,8 @@ class DayMetadataPanel(ttk.Frame):
         )
 
         # Registry
-        reg_tab = ttk.Frame(nb, padding=8)
-        nb.add(reg_tab, text="Registry")
+        reg_tab = ttk.Frame(detail_nb, padding=8)
+        detail_nb.add(reg_tab, text="Registry")
         self._reg_vars: dict[str, tk.StringVar] = {}
         self._kv_grid(
             reg_tab,
@@ -339,6 +316,77 @@ class DayMetadataPanel(ttk.Frame):
         self._reg_detail = tk.StringVar(value="")
         ttk.Label(reg_tab, textvariable=self._reg_detail, justify="left", wraplength=720).pack(
             anchor="w", pady=(12, 0)
+        )
+
+        # Tab 2 — Build Info (dataset-level configuration)
+        build_tab = ttk.Frame(main_nb, padding=4)
+        main_nb.add(build_tab, text="Build Info")
+        build_scroll = ttk.Frame(build_tab)
+        build_scroll.pack(fill="both", expand=True)
+
+        build_cfg = ttk.LabelFrame(build_scroll, text="Build configuration", padding=8)
+        build_cfg.pack(fill="x", pady=(0, 8))
+        self._kv_grid(
+            build_cfg,
+            (
+                ("market", "Market"),
+                ("sampling", "Sampling interval"),
+                ("sliding_stride", "Sliding stride"),
+                ("feature_window", "Feature window"),
+                ("strike_selection", "Strike selection"),
+                ("gap_policy", "Gap policy"),
+                ("target_labels", "Target labels"),
+                ("feature_count", "Features"),
+                ("target_count", "Targets"),
+                ("atm_band", "ATM band"),
+                ("lookback_policy", "Lookback policy"),
+            ),
+            self._build_vars,
+            cols=3,
+        )
+
+        feat_sel = ttk.LabelFrame(build_scroll, text="Feature selection", padding=8)
+        feat_sel.pack(fill="x", pady=(0, 8))
+        self._kv_grid(
+            feat_sel,
+            (
+                ("feature_profile", "Profile"),
+                ("feature_groups", "Enabled groups"),
+            ),
+            self._build_vars,
+            cols=2,
+        )
+        feat_text_frame = ttk.Frame(feat_sel)
+        feat_text_frame.pack(fill="both", expand=True, pady=(8, 0))
+        feat_sb = ttk.Scrollbar(feat_text_frame, orient="vertical")
+        self._feature_list_text = tk.Text(
+            feat_text_frame,
+            height=10,
+            wrap="none",
+            font=("Consolas", 9),
+            yscrollcommand=feat_sb.set,
+        )
+        feat_sb.config(command=self._feature_list_text.yview)
+        self._feature_list_text.pack(side="left", fill="both", expand=True)
+        feat_sb.pack(side="right", fill="y")
+        self._feature_list_text.configure(state="disabled")
+
+        provenance = ttk.LabelFrame(build_scroll, text="Build provenance", padding=8)
+        provenance.pack(fill="x")
+        self._kv_grid(
+            provenance,
+            (
+                ("dataset_version", "Dataset version"),
+                ("registry_version", "Registry version"),
+                ("feature_engine_version", "Feature engine"),
+                ("gap_policy_version", "Gap policy version"),
+                ("builder_version", "Builder version"),
+                ("schema_hash", "Schema hash"),
+                ("created_at", "Created at"),
+                ("updated_at", "Updated at"),
+            ),
+            self._build_vars,
+            cols=4,
         )
 
     def refresh(self) -> None:
@@ -371,6 +419,7 @@ class DayMetadataPanel(ttk.Frame):
             self._ov = {}
             self._columns_cache = []
             self._clear_vars()
+            self._fill_build_info()
             self._render_columns()
             self._render_gaps({})
             return
@@ -380,32 +429,37 @@ class DayMetadataPanel(ttk.Frame):
         self._columns_cache = columns
         self._fill_facts(overview)
         self._fill_health(overview)
-        self._fill_ingest(overview)
         self._fill_timestamps(overview)
         self._fill_registry(overview)
+        self._fill_build_info(day_overview=overview)
         self._render_columns()
         self._render_gaps(gaps)
 
     def _clear_vars(self) -> None:
-        for d in (self._fact_vars, self._health_vars, self._ingest_vars, self._ts_vars, self._reg_vars):
+        for d in (
+            self._fact_vars,
+            self._health_vars,
+            self._build_vars,
+            self._ts_vars,
+            self._reg_vars,
+        ):
             for v in d.values():
                 v.set("—")
         self._score_detail.set("")
         self._reg_detail.set("")
         self._gap_summary.set("")
+        if hasattr(self, "_feature_list_text"):
+            self._feature_list_text.configure(state="normal")
+            self._feature_list_text.delete("1.0", tk.END)
+            self._feature_list_text.configure(state="disabled")
 
     def _fill_facts(self, ov: dict[str, Any]) -> None:
         self._fact_vars["trading_day"].set(str(ov.get("trading_day") or "—"))
         self._fact_vars["total_rows"].set(_fmt_int(ov.get("total_rows")))
         self._fact_vars["total_columns"].set(_fmt_int(ov.get("total_columns")))
-        self._fact_vars["registry_features"].set(_fmt_int(ov.get("registry_features")))
         self._fact_vars["meta_columns"].set(_fmt_int(ov.get("meta_columns")))
         self._fact_vars["first_timestamp"].set(_fmt_clock(ov.get("first_timestamp")))
         self._fact_vars["last_timestamp"].set(_fmt_clock(ov.get("last_timestamp")))
-        self._fact_vars["sampling_interval_sec"].set(
-            f"{_fmt_num(ov.get('sampling_interval_sec'), 1)} sec"
-        )
-        self._fact_vars["gap_policy_sec"].set(f"{_fmt_num(ov.get('gap_policy_sec'), 0)} sec")
         self._fact_vars["token_count"].set(_fmt_int(ov.get("token_count")))
         self._fact_vars["expiry"].set(str(ov.get("expiry") or "—"))
         self._fact_vars["trading_duration_sec"].set(_fmt_dur(ov.get("trading_duration_sec")))
@@ -442,17 +496,50 @@ class DayMetadataPanel(ttk.Frame):
             )
         )
 
-    def _fill_ingest(self, ov: dict[str, Any]) -> None:
-        self._ingest_vars["dataset_version"].set(str(ov.get("dataset_version") or ov.get("build_version") or "—"))
-        self._ingest_vars["registry_version"].set(str(ov.get("registry_version") or "—"))
-        self._ingest_vars["feature_engine_version"].set(str(ov.get("feature_engine_version") or "—"))
-        self._ingest_vars["gap_policy_version"].set(str(ov.get("gap_policy_version") or "—"))
-        self._ingest_vars["imported_at"].set(str(ov.get("imported_at") or "—")[:19])
-        bd = ov.get("build_duration_sec")
-        self._ingest_vars["build_duration_sec"].set(_fmt_dur(bd) if bd is not None else "—")
-        self._ingest_vars["metadata_generated_at"].set(
-            str(ov.get("metadata_generated_at") or ov.get("updated_at") or "—")[:19]
-        )
+    def _fill_build_info(self, *, day_overview: dict[str, Any] | None = None) -> None:
+        if not hasattr(self, "_build_vars"):
+            return
+        try:
+            from chain_replay_ml.dataset_builder.master_store import MasterStore
+
+            from .day_build_info import format_feature_names_text, load_master_build_info
+
+            store = MasterStore(self.db_path)
+            store.open()
+            try:
+                info = load_master_build_info(store)
+            finally:
+                store.close()
+        except Exception as exc:
+            for v in self._build_vars.values():
+                v.set("—")
+            if hasattr(self, "_feature_list_text"):
+                self._feature_list_text.configure(state="normal")
+                self._feature_list_text.delete("1.0", tk.END)
+                self._feature_list_text.insert("1.0", f"Build info unavailable: {exc}")
+                self._feature_list_text.configure(state="disabled")
+            return
+
+        for key, val in (info.get("kv_fields") or {}).items():
+            if key in self._build_vars:
+                self._build_vars[key].set(str(val))
+        if day_overview:
+            meta_at = str(
+                day_overview.get("metadata_generated_at")
+                or day_overview.get("updated_at")
+                or ""
+            )[:19]
+            if meta_at and self._build_vars.get("updated_at"):
+                self._build_vars["updated_at"].set(meta_at)
+            imported = str(day_overview.get("imported_at") or "")[:19]
+            if imported and self._build_vars.get("created_at"):
+                if self._build_vars["created_at"].get() == "—":
+                    self._build_vars["created_at"].set(imported)
+        if hasattr(self, "_feature_list_text"):
+            self._feature_list_text.configure(state="normal")
+            self._feature_list_text.delete("1.0", tk.END)
+            self._feature_list_text.insert("1.0", format_feature_names_text(info))
+            self._feature_list_text.configure(state="disabled")
 
     def _fill_timestamps(self, ov: dict[str, Any]) -> None:
         self._ts_vars["first_timestamp"].set(_fmt_clock(ov.get("first_timestamp")))
