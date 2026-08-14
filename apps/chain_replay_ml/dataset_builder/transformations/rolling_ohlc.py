@@ -91,6 +91,73 @@ class RollingOhlcTransformation(FeatureTransformation):
     depends_on: list[str] = []
     params: dict[str, Any] = {}
 
+    def describe(
+        self,
+        params: dict[str, Any] | None = None,
+        *,
+        upstream=None,
+        master_features: list[str] | None = None,
+        sample_interval_sec: float | int | None = None,
+        enabled: bool | None = None,
+    ):
+        from .describe import MASTER_STAGE_ID, OutputDescriptor, make_stage_descriptor
+        from .rolling_statistics import _parse_windows
+
+        del upstream, master_features
+        is_enabled = bool(self.enabled if enabled is None else enabled)
+        params = dict(params or {})
+        interval = float(sample_interval_sec) if sample_interval_sec is not None else float(
+            params.get("sample_interval_sec") or 3.0
+        )
+        outputs: list[OutputDescriptor] = []
+        try:
+            features, offsets = _parse_windows(
+                transform_name="Rolling OHLC Transformation",
+                params=params,
+                sample_interval_sec=interval,
+            )
+            output_names = _resolve_outputs(params)
+            top_column_map = params.get("column_map")
+            if not isinstance(top_column_map, dict):
+                top_column_map = None
+            single_output = len(output_names) == 1
+            for feat in features:
+                for sec, _rows, suffix, column in offsets:
+                    override: Any = column
+                    if top_column_map is not None:
+                        if isinstance(column, dict):
+                            override = {**top_column_map, **column}
+                        elif column is None:
+                            override = top_column_map
+                    for output_name in output_names:
+                        col = _column_for(
+                            feature=feat,
+                            output=output_name,
+                            suffix=suffix,
+                            sec=sec,
+                            column_override=override,
+                            single_output=single_output,
+                        )
+                        outputs.append(
+                            OutputDescriptor(
+                                name=str(col),
+                                kind="rolling_ohlc",
+                                source_feature=str(feat),
+                                op=output_name,
+                                meta={"seconds": float(sec)},
+                            )
+                        )
+        except (LagConfigError, Exception):
+            outputs = []
+
+        return make_stage_descriptor(
+            self,
+            enabled=is_enabled,
+            outputs=outputs,
+            input_sources=[MASTER_STAGE_ID],
+            notes="Planned rolling OHLC columns from features × windows × outputs.",
+        )
+
     def transform(self, df: pd.DataFrame, context: TransformContext) -> TransformationResult:
         t0 = time.perf_counter()
         params = resolve_transform_params(self.id, getattr(self, "params", None), context.config)

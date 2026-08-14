@@ -718,85 +718,19 @@ class RegistryPanel(ttk.Frame, LazyLoadMixin):
         name = self._require_selection()
         if not name:
             return
-        self._show_metadata_dialog(name)
-
-    def _show_metadata_dialog(self, name: str) -> None:
-        try:
-            data = svc.load_dataset_metadata(self.chart_dir, name)
-        except Exception as exc:
-            messagebox.showerror("Metadata", str(exc))
-            return
-        dlg = tk.Toplevel(self)
-        dlg.title(f"Metadata — {name}")
-        dlg.geometry("720x560")
-        dlg.transient(self.winfo_toplevel())
-        txt = scrolledtext.ScrolledText(dlg, wrap="none", font=("Consolas", 9))
-        txt.pack(fill="both", expand=True, padx=8, pady=8)
-
-        def refresh_body() -> None:
-            try:
-                fresh = svc.load_dataset_metadata(self.chart_dir, name)
-            except Exception as exc:
-                messagebox.showerror("Metadata", str(exc), parent=dlg)
-                return
-            txt.configure(state="normal")
-            txt.delete("1.0", tk.END)
-            txt.insert("1.0", fmt.format_metadata_view(fresh))
-            txt.configure(state="disabled")
-            csv_info = fresh.get("csv_export") or {}
-            has_csv = csv_info.get("status") == "Generated"
-            open_csv_btn.configure(state="normal" if has_csv else "disabled")
-            open_folder_btn.configure(state="normal" if has_csv else "disabled")
-            delete_csv_btn.configure(state="normal" if has_csv else "disabled")
-
-        refresh_body()
-
-        row = ttk.Frame(dlg, padding=8)
-        row.pack(fill="x")
         meta_path = None
-        for r in self._rows:
-            if r.get("dataset_name") == name:
-                meta_path = r.get("metadata_path")
+        for row in self._rows:
+            if row.get("dataset_name") == name:
+                meta_path = row.get("metadata_path")
                 break
-        if meta_path:
-            ttk.Button(row, text="Open metadata file", command=lambda: open_path(meta_path)).pack(side="left")
+        from .dataset_metadata_panel import open_dataset_metadata_window
 
-        def open_csv() -> None:
-            try:
-                info = svc.load_dataset_metadata(self.chart_dir, name).get("csv_export") or {}
-            except Exception as exc:
-                messagebox.showerror("Open CSV", str(exc), parent=dlg)
-                return
-            path = info.get("csv_path")
-            if not path or not os.path.isfile(path):
-                messagebox.showinfo("Open CSV", "No CSV export found.", parent=dlg)
-                refresh_body()
-                return
-            open_path(path)
-
-        def open_csv_folder() -> None:
-            try:
-                info = svc.load_dataset_metadata(self.chart_dir, name).get("csv_export") or {}
-            except Exception as exc:
-                messagebox.showerror("Open CSV folder", str(exc), parent=dlg)
-                return
-            path = info.get("csv_path")
-            if not path:
-                messagebox.showinfo("Open CSV folder", "No CSV export found.", parent=dlg)
-                return
-            open_path(os.path.dirname(path))
-
-        open_csv_btn = ttk.Button(row, text="Open CSV", command=open_csv)
-        open_csv_btn.pack(side="left", padx=4)
-        open_folder_btn = ttk.Button(row, text="Open CSV folder", command=open_csv_folder)
-        open_folder_btn.pack(side="left", padx=4)
-
-        def delete_csv_from_dialog() -> None:
-            self._delete_csv(dataset_name=name, on_done=refresh_body, parent=dlg)
-
-        delete_csv_btn = ttk.Button(row, text="Delete CSV", command=delete_csv_from_dialog)
-        delete_csv_btn.pack(side="left", padx=4)
-        ttk.Button(row, text="Close", command=dlg.destroy).pack(side="right")
+        open_dataset_metadata_window(
+            self,
+            chart_dir=self.chart_dir,
+            dataset_name=name,
+            metadata_path=str(meta_path or "") or None,
+        )
 
     def _generate_csv(self) -> None:
         name = self._require_selection()

@@ -92,3 +92,161 @@ def _normalize_entry(entry: Any) -> dict[str, Any]:
 def config_for_metadata(config: dict[str, Any] | None) -> dict[str, Any]:
     """Return the configuration object persisted into dataset metadata."""
     return normalize_transformation_config(config)
+
+
+def merge_transformation_configs(
+    base: dict[str, Any] | None,
+    extra: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Append ``extra`` transformation stages after ``base`` (experimental after catalogue)."""
+    primary = normalize_transformation_config(base)
+    secondary = normalize_transformation_config(extra)
+    merged = list(primary.get("transformations") or [])
+    max_order = 0
+    for stage in merged:
+        try:
+            max_order = max(max_order, int(stage.get("order") or 0))
+        except (TypeError, ValueError):
+            continue
+    offset = max_order + 100
+    for stage in secondary.get("transformations") or []:
+        if not isinstance(stage, dict) or not stage.get("enabled"):
+            continue
+        copy = dict(stage)
+        if copy.get("order") is not None:
+            try:
+                copy["order"] = int(copy["order"]) + offset
+            except (TypeError, ValueError):
+                copy["order"] = offset
+        else:
+            copy["order"] = offset
+        merged.append(copy)
+    return {
+        "transformation_pipeline_version": int(
+            primary.get("transformation_pipeline_version") or TRANSFORMATION_PIPELINE_VERSION
+        ),
+        "transformations": merged,
+    }
+
+
+def _seconds_compatible_with_interval(sec: float, interval: float) -> bool:
+    if interval <= 0:
+        return False
+    rows = float(sec) / interval
+    rows_i = int(round(rows))
+    return abs(rows - rows_i) <= 1e-9 and rows_i >= 1
+
+
+def _filter_timed_config_items(items: list[Any], interval: float) -> list[Any]:
+    kept: list[Any] = []
+    for item in items:
+        if isinstance(item, dict) and item.get("seconds") is not None:
+            try:
+                sec = float(item["seconds"])
+            except (TypeError, ValueError):
+                kept.append(item)
+                continue
+            if sec > 0 and not _seconds_compatible_with_interval(sec, interval):
+                continue
+        kept.append(item)
+    return kept
+
+
+def _derived_output_compatible(output: dict[str, Any], interval: float) -> bool:
+    terms = output.get("terms")
+    if not isinstance(terms, list):
+        return True
+    for term in terms:
+        if not isinstance(term, dict) or term.get("seconds") is None:
+            continue
+        try:
+            sec = float(term["seconds"])
+        except (TypeError, ValueError):
+            continue
+        if sec > 0 and not _seconds_compatible_with_interval(sec, interval):
+            return False
+    return True
+
+
+def prune_transformation_config_for_interval(
+    config: dict[str, Any] | None,
+    sample_interval_sec: float,
+) -> dict[str, Any]:
+    """Drop horizons/windows whose seconds are not exact multiples of the sample interval."""
+    cfg = normalize_transformation_config(config)
+    try:
+        interval = float(sample_interval_sec)
+    except (TypeError, ValueError):
+        return cfg
+    if interval <= 0:
+        return cfg
+
+    kept_stages: list[dict[str, Any]] = []
+    for raw in list(cfg.get("transformations") or []):
+        if not isinstance(raw, dict):
+            continue
+        stage = dict(raw)
+        if not stage.get("enabled"):
+            kept_stages.append(stage)
+            continue
+        params = dict(stage.get("params") or {})
+        params["sample_interval_sec"] = interval
+
+        for key in ("horizons", "windows", "periods"):
+            items = params.get(key)
+            if isinstance(items, list) and items:
+                filtered = _filter_timed_config_items(items, interval)
+                if not filtered:
+                    continue
+                params[key] = filtered
+
+        lag_seconds = params.get("lag_seconds")
+        if isinstance(lag_seconds, list):
+            filtered_lags: list[Any] = []
+            for raw_sec in lag_seconds:
+                try:
+                    sec = float(raw_sec)
+                except (TypeError, ValueError):
+                    continue
+                if _seconds_compatible_with_interval(sec, interval):
+                    filtered_lags.append(raw_sec)
+            if lag_seconds and not filtered_lags:
+                continue
+            params["lag_seconds"] = filtered_lags
+
+        outputs = params.get("outputs")
+        if isinstance(outputs, list) and outputs:
+            kept_outputs: list[Any] = []
+            for out in outputs:
+                if isinstance(out, str) and str(out).strip():
+                    # rolling_ohlc uses string output names, not derived-style dicts.
+                    kept_outputs.append(str(out).strip())
+                    continue
+                if not isinstance(out, dict):
+                    continue
+                if not _derived_output_compatible(out, interval):
+                    continue
+                kept_outputs.append(out)
+            if not kept_outputs:
+                continue
+            params["outputs"] = kept_outputs
+
+        stage["params"] = params
+        kept_stages.append(stage)
+
+    return {
+        "transformation_pipeline_version": int(
+            cfg.get("transformation_pipeline_version") or TRANSFORMATION_PIPELINE_VERSION
+        ),
+        "transformations": kept_stages,
+    }
+
+
+__all__ = [
+    "TRANSFORMATION_PIPELINE_VERSION",
+    "config_for_metadata",
+    "default_transformation_config",
+    "merge_transformation_configs",
+    "normalize_transformation_config",
+    "prune_transformation_config_for_interval",
+]

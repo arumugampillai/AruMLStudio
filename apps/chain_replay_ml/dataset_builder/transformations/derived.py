@@ -94,7 +94,7 @@ class DerivedTransformation(FeatureTransformation):
             )
 
         # Validate + plan first, then compute via Polars.
-        planned: list[tuple[str, str, list[tuple[int, float]]]] = []
+        planned: list[tuple[str, list[tuple[str, int, float]]]] = []
         created: list[str] = []
         for spec in outputs_raw:
             if not isinstance(spec, dict):
@@ -105,17 +105,6 @@ class DerivedTransformation(FeatureTransformation):
             feature = str(spec.get("feature") or "").strip()
             column = str(spec.get("column") or "").strip()
             terms = spec.get("terms") or []
-            if not feature:
-                raise LagConfigError(
-                    "Derived Transformation\n"
-                    "outputs[].feature is required."
-                )
-            if feature not in df.columns:
-                raise LagConfigError(
-                    "Derived Transformation\n"
-                    "Feature not found\n"
-                    + feature
-                )
             if not column:
                 raise LagConfigError(
                     "Derived Transformation\n"
@@ -126,12 +115,19 @@ class DerivedTransformation(FeatureTransformation):
                     "Derived Transformation\n"
                     f"outputs[].terms is empty for column={column!r}."
                 )
-            term_plan: list[tuple[int, float]] = []
+            term_plan: list[tuple[str, int, float]] = []
+            term_features: set[str] = set()
             for term in terms:
                 if not isinstance(term, dict):
                     raise LagConfigError(
                         "Derived Transformation\n"
                         f"Invalid term: {term!r}"
+                    )
+                term_feat = str(term.get("feature") or feature or "").strip()
+                if not term_feat:
+                    raise LagConfigError(
+                        "Derived Transformation\n"
+                        f"outputs[].feature or term.feature is required for column={column!r}."
                     )
                 try:
                     coeff = float(term.get("coeff"))
@@ -141,19 +137,27 @@ class DerivedTransformation(FeatureTransformation):
                         f"Invalid term.coeff: {term.get('coeff')!r}"
                     ) from exc
                 rows = _resolve_term_rows(term.get("seconds"), interval)
-                term_plan.append((rows, coeff))
-            planned.append((feature, column, term_plan))
+                term_plan.append((term_feat, rows, coeff))
+                term_features.add(term_feat)
+            missing_feats = [f for f in term_features if f not in df.columns]
+            if missing_feats:
+                raise LagConfigError(
+                    "Derived Transformation\n"
+                    "Feature not found\n"
+                    + "\n".join(missing_feats)
+                )
+            planned.append((column, term_plan))
             created.append(column)
 
         total = len(planned)
 
         def _pandas_fallback(frame: pd.DataFrame) -> pd.DataFrame:
             local = frame.copy()
-            for feature, column, term_plan in planned:
+            for column, term_plan in planned:
                 series: pd.Series | None = None
-                for rows, coeff in term_plan:
+                for term_feat, rows, coeff in term_plan:
                     shifted = shift_feature_columns(
-                        local, feature=feature, rows=rows, partition_by=partition_by
+                        local, feature=term_feat, rows=rows, partition_by=partition_by
                     )
                     piece = shifted * coeff
                     series = piece if series is None else series + piece

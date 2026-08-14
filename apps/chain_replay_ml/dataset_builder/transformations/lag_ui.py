@@ -555,16 +555,29 @@ def filter_laggable_features(
     *,
     registry_only: bool = True,
     exclude_names: set[str] | frozenset[str] | None = None,
+    data_dir: str | None = None,
 ) -> list[str]:
     """Columns offered in Feature Transformation feature selection.
 
     When ``registry_only`` is True (default), only canonical registry features are
     listed — not obsolete Master columns that still sit on disk.
+
+    When ``data_dir`` is supplied, the authoritative active registry list from
+    ``get_active_feature_names`` is used instead of the static canonical catalogue.
     """
     names = [
         str(c) for c in columns
         if str(c).strip() and str(c) not in META_SKIP_COLUMNS
     ]
     if registry_only:
-        names = filter_to_registry_features(names, exclude_names=exclude_names)
+        if data_dir:
+            from chain_replay_ml.dataset_builder.feature_sources_catalog import (
+                get_active_feature_names,
+            )
+
+            active = set(get_active_feature_names(data_dir))
+            blocked = {str(n) for n in (exclude_names or ())}
+            names = [n for n in names if n in active and n not in blocked]
+        else:
+            names = filter_to_registry_features(names, exclude_names=exclude_names)
     return sorted(names)

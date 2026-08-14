@@ -14,6 +14,8 @@ from chain_replay_ml.dataset_builder.pipeline_features_config import (
     prune_pipeline_transformation_config,
 )
 from chain_replay_ml.dataset_builder.pipeline_features_prefs import (
+    is_excluded_pipeline_feature,
+    load_pipeline_transform_prune_features,
     load_retired_pipeline_features,
     retire_pipeline_features,
 )
@@ -52,6 +54,13 @@ class PipelineFeaturesPrefsTests(unittest.TestCase):
     def test_load_empty_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as data_dir:
             self.assertEqual(load_retired_pipeline_features(data_dir), frozenset())
+
+    def test_transform_prune_includes_computed_base(self) -> None:
+        with tempfile.TemporaryDirectory() as data_dir:
+            skip = load_pipeline_transform_prune_features(data_dir)
+            self.assertIn("bs_reiv_pred", skip)
+            self.assertIn("dgt_reiv_pred", skip)
+            self.assertTrue(is_excluded_pipeline_feature("bs_reiv_pred_lag_6s", data_dir))
 
 
 if __name__ == "__main__":

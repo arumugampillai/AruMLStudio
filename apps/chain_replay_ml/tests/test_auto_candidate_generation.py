@@ -9,6 +9,8 @@ from master_dataset_tk.auto_candidate_generation import (
     candidate_generation_prefs_snapshot,
     default_candidate_generation_prefs,
     normalize_candidate_generation_prefs,
+    _filter_active_source_features,
+    _filter_registry_source_features,
 )
 from chain_replay_ml.dataset_builder.pipeline_features_config import (
     expected_pipeline_outputs_from_config,
@@ -78,6 +80,28 @@ class AutoCandidateGenerationTests(unittest.TestCase):
         self.assertGreater(len(names), 50)
         self.assertIn("ltp_diff_6s", names)
         self.assertIn("current_iv_diff_6s", names)
+
+    def test_filter_registry_source_excludes_pipeline_owned(self) -> None:
+        names = _filter_registry_source_features(
+            ["ltp", "bs_reiv_pred", "dgt_reiv_pred", "dgt_prediction_error", "iv"],
+            "/nonexistent",
+        )
+        self.assertEqual(names, ["ltp", "iv"])
+        import os
+        import tempfile
+
+        from chain_replay_ml.dataset_builder.pipeline_features_prefs import (
+            save_retired_pipeline_features,
+        )
+
+        tmp = tempfile.mkdtemp()
+        save_retired_pipeline_features(tmp, ["retired_feat"])
+        names = _filter_active_source_features(["ltp", "retired_feat", "iv"], tmp)
+        self.assertEqual(names, ["ltp", "iv"])
+        path = os.path.join(tmp, "pipeline_features_retired.json")
+        if os.path.isfile(path):
+            os.remove(path)
+        os.rmdir(tmp)
 
 
 if __name__ == "__main__":

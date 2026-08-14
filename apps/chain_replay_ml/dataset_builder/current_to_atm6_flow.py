@@ -155,3 +155,85 @@ def enrich_current_to_atm6_flow_features(
         spot=out.get("spot"),
     )
     return out
+
+
+def enrich_current_to_atm6_flow_dataframe(
+    df,
+    *,
+    chart_dir: str,
+    market: str = "NIFTY",
+    feature_grid_step_sec: int = 3,
+    column: str = CURRENT_TO_ATM6_FLOW_FEATURE,
+):
+    """Batch-compute ``current_to_atm6_flow_delta_ltp_to_spot_ratio`` on an export frame."""
+    import pandas as pd
+
+    from chain_replay_ml.export_atm_pipeline import STRIKE_STEP, normalize_index_name
+
+    from .chain_maps import precompute_chain_maps
+    from .day_context import DayContext, SourceSpec, load_day_context
+
+    out = df
+    if column in out.columns:
+        return out
+
+    required = {"trading_day", "timestamp", "strike", "option_type", "delta", "ltp", "spot"}
+    missing = required - set(out.columns)
+    if missing:
+        raise ValueError(
+            f"Dataset missing required columns for {column}: {sorted(missing)}"
+        )
+
+    index_key = normalize_index_name(market)
+    strike_step = STRIKE_STEP.get(index_key, 50)
+    ctx_cache: dict[str, DayContext | None] = {}
+    col_values = pd.Series(index=out.index, dtype="float64")
+
+    for day, day_df in out.groupby("trading_day", sort=False):
+        day_str = str(day)
+        if day_str not in ctx_cache:
+            try:
+                ctx_cache[day_str] = load_day_context(
+                    chart_dir,
+                    SourceSpec(
+                        source_id=day_str,
+                        trading_day=day_str,
+                        market=str(market or "NIFTY").upper(),
+                    ),
+                    feature_grid_step_sec=int(feature_grid_step_sec),
+                )
+            except Exception:
+                ctx_cache[day_str] = None
+        ctx = ctx_cache.get(day_str)
+        if ctx is None:
+            continue
+
+        for idx, row in day_df.iterrows():
+            try:
+                delta = row.get("delta")
+                delta_f = float(delta) if delta is not None else None
+            except (TypeError, ValueError):
+                delta_f = None
+            try:
+                ltp_f = float(row.get("ltp")) if row.get("ltp") is not None else None
+            except (TypeError, ValueError):
+                ltp_f = None
+            try:
+                spot_f = float(row.get("spot")) if row.get("spot") is not None else None
+            except (TypeError, ValueError):
+                spot_f = None
+            val = compute_current_to_atm6_flow_delta_ltp_to_spot_ratio(
+                strike_mapping=ctx.strike_mapping,
+                ts=float(row["timestamp"]),
+                current_strike=float(row["strike"]),
+                step=strike_step,
+                option_type=str(row["option_type"]),
+                delta=delta_f,
+                ltp=ltp_f,
+                spot=spot_f,
+            )
+            col_values.at[idx] = val
+
+    out = out.copy()
+    out[column] = col_values
+    return out

@@ -97,6 +97,7 @@ def create_analysis_dataset(
     premium_enabled: bool = False,
     premium_min: float | None = None,
     premium_max: float | None = None,
+    pipeline_id: str | None = None,
     token: str | None = None,
     atm_band_filter: int | None = None,
     delta_enabled: bool = False,
@@ -124,12 +125,15 @@ def create_analysis_dataset(
         raise MasterRegistryExportError("Select at least one feature source")
 
     from .pipeline_features_prefs import (
-        load_pipeline_build_exclude_features,
+        load_pipeline_output_prune_features,
         load_retired_pipeline_features,
+        load_transformation_forbidden_features,
     )
 
     retired = load_retired_pipeline_features(data_dir)
-    exclude_for_pipeline = load_pipeline_build_exclude_features(data_dir)
+    output_exclude_for_pipeline = load_pipeline_output_prune_features(data_dir)
+    forbidden = load_transformation_forbidden_features(data_dir)
+    interaction_operand_skip = set(forbidden)
     catalog = feature_sources_catalog(data_dir=data_dir, retired=retired)
     from .registry_features_prefs import resolve_registry_export_features
 
@@ -140,7 +144,46 @@ def create_analysis_dataset(
             "No Registry Features selected for export. "
             "Open “Click to Select Features” and select at least one."
         )
-    pipe_names = pipeline_feature_names(data_dir=data_dir, retired=retired) if include_pipeline else []
+    pipe_names: list[str] = []
+    base_pipe_names: list[str] = []
+    experimental_pipe_names: list[str] = []
+    pipeline_provenance: dict[str, Any] | None = None
+    experimental_transform_config: dict[str, Any] | None = None
+    if include_pipeline:
+        pid = str(pipeline_id or "").strip().upper()
+        if not pid:
+            raise MasterRegistryExportError(
+                "Select an experimental pipeline when Pipeline Features is enabled."
+            )
+        from .feature_sources_catalog import base_pipeline_feature_names
+        from .pipeline_registry_store import (
+            build_pipeline_snapshot,
+            ensure_default_existing_pipeline,
+            get_pipeline,
+            is_base_pipeline_record,
+            load_store,
+            resolve_pipeline_dataset_feature_names,
+        )
+
+        doc = ensure_default_existing_pipeline(data_dir)
+        rec = get_pipeline(doc, pid)
+        if not rec:
+            raise MasterRegistryExportError(f"Pipeline {pid} not found.")
+        if is_base_pipeline_record(rec):
+            raise MasterRegistryExportError(
+                "The Base pipeline cannot be used as an experimental pipeline source. "
+                "Select an experimental pipeline (Auto/Manual)."
+            )
+        pipeline_provenance = build_pipeline_snapshot(rec, pipeline_id=pid)
+        base_pipe_names = sorted(base_pipeline_feature_names(data_dir))
+        experimental_pipe_names = resolve_pipeline_dataset_feature_names(data_dir, doc, pid)
+        pipe_names = list(dict.fromkeys(base_pipe_names + experimental_pipe_names))
+        if isinstance(pipeline_provenance.get("transformation_config"), dict):
+            experimental_transform_config = pipeline_provenance.get("transformation_config")
+        if not pipe_names:
+            raise MasterRegistryExportError(
+                f"Pipeline {pipeline_provenance.get('pipeline_name') or pid} has no candidate features."
+            )
     reg_total = len(reg_names)
     pipe_total = len(pipe_names)
     overall_total = reg_total + pipe_total
@@ -156,12 +199,45 @@ def create_analysis_dataset(
     premium_active = bool(premium_enabled and prem_lo is not None and prem_hi is not None)
 
     # Regenerate Pipeline Features via transformation pipeline (Master no longer emits them).
-    if include_pipeline and transformation_config is None:
+    if include_pipeline:
         from .pipeline_features_config import build_pipeline_features_transformation_config
+        from .transformations.config import merge_transformation_configs
 
-        transformation_config = build_pipeline_features_transformation_config(
+        base_transform_config = build_pipeline_features_transformation_config(
             sample_interval_sec=float(interval_sec),
-            exclude_features=exclude_for_pipeline,
+            exclude_features=output_exclude_for_pipeline,
+            interaction_operand_skip=interaction_operand_skip,
+            source_forbidden=forbidden,
+        )
+        if experimental_transform_config is not None:
+            transformation_config = merge_transformation_configs(
+                base_transform_config,
+                experimental_transform_config,
+            )
+        elif transformation_config is not None:
+            transformation_config = merge_transformation_configs(
+                base_transform_config,
+                transformation_config,
+            )
+        else:
+            transformation_config = base_transform_config
+
+    if include_pipeline and transformation_config is not None:
+        from .transformations.config import prune_transformation_config_for_interval
+
+        transformation_config = prune_transformation_config_for_interval(
+            transformation_config,
+            float(interval_sec),
+        )
+
+    if transformation_config and output_exclude_for_pipeline:
+        from .pipeline_features_config import prune_pipeline_transformation_config
+
+        transformation_config = prune_pipeline_transformation_config(
+            transformation_config,
+            output_exclude_for_pipeline,
+            interaction_operand_skip=interaction_operand_skip,
+            source_exclude=forbidden,
         )
 
     def _emit(payload: dict[str, Any]) -> None:
@@ -260,7 +336,11 @@ def create_analysis_dataset(
     created_dt = datetime.now(_IST)
     if not dataset_name:
         stamp = created_dt.strftime("%Y%m%d_%H%M%S")
-        dataset_name = f"analysis_{reg_total}r_{pipe_total}p_{interval_sec}s_{stamp}"
+        if pipeline_provenance:
+            pid_tag = str(pipeline_provenance.get("pipeline_id") or "pipe").replace("_", "")
+            dataset_name = f"analysis_{pid_tag}_{reg_total}r_{pipe_total}p_{interval_sec}s_{stamp}"
+        else:
+            dataset_name = f"analysis_{reg_total}r_{pipe_total}p_{interval_sec}s_{stamp}"
 
     _log("Analysis dataset build started")
     _emit(_snapshot(
@@ -429,6 +509,8 @@ def create_analysis_dataset(
             delta_max=delta_max,
             on_progress=_export_progress,
             registry_export_features=reg_export if include_registry else None,
+            pipeline_provenance=pipeline_provenance,
+            base_pipeline_export_features=frozenset(base_pipe_names) if include_pipeline else None,
         )
     except MasterRegistryExportError:
         raise
@@ -607,6 +689,14 @@ def create_analysis_dataset(
         "dataset_kind": "analysis",
         "include_registry": include_registry,
         "include_pipeline": include_pipeline,
+        "pipeline_id": (pipeline_provenance or {}).get("pipeline_id") if pipeline_provenance else None,
+        "pipeline_name": (pipeline_provenance or {}).get("pipeline_name") if pipeline_provenance else None,
+        "pipeline_type": (pipeline_provenance or {}).get("pipeline_type") if pipeline_provenance else None,
+        "pipeline_snapshot_id": (pipeline_provenance or {}).get("pipeline_snapshot_id") if pipeline_provenance else None,
+        "pipeline_feature_count": len((pipeline_provenance or {}).get("candidate_features") or []) if pipeline_provenance else 0,
+        "base_pipeline_export_count": len(base_pipe_names) if include_pipeline else 0,
+        "experimental_pipeline_export_count": len(experimental_pipe_names) if include_pipeline else 0,
+        "pipeline_provenance": dict(pipeline_provenance) if pipeline_provenance else None,
         "no_null_data": no_null_data,
         "pipeline_no_null_report_enabled": pipeline_no_null_report,
         "pipeline_no_null_report": payload.get("pipeline_no_null_report"),

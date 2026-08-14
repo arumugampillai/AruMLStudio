@@ -29,6 +29,20 @@ class AnalysisLabStoreTests(unittest.TestCase):
         pd.DataFrame(data).to_parquet(path, index=False)
         return path
 
+    def _write_registry_json(self, folder: str, name: str, rows: int) -> None:
+        import json
+
+        meta = {
+            "row_count": rows,
+            "created_at": "2026-01-01T00:00:00",
+        }
+        with open(
+            os.path.join(folder, f"{name}.json"),
+            "w",
+            encoding="utf-8",
+        ) as fh:
+            json.dump(meta, fh)
+
     def test_register_and_module_lifecycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             pq = self._write_pq(tmp, "Future_LTP_5m_v12", rows=20, cols=4)
@@ -100,6 +114,33 @@ class AnalysisLabStoreTests(unittest.TestCase):
             self.assertEqual(a.dataset_hash, b.dataset_hash)
             self.assertEqual(a.columns_hash, b.columns_hash)
 
+    def test_catalog_skips_deleted_registry_datasets(self) -> None:
+        from chain_replay_ml.dataset_builder.analysis_lab_store import (
+            load_analysis_dataset_catalog,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ds_dir = os.path.join(tmp, "datasets")
+            os.makedirs(ds_dir)
+            keep_pq = self._write_pq(ds_dir, "keep_ds", rows=6, cols=2)
+            gone_pq = self._write_pq(ds_dir, "gone_ds", rows=4, cols=2)
+            for name, pq, rows in (
+                ("keep_ds", keep_pq, 6),
+                ("gone_ds", gone_pq, 4),
+            ):
+                self._write_registry_json(ds_dir, name, rows=rows)
+                register_dataset(
+                    tmp,
+                    pq,
+                    name=name,
+                    relative_path=f"datasets/{name}.parquet",
+                )
+            os.remove(gone_pq)
+            os.remove(os.path.join(ds_dir, "gone_ds.json"))
+            catalog = load_analysis_dataset_catalog(tmp, force_rescan=False)
+            ids = {str(d["dataset_id"]) for d in catalog}
+            self.assertEqual(ids, {"keep_ds"})
+
     def test_catalog_skips_refingerprint_when_registered(self) -> None:
         from chain_replay_ml.dataset_builder.analysis_lab_store import (
             load_analysis_dataset_catalog,
@@ -109,6 +150,7 @@ class AnalysisLabStoreTests(unittest.TestCase):
             ds_dir = os.path.join(tmp, "datasets")
             os.makedirs(ds_dir)
             pq = self._write_pq(ds_dir, "Future_LTP_5m_v12", rows=12, cols=3)
+            self._write_registry_json(ds_dir, "Future_LTP_5m_v12", rows=12)
             register_dataset(
                 tmp,
                 pq,
@@ -121,6 +163,7 @@ class AnalysisLabStoreTests(unittest.TestCase):
             self.assertEqual(catalog[0]["dataset_hash"], first["dataset_hash"])
             # New file only — registers without force
             self._write_pq(ds_dir, "New_DS", rows=5, cols=2)
+            self._write_registry_json(ds_dir, "New_DS", rows=5)
             catalog2 = load_analysis_dataset_catalog(tmp, force_rescan=False)
             ids = {str(d["dataset_id"]) for d in catalog2}
             self.assertEqual(ids, {"Future_LTP_5m_v12", "New_DS"})

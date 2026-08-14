@@ -276,12 +276,14 @@ def parse_features_and_horizons(
             f"for sample_interval_sec={sample_interval_sec}."
         )
 
-    seconds_only = [sec for sec, _, _ in structured]
-    offsets = resolve_lag_row_offsets(seconds_only, sample_interval_sec)
-    by_sec = {float(sec): (suffix, column) for sec, suffix, column in structured}
+  # Preserve every horizon entry even when multiple columns share the same seconds
+    # (e.g. oi_change_1m and oi_change_pct_1m both at 60s).
     out: list[tuple[float, int, str | None, Any]] = []
-    for sec, rows in offsets:
-        suffix, column = by_sec.get(float(sec), (None, None))
+    for sec, suffix, column in structured:
+        rows_pairs = resolve_lag_row_offsets([sec], sample_interval_sec)
+        if not rows_pairs:
+            continue
+        _, rows = rows_pairs[0]
         out.append((sec, rows, suffix, column))
     return features, out
 
@@ -354,9 +356,11 @@ def _add_shifted_columns_pandas(
     specs: list[tuple[str, int, str]],
     partition_by: list[str],
 ) -> pd.DataFrame:
-    out = df.copy()
+    new_cols: dict[str, pd.Series] = {}
     for feature, rows, out_col in specs:
-        out[out_col] = shift_feature_columns(
-            out, feature=feature, rows=int(rows), partition_by=partition_by
+        new_cols[out_col] = shift_feature_columns(
+            df, feature=feature, rows=int(rows), partition_by=partition_by
         )
-    return out
+    if not new_cols:
+        return df
+    return pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)

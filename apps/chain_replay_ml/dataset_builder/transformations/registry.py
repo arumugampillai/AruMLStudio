@@ -25,6 +25,7 @@ def ensure_builtin_transformations() -> None:
     if _BUILTINS_LOADED:
         return
     from . import anchor_return as _anchor_return  # noqa: F401
+    from . import current_to_atm6_flow_transform as _current_to_atm6_flow_transform  # noqa: F401
     from . import derived as _derived  # noqa: F401
     from . import difference as _difference  # noqa: F401
     from . import difference_clip as _difference_clip  # noqa: F401

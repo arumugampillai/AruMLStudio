@@ -140,6 +140,80 @@ class PipelineDescribeTests(unittest.TestCase):
         self.assertIn("ltp_lag_30s", avail)
         self.assertIn("ltp_roll_mean_20", avail)
 
+    def test_describe_all_config_entries_per_transform_id(self) -> None:
+        """Multiple return/difference/rolling stages must all contribute outputs."""
+        from chain_replay_ml.dataset_builder.pipeline_features_config import (
+            build_pipeline_features_transformation_config,
+            expected_pipeline_outputs_from_config,
+        )
+
+        cfg = build_pipeline_features_transformation_config(sample_interval_sec=3.0)
+        outputs = set(expected_pipeline_outputs_from_config(cfg))
+        self.assertIn("ltp_return_15s", outputs)
+        self.assertIn("oi_change_pct_1m", outputs)
+        self.assertIn("atm_straddle_change_1m", outputs)
+        self.assertIn("iv_change_1m", outputs)
+
+        desc = describe_pipeline_stages(cfg, include_disabled=False)
+        return_stages = [st for st in desc.stages if st.id == "return"]
+        diff_stages = [st for st in desc.stages if st.id == "difference"]
+        roll_stat_stages = [st for st in desc.stages if st.id == "rolling_statistics"]
+        self.assertGreaterEqual(len(return_stages), 5)
+        self.assertGreaterEqual(len(diff_stages), 10)
+        self.assertGreaterEqual(len(roll_stat_stages), 2)
+        self.assertGreater(len(outputs), 200)
+
+    def test_multiple_return_stages_all_described(self) -> None:
+        cfg = {
+            "transformations": [
+                {
+                    "id": "return",
+                    "enabled": True,
+                    "order": 30,
+                    "params": {
+                        "features": ["ltp"],
+                        "horizons": [{"seconds": 30.0, "column": "ltp_return_30s"}],
+                        "partition_by": ["trading_day", "token"],
+                        "sample_interval_sec": 3.0,
+                    },
+                },
+                {
+                    "id": "return",
+                    "enabled": True,
+                    "order": 30,
+                    "params": {
+                        "features": ["option_oi"],
+                        "horizons": [{"seconds": 60.0, "column": "oi_change_pct_1m"}],
+                        "partition_by": ["trading_day", "token"],
+                        "sample_interval_sec": 3.0,
+                    },
+                },
+                {
+                    "id": "rolling_ohlc",
+                    "enabled": True,
+                    "order": 36,
+                    "params": {
+                        "features": ["spot"],
+                        "windows": [{"seconds": 300.0, "suffix": "5m"}],
+                        "outputs": ["dist_high_pct", "range_pos"],
+                        "column_map": {
+                            "dist_high_pct": "spot_dist_high_5m_pct",
+                            "range_pos": "spot_range_pos_5m",
+                        },
+                        "partition_by": ["trading_day", "token"],
+                        "sample_interval_sec": 3.0,
+                    },
+                },
+            ]
+        }
+        desc = describe_pipeline_stages(cfg, include_disabled=False)
+        return_stages = [st for st in desc.stages if st.id == "return"]
+        self.assertEqual(len(return_stages), 2)
+        names = {n for st in return_stages for n in st.output_names}
+        self.assertEqual(names, {"ltp_return_30s", "oi_change_pct_1m"})
+        ohlc = [st for st in desc.stages if st.id == "rolling_ohlc"]
+        self.assertEqual(len(ohlc), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

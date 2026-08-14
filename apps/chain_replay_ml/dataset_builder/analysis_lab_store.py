@@ -494,9 +494,10 @@ def load_analysis_dataset_catalog(
     (Refresh datasets).
     """
     if force_rescan:
-        return scan_and_register_datasets(
+        rows = scan_and_register_datasets(
             data_dir, datasets_subdir=datasets_subdir
         )
+        return filter_datasets_in_registry(data_dir, rows)
 
     existing = list_datasets(data_dir)
     known = {
@@ -506,7 +507,7 @@ def load_analysis_dataset_catalog(
     }
     root = os.path.join(str(data_dir), datasets_subdir)
     if not os.path.isdir(root):
-        return existing
+        return filter_datasets_in_registry(data_dir, existing)
 
     added = False
     for name in sorted(os.listdir(root)):
@@ -527,7 +528,8 @@ def load_analysis_dataset_catalog(
             added = True
         except Exception:
             continue
-    return list_datasets(data_dir) if added else existing
+    rows = list_datasets(data_dir) if added else existing
+    return filter_datasets_in_registry(data_dir, rows)
 
 
 def ensure_analysis_run(data_dir: str, dataset_id: str) -> dict[str, Any]:
@@ -701,6 +703,43 @@ def resolve_parquet_path(data_dir: str, dataset: dict[str, Any]) -> str:
     return path
 
 
+def _registry_parquet_dataset_ids(data_dir: str) -> frozenset[str]:
+    """Dataset names in the Dataset Registry that still have parquet on disk."""
+    from .auditor import list_datasets as list_registry_datasets
+
+    ids: set[str] = set()
+    for row in list_registry_datasets(data_dir):
+        name = str(row.get("dataset_name") or "").strip()
+        if not name:
+            continue
+        pq = str(row.get("parquet_path") or "").strip()
+        if bool(row.get("has_parquet")) or (pq and os.path.isfile(pq)):
+            ids.add(name)
+    return frozenset(ids)
+
+
+def filter_datasets_in_registry(
+    data_dir: str,
+    datasets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep only analysis.db rows whose parquet still exists in Dataset Registry."""
+    registry_ids = _registry_parquet_dataset_ids(data_dir)
+    if not registry_ids:
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for d in datasets:
+        did = str(d.get("dataset_id") or d.get("name") or "").strip()
+        if not did or did in seen or did not in registry_ids:
+            continue
+        pq = resolve_parquet_path(data_dir, d)
+        if not pq or not os.path.isfile(pq):
+            continue
+        out.append(d)
+        seen.add(did)
+    return out
+
+
 PREF_SELECTED_DATASET = "selected_dataset_id"
 
 
@@ -765,6 +804,7 @@ __all__ = [
     "dependency_blockers",
     "ensure_analysis_run",
     "ensure_analysis_schema",
+    "filter_datasets_in_registry",
     "fingerprint_parquet",
     "format_module_status_label",
     "get_dataset",

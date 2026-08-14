@@ -102,13 +102,103 @@ def candidate_generation_prefs_snapshot(
     )
 
 
+def _excluded_feature_names(data_dir: str) -> frozenset[str]:
+    """Registry-disabled, pipeline-retired, computed-base, and static retired names."""
+    from chain_replay_ml.dataset_builder.pipeline_features_prefs import (
+        load_pipeline_transform_prune_features,
+    )
+
+    return load_pipeline_transform_prune_features(data_dir)
+
+
+def _is_excluded_source_feature(name: str, skip: frozenset[str] | set[str]) -> bool:
+    n = str(name or "").strip()
+    if not n:
+        return True
+    if n in skip:
+        return True
+    from chain_replay_ml.dataset_builder.feature_migration import is_retired
+
+    if is_retired(n):
+        return True
+    for base in skip:
+        if n.startswith(f"{base}_"):
+            return True
+    return False
+
+
+def _filter_active_source_features(names: list[str], data_dir: str) -> list[str]:
+    skip = _excluded_feature_names(data_dir)
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in names:
+        n = str(raw).strip()
+        if not n or n in seen or _is_excluded_source_feature(n, skip):
+            continue
+        seen.add(n)
+        out.append(n)
+    return out
+
+
+def _filter_registry_source_features(names: list[str], data_dir: str) -> list[str]:
+    """Registry sources for auto candidates — master-exportable only (not computed/pipeline/retired)."""
+    from chain_replay_ml.dataset_builder.feature_ownership import (
+        OWNERSHIP_COMPUTED_BASE,
+        OWNERSHIP_PIPELINE_OWNED,
+        OWNERSHIP_RETIRED,
+        ownership_of,
+    )
+
+    skip = _excluded_feature_names(data_dir)
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in names:
+        n = str(raw).strip()
+        if not n or n in seen:
+            continue
+        if _is_excluded_source_feature(n, skip):
+            continue
+        cat = ownership_of(n)
+        if cat in (OWNERSHIP_COMPUTED_BASE, OWNERSHIP_PIPELINE_OWNED, OWNERSHIP_RETIRED):
+            continue
+        seen.add(n)
+        out.append(n)
+    return out
+
+
+def sanitize_transformation_config_for_data_dir(
+    config: dict[str, Any] | None,
+    data_dir: str,
+) -> dict[str, Any]:
+    """Remove retired/deleted features from a transformation config."""
+    if not config:
+        return config or {}
+    from chain_replay_ml.dataset_builder.pipeline_features_config import (
+        prune_pipeline_transformation_config,
+    )
+    from chain_replay_ml.dataset_builder.pipeline_features_prefs import (
+        load_pipeline_transform_prune_features,
+        load_transformation_forbidden_features,
+    )
+
+    forbidden = load_transformation_forbidden_features(data_dir)
+    skip = load_pipeline_transform_prune_features(data_dir)
+    if not skip and not forbidden:
+        return config
+    return prune_pipeline_transformation_config(
+        config,
+        skip,
+        interaction_operand_skip=forbidden,
+        source_exclude=forbidden,
+    )
+
+
 def resolve_source_features(
     chart_dir: str,
     pipeline_id: str,
     source: str,
 ) -> list[str]:
     from chain_replay_ml.dataset_builder.feature_sources_catalog import (
-        pipeline_feature_names,
         registry_feature_names,
     )
     from chain_replay_ml.dataset_builder.pipeline_registry_store import (
@@ -124,17 +214,19 @@ def resolve_source_features(
     reg_names = resolve_registry_names(data_dir, reg_ids) if reg_ids else []
     if not reg_names:
         reg_names = registry_feature_names(data_dir=data_dir)
+    reg_names = _filter_registry_source_features(reg_names, data_dir)
 
-    pipe_catalog = pipeline_feature_names(data_dir=data_dir)
-    pipe_candidates = list(row.get("candidate_features") or [])
-    pipe_names = list(dict.fromkeys(pipe_catalog + pipe_candidates))
+    pipe_candidates = _filter_active_source_features(
+        list(row.get("candidate_features") or []),
+        data_dir,
+    )
 
     mode = str(source or "registry").strip().lower()
     if mode == "pipeline":
-        return pipe_names
+        return pipe_candidates
     if mode == "registry":
         return reg_names
-    return list(dict.fromkeys(reg_names + pipe_names))
+    return list(dict.fromkeys(reg_names + pipe_candidates))
 
 
 def _interaction_op_keys(interaction_ops: dict[str, bool]) -> list[str]:
@@ -154,6 +246,7 @@ def build_auto_candidate_transformation_config(
     features: list[str],
     interval_sec: int,
     candidate_prefs: dict[str, Any],
+    data_dir: str | None = None,
 ) -> dict[str, Any]:
     """Build transformation config using Auto tab settings (reuses Manual merge helpers)."""
     prefs = normalize_candidate_generation_prefs(candidate_prefs)
@@ -265,11 +358,14 @@ def build_auto_candidate_transformation_config(
                 bulk_interaction_pairs(ix_feats, ix_feats, op=op, skip_identical=True)
             )
 
-    return merge_interaction_into_config(
+    config = merge_interaction_into_config(
         with_regime,
         enabled=bool(transforms.get("interaction")) and bool(pairs),
         pairs=pairs,
     )
+    if data_dir:
+        return sanitize_transformation_config_for_data_dir(config, data_dir)
+    return config
 
 
 @dataclass
@@ -296,9 +392,11 @@ def _policy_reject_names(
     *,
     source_features: set[str],
     registry_names: set[str],
+    excluded_names: set[str] | frozenset[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     from chain_replay_ml.dataset_builder.transformations.lag_ui import META_SKIP_COLUMNS
 
+    skip = set(excluded_names or ())
     allowed: list[str] = []
     rejected: list[str] = []
     for name in names:
@@ -306,6 +404,9 @@ def _policy_reject_names(
         if not n:
             continue
         if n in META_SKIP_COLUMNS:
+            rejected.append(n)
+            continue
+        if _is_excluded_source_feature(n, skip):
             rejected.append(n)
             continue
         if n in source_features:
@@ -406,11 +507,16 @@ def generate_pipeline_candidate_names(
         _log_candidate_generation_report(report)
         return report
 
+    from .build_service import chart_data_dir
+
+    data_dir = chart_data_dir(chart_dir)
+
     try:
         config = build_auto_candidate_transformation_config(
             features=features,
             interval_sec=interval_sec,
             candidate_prefs=prefs,
+            data_dir=data_dir,
         )
     except Exception as exc:
         report.errors.append(str(exc))
@@ -434,15 +540,14 @@ def generate_pipeline_candidate_names(
 
     report.candidates_generated = len(names)
 
-    from .build_service import chart_data_dir
-
-    data_dir = chart_data_dir(chart_dir)
-    registry_names = set(registry_feature_names(data_dir=data_dir))
     source_set = set(features)
+    registry_names = set(registry_feature_names(data_dir=data_dir))
+    excluded = _excluded_feature_names(data_dir)
     allowed, policy_rejected = _policy_reject_names(
         names,
         source_features=source_set,
         registry_names=registry_names,
+        excluded_names=excluded,
     )
     report.policy_rejected_names = policy_rejected
     report.candidates_rejected_policy = len(policy_rejected)

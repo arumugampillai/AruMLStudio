@@ -8,11 +8,13 @@ import unittest
 
 from chain_replay_ml.dataset_builder.pipeline_registry_store import (
     add_candidate_features,
+    build_pipeline_snapshot,
     create_pipeline,
     delete_pipeline,
     ensure_default_existing_pipeline,
     format_pipeline_id,
     get_pipeline_summary,
+    list_experimental_pipelines,
     load_store,
     save_store,
     set_registry_members,
@@ -49,9 +51,24 @@ class PipelineRegistryStoreTests(unittest.TestCase):
         rows = list((doc.get("pipelines") or {}).values())
         self.assertEqual(len(rows), 1)
         rec = rows[0]
-        self.assertEqual(rec["type"], "existing")
+        self.assertEqual(rec["type"], "base")
         self.assertEqual(rec["status"], "ready")
         self.assertGreater(len(rec.get("candidate_features") or []), 0)
+
+    def test_list_experimental_pipelines_excludes_base(self) -> None:
+        doc = ensure_default_existing_pipeline(self._tmpdir)
+        auto = create_pipeline(doc, pipeline_type="auto")
+        experimental = list_experimental_pipelines(doc)
+        ids = {row["pipeline_id"] for row in experimental}
+        self.assertIn(auto["pipeline_id"], ids)
+        self.assertEqual(len(experimental), 1)
+
+    def test_build_pipeline_snapshot(self) -> None:
+        doc = load_store(self._tmpdir)
+        rec = create_pipeline(doc, pipeline_type="auto")
+        snap = build_pipeline_snapshot(rec, pipeline_id=rec["pipeline_id"])
+        self.assertEqual(snap["pipeline_id"], rec["pipeline_id"])
+        self.assertTrue(snap.get("pipeline_snapshot_id"))
 
     def test_delete_pipeline(self) -> None:
         doc = load_store(self._tmpdir)
@@ -60,7 +77,7 @@ class PipelineRegistryStoreTests(unittest.TestCase):
         self.assertTrue(delete_pipeline(doc, pid))
         self.assertIsNone(get_pipeline_summary(doc, pid))
 
-    def test_delete_existing_pipeline_rejected(self) -> None:
+    def test_delete_base_pipeline_rejected(self) -> None:
         doc = ensure_default_existing_pipeline(self._tmpdir)
         pid = list((doc.get("pipelines") or {}).keys())[0]
         with self.assertRaises(ValueError):

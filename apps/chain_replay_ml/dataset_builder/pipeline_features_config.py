@@ -24,6 +24,13 @@ def _hz(seconds: float, *, suffix: str | None = None, column: str | None = None)
     return out
 
 
+def _opt_volume_flow_15s_horizon(interval: float) -> dict[str, Any]:
+    """Registry column opt_volume_flow_15s at non-3s grids uses nearest compatible lag."""
+    if float(interval) == 6.0:
+        return _hz(18.0, column="opt_volume_flow_15s")
+    return _hz(15.0, column="opt_volume_flow_15s")
+
+
 def _pair(
     left: str,
     right: str,
@@ -336,7 +343,7 @@ def _phase2_stages(interval: float) -> list[dict[str, Any]]:
             "params": {
                 "features": ["option_day_volume"],
                 "horizons": [
-                    _hz(15.0, column="opt_volume_flow_15s"),
+                    _opt_volume_flow_15s_horizon(interval),
                     _hz(30.0, column="opt_volume_flow_30s"),
                     _hz(60.0, column="opt_volume_flow_1m"),
                 ],
@@ -376,6 +383,14 @@ def _phase2_stages(interval: float) -> list[dict[str, Any]]:
                             {"seconds": 300, "coeff": 0.2},
                         ],
                     },
+                    {
+                        "column": "weighted_iv_zscore",
+                        "terms": [
+                            {"feature": "iv_zscore_1m", "seconds": 0, "coeff": 0.5},
+                            {"feature": "iv_zscore_5m", "seconds": 0, "coeff": 1.0 / 3.0},
+                            {"feature": "iv_zscore_15m", "seconds": 0, "coeff": 1.0 / 6.0},
+                        ],
+                    },
                 ],
                 "partition_by": list(_PARTS),
                 "sample_interval_sec": float(interval),
@@ -401,6 +416,16 @@ def _phase2_stages(interval: float) -> list[dict[str, Any]]:
             [_hz(300.0, column="atm_straddle_zscore_change_5m")],
             interval,
         ),
+        {
+            "id": "current_to_atm6_flow",
+            "enabled": True,
+            "order": 41,
+            "params": {
+                "column": "current_to_atm6_flow_delta_ltp_to_spot_ratio",
+                "partition_by": list(_PARTS),
+                "sample_interval_sec": float(interval),
+            },
+        },
     ]
     stages[-1]["order"] = 40
     return stages
@@ -540,7 +565,11 @@ def _packaging_pairs() -> list[dict[str, Any]]:
     pairs.append(_mul("delta", "spot", "delta_x_spot"))
     pairs.append(_mul("gamma", "spot", "gamma_x_spot"))
 
-    # weighted_iv_zscore is not a Registry column; skip that historical product for now.
+    pairs.append(_mul(
+        "weighted_iv_zscore",
+        "weighted_spot_ema_to_ltp_ratio",
+        "weighted_iv_zscore_x_weighted_spot_ema_to_ltp_ratio",
+    ))
     pairs.append(_mul("weighted_spot_ema_to_ltp_ratio", "delta", "weighted_spot_ema_to_ltp_ratio_x_delta"))
     for h in ("1m", "5m", "15m"):
         pairs.append(_mul(
@@ -585,6 +614,8 @@ def build_pipeline_features_transformation_config(
     *,
     sample_interval_sec: float = 3.0,
     exclude_features: frozenset[str] | set[str] | None = None,
+    interaction_operand_skip: frozenset[str] | set[str] | None = None,
+    source_forbidden: frozenset[str] | set[str] | None = None,
 ) -> dict[str, Any]:
     """Return a transformation_config that recreates Pipeline Features."""
     interval = float(sample_interval_sec)
@@ -610,32 +641,276 @@ def build_pipeline_features_transformation_config(
             params["overwrite"] = True
             t["params"] = params
     if exclude_features:
-        cfg = prune_pipeline_transformation_config(cfg, exclude_features)
-    return cfg
+        operand_skip = interaction_operand_skip
+        if operand_skip is None:
+            from .feature_migration import RETIRED_FEATURES
+
+            operand_skip = set(RETIRED_FEATURES)
+        cfg = prune_pipeline_transformation_config(
+            cfg,
+            exclude_features,
+            interaction_operand_skip=operand_skip,
+            source_exclude=source_forbidden,
+        )
+    from .transformations.config import prune_transformation_config_for_interval
+
+    return prune_transformation_config_for_interval(cfg, interval)
+
+
+def _prune_interaction_pairs(
+    pairs: list[dict[str, Any]],
+    skip: set[str],
+    *,
+    operand_skip: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Drop retired pairs and dependents of removed intra-stage intermediates."""
+    raw_pairs = [p for p in pairs if isinstance(p, dict)]
+    if not raw_pairs:
+        return []
+    op_skip = operand_skip if operand_skip is not None else skip
+    stage_outputs = {
+        str(p.get("output") or "").strip()
+        for p in raw_pairs
+        if str(p.get("output") or "").strip()
+    }
+    kept: list[dict[str, Any]] = []
+    available: set[str] = set()
+    for p in raw_pairs:
+        pair_out = str(p.get("output") or "").strip()
+        left = str(p.get("left") or "").strip()
+        right = str(p.get("right") or "").strip()
+        if not pair_out or not left or not right:
+            continue
+        if _output_excluded_by_skip(pair_out, skip):
+            continue
+        if left in op_skip or right in op_skip:
+            continue
+        if left in stage_outputs and left not in available:
+            continue
+        if right in stage_outputs and right not in available:
+            continue
+        kept.append(p)
+        available.add(pair_out)
+    return kept
+
+
+def _output_excluded_by_skip(name: str, skip: set[str]) -> bool:
+    """True when ``name`` is not eligible as a transformation output column."""
+    n = str(name or "").strip()
+    if not n:
+        return True
+    if n in skip:
+        return True
+    for base in skip:
+        b = str(base).strip()
+        if b and n.startswith(f"{b}_"):
+            return True
+    return False
+
+
+def _planned_time_shift_output(
+    stage_id: str,
+    feature: str,
+    horizon: dict[str, Any],
+    params: dict[str, Any],
+) -> str:
+    """Resolve the output column a lag/diff/return horizon would emit."""
+    col = str(horizon.get("column") or "").strip()
+    if col:
+        return col
+    try:
+        sec = float(horizon.get("seconds"))
+    except (TypeError, ValueError):
+        return ""
+    suffix = horizon.get("suffix")
+    suffix_s = str(suffix).strip() if suffix is not None else None
+    if stage_id == "lag":
+        from .transformations.lag import lag_column_name
+
+        return lag_column_name(feature, sec, suffix=suffix_s)
+    if stage_id == "difference":
+        from .transformations.difference import difference_column_name
+
+        return difference_column_name(feature, sec, suffix=suffix_s, column=None)
+    if stage_id == "return":
+        from .transformations.return_transform import return_column_name
+
+        return return_column_name(feature, sec, suffix=suffix_s, column=None)
+    if stage_id == "difference_clip":
+        from .transformations.difference_clip import difference_clip_column_name
+
+        try:
+            clip_min = float(params.get("clip_min", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            clip_min = 0.0
+        return difference_clip_column_name(
+            feature,
+            sec,
+            suffix=suffix_s,
+            column=None,
+            clip_min=clip_min,
+        )
+    return ""
+
+
+def _filter_horizons_by_output_eligibility(
+    stage_id: str,
+    features: list[str],
+    horizons: list[Any],
+    params: dict[str, Any],
+    skip: set[str],
+) -> list[Any]:
+    """Drop horizons whose planned outputs are excluded; keep sources intact."""
+    if not horizons:
+        return horizons
+    kept: list[Any] = []
+    for item in horizons:
+        if not isinstance(item, dict):
+            kept.append(item)
+            continue
+        col = str(item.get("column") or "").strip()
+        if col:
+            if not _output_excluded_by_skip(col, skip):
+                kept.append(item)
+            continue
+        if not features:
+            kept.append(item)
+            continue
+        if any(
+            out
+            and not _output_excluded_by_skip(out, skip)
+            for feat in features
+            for out in [_planned_time_shift_output(stage_id, feat, item, params)]
+        ):
+            kept.append(item)
+    return kept
+
+
+def _source_forbidden(name: str, source_skip: set[str]) -> bool:
+    n = str(name or "").strip()
+    if not n:
+        return False
+    if n in source_skip:
+        return True
+    for base in source_skip:
+        b = str(base).strip()
+        if b and n.startswith(f"{b}_"):
+            return True
+    return False
+
+
+def _filter_params_source_features(
+    params: dict[str, Any],
+    source_skip: set[str],
+) -> dict[str, Any] | None:
+    """Drop retired/forbidden names from transform source lists in ``params``."""
+    if not source_skip:
+        return params
+    out = dict(params)
+    raw_feats = params.get("features")
+    if isinstance(raw_feats, list):
+        feats = [
+            str(f).strip()
+            for f in raw_feats
+            if str(f).strip() and not _source_forbidden(str(f).strip(), source_skip)
+        ]
+        if not feats:
+            return None
+        out["features"] = feats
+    raw_feat = params.get("feature")
+    if raw_feat is not None:
+        feat = str(raw_feat).strip()
+        if feat and _source_forbidden(feat, source_skip):
+            return None
+    cmap = params.get("column_map")
+    if isinstance(cmap, dict) and cmap:
+        kept_map = {
+            k: v
+            for k, v in cmap.items()
+            if not _source_forbidden(str(k).strip(), source_skip)
+        }
+        if not kept_map:
+            return None
+        out["column_map"] = kept_map
+    return out
+
+
+def collect_transformation_source_names(
+    config: dict[str, Any] | list[Any] | None,
+) -> set[str]:
+    """Collect feature names referenced as transformation inputs in a config."""
+    cfg = normalize_transformation_config(config)
+    names: set[str] = set()
+    for raw in list(cfg.get("transformations") or []):
+        stage = dict(raw or {})
+        sid = str(stage.get("id") or "")
+        params = dict(stage.get("params") or {})
+        for key in ("features", "difference_features", "return_features"):
+            raw_list = params.get(key)
+            if isinstance(raw_list, list):
+                for item in raw_list:
+                    n = str(item).strip()
+                    if n:
+                        names.add(n)
+        feat = str(params.get("feature") or "").strip()
+        if feat:
+            names.add(feat)
+        if sid == "interaction":
+            for pair in list(params.get("pairs") or []):
+                if not isinstance(pair, dict):
+                    continue
+                for side in ("left", "right"):
+                    n = str(pair.get(side) or "").strip()
+                    if n:
+                        names.add(n)
+        cmap = params.get("column_map")
+        if isinstance(cmap, dict):
+            for k in cmap:
+                n = str(k).strip()
+                if n:
+                    names.add(n)
+    return names
 
 
 def prune_pipeline_transformation_config(
     config: dict[str, Any],
     exclude_features: frozenset[str] | set[str] | Sequence[str],
+    *,
+    interaction_operand_skip: frozenset[str] | set[str] | Sequence[str] | None = None,
+    source_exclude: frozenset[str] | set[str] | Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Drop stages / windows / pairs that emit permanently deleted features.
 
-    Handles ``horizons``, ``windows`` (rolling_statistics / rolling_ohlc),
-    interaction outputs, and derived/anchor ``column`` outputs. Stages whose
-    only remaining work is retired are removed entirely.
+    Pruning is output-oriented: ``exclude_features`` removes planned output columns
+    (and derived names under skipped bases) but does **not** remove those names
+    from lag/return/difference source lists. Interaction operands use
+    ``interaction_operand_skip`` (retired features) when supplied.
+
+    ``source_exclude`` removes registry-retired and other forbidden names from
+    transformation source lists (lag/return operands, interaction sides, etc.).
     """
     skip = {str(n).strip() for n in exclude_features if str(n).strip()}
-    if not skip:
+    source_skip = (
+        {str(n).strip() for n in source_exclude if str(n).strip()}
+        if source_exclude is not None
+        else set()
+    )
+    if not skip and interaction_operand_skip is None and not source_skip:
         return config
+    operand_skip = (
+        {str(n).strip() for n in interaction_operand_skip if str(n).strip()}
+        if interaction_operand_skip is not None
+        else skip
+    )
     out = dict(config)
     kept_stages: list[dict[str, Any]] = []
 
-    def _filter_timed(items: list[Any]) -> list[Any]:
+    def _filter_timed_output_columns(items: list[Any]) -> list[Any]:
         kept: list[Any] = []
         for item in items:
             if (
                 isinstance(item, dict)
-                and str(item.get("column") or "").strip() in skip
+                and _output_excluded_by_skip(str(item.get("column") or "").strip(), skip)
             ):
                 continue
             kept.append(item)
@@ -645,19 +920,17 @@ def prune_pipeline_transformation_config(
         stage = dict(raw or {})
         sid = str(stage.get("id") or "")
         params = dict(stage.get("params") or {})
+        if source_skip:
+            filtered = _filter_params_source_features(params, source_skip)
+            if filtered is None:
+                continue
+            params = filtered
         if sid == "interaction":
-            pairs = []
-            for p in list(params.get("pairs") or []):
-                if not isinstance(p, dict):
-                    continue
-                pair_out = str(p.get("output") or "").strip()
-                if pair_out in skip:
-                    continue
-                left = str(p.get("left") or "").strip()
-                right = str(p.get("right") or "").strip()
-                if left in skip or right in skip:
-                    continue
-                pairs.append(p)
+            pairs = _prune_interaction_pairs(
+                list(params.get("pairs") or []),
+                skip,
+                operand_skip=operand_skip,
+            )
             if not pairs:
                 continue
             params["pairs"] = pairs
@@ -665,10 +938,32 @@ def prune_pipeline_transformation_config(
             kept_stages.append(stage)
             continue
 
+        if sid in ("lag", "difference", "return", "difference_clip"):
+            features = [
+                str(f).strip() for f in (params.get("features") or []) if str(f).strip()
+            ]
+            horizons = list(params.get("horizons") or [])
+            if horizons:
+                kept_h = _filter_horizons_by_output_eligibility(
+                    sid,
+                    features,
+                    horizons,
+                    params,
+                    skip,
+                )
+                if not kept_h:
+                    continue
+                params["horizons"] = kept_h
+            if not features and not horizons:
+                continue
+            stage["params"] = params
+            kept_stages.append(stage)
+            continue
+
         # rolling_statistics / rolling_ohlc / exponential use ``windows``.
         windows = list(params.get("windows") or [])
         if windows and any(isinstance(w, dict) and w.get("column") for w in windows):
-            kept_w = _filter_timed(windows)
+            kept_w = _filter_timed_output_columns(windows)
             if not kept_w:
                 continue
             params["windows"] = kept_w
@@ -678,29 +973,8 @@ def prune_pipeline_transformation_config(
                 params["column_map"] = {
                     k: v
                     for k, v in cmap.items()
-                    if str(v or "").strip() not in skip
+                    if not _output_excluded_by_skip(str(v or "").strip(), skip)
                 }
-            stage["params"] = params
-            kept_stages.append(stage)
-            continue
-
-        horizons = list(params.get("horizons") or [])
-        if horizons and any(isinstance(h, dict) and h.get("column") for h in horizons):
-            kept_h = _filter_timed(horizons)
-            if not kept_h:
-                continue
-            params["horizons"] = kept_h
-            # Difference of a retired pipeline base (e.g. zscore → change).
-            features = [
-                str(f).strip()
-                for f in (params.get("features") or [])
-                if str(f).strip()
-            ]
-            if features:
-                kept_feats = [f for f in features if f not in skip]
-                if not kept_feats:
-                    continue
-                params["features"] = kept_feats
             stage["params"] = params
             kept_stages.append(stage)
             continue
@@ -716,15 +990,12 @@ def prune_pipeline_transformation_config(
                         or item.get("column")
                         or ""
                     ).strip()
-                    base = str(item.get("feature") or "").strip()
-                    if name and name in skip:
-                        continue
-                    if base and base in skip:
+                    if name and _output_excluded_by_skip(name, skip):
                         continue
                     kept_out.append(item)
                 else:
                     name = str(item or "").strip()
-                    if name and name in skip:
+                    if name and _output_excluded_by_skip(name, skip):
                         continue
                     kept_out.append(item)
             if not kept_out:
@@ -734,15 +1005,6 @@ def prune_pipeline_transformation_config(
             kept_stages.append(stage)
             continue
 
-        # Feature lists on lag/diff/return: drop retired sources; remove stage if empty.
-        features = [str(f).strip() for f in (params.get("features") or []) if str(f).strip()]
-        if features:
-            kept_feats = [f for f in features if f not in skip]
-            if not kept_feats:
-                continue
-            if kept_feats != features:
-                params["features"] = kept_feats
-                stage["params"] = params
         kept_stages.append(stage)
 
     out["transformations"] = kept_stages
@@ -782,8 +1044,34 @@ def expected_pipeline_outputs_from_config(
         return sorted(PIPELINE_OWNED_FEATURES)
 
 
+def sanitize_transformation_config_before_execution(
+    config: dict[str, Any] | list[Any] | None,
+    data_dir: str,
+) -> tuple[dict[str, Any], list[str]]:
+    """Defensive prune of retired/forbidden sources immediately before pipeline execution."""
+    from .feature_sources_catalog import transformation_forbidden_feature_names
+    from .pipeline_features_prefs import load_pipeline_output_prune_features
+
+    forbidden = transformation_forbidden_feature_names(data_dir)
+    before = collect_transformation_source_names(config)
+    output_skip = load_pipeline_output_prune_features(data_dir)
+    pruned = prune_pipeline_transformation_config(
+        normalize_transformation_config(config),
+        output_skip,
+        interaction_operand_skip=forbidden,
+        source_exclude=forbidden,
+    )
+    skipped = sorted(
+        n for n in before
+        if n in forbidden or _source_forbidden(n, set(forbidden))
+    )
+    return pruned, skipped
+
+
 __all__ = [
     "build_pipeline_features_transformation_config",
+    "collect_transformation_source_names",
     "expected_pipeline_outputs_from_config",
     "prune_pipeline_transformation_config",
+    "sanitize_transformation_config_before_execution",
 ]

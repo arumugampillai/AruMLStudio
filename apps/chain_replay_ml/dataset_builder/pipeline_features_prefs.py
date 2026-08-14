@@ -79,10 +79,63 @@ def load_pipeline_build_exclude_features(data_dir: str) -> frozenset[str]:
     return frozenset(skip)
 
 
+def load_pipeline_output_prune_features(data_dir: str) -> frozenset[str]:
+    """Names that must not be emitted as transformation outputs.
+
+    Registry computed-base names (``non_registry_transform_source_names``) are
+    intentionally omitted so they may still be used as lag/return sources.
+    """
+    skip = set(load_pipeline_build_exclude_features(data_dir))
+    from .feature_migration import RETIRED_FEATURES
+
+    skip |= set(RETIRED_FEATURES)
+    return frozenset(skip)
+
+
+def load_transformation_forbidden_features(data_dir: str) -> frozenset[str]:
+    """Names that must never appear as transformation sources or outputs."""
+    from .feature_sources_catalog import transformation_forbidden_feature_names
+
+    return transformation_forbidden_feature_names(data_dir)
+
+
+def load_pipeline_transform_prune_features(data_dir: str) -> frozenset[str]:
+    """Broader skip set for transformation configs and pipeline candidate lists."""
+    skip = set(load_pipeline_build_exclude_features(data_dir))
+    from .feature_migration import RETIRED_FEATURES
+    from .feature_ownership import non_registry_transform_source_names
+
+    skip |= set(RETIRED_FEATURES)
+    skip |= set(non_registry_transform_source_names(data_dir))
+    return frozenset(skip)
+
+
+def is_excluded_pipeline_feature(name: str, data_dir: str) -> bool:
+    """True when a pipeline feature or its derived outputs should be omitted."""
+    n = str(name or "").strip()
+    if not n:
+        return True
+    skip = load_pipeline_transform_prune_features(data_dir)
+    if n in skip:
+        return True
+    from .feature_migration import is_retired
+
+    if is_retired(n):
+        return True
+    for base in skip:
+        if n.startswith(f"{base}_"):
+            return True
+    return False
+
+
 __all__ = [
     "STORAGE",
     "active_pipeline_feature_names",
+    "is_excluded_pipeline_feature",
     "load_pipeline_build_exclude_features",
+    "load_pipeline_output_prune_features",
+    "load_pipeline_transform_prune_features",
+    "load_transformation_forbidden_features",
     "load_retired_pipeline_features",
     "retire_pipeline_features",
     "save_retired_pipeline_features",

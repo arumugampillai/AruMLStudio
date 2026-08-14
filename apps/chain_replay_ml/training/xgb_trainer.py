@@ -47,8 +47,10 @@ def booster_wrapper(bst: xgb.Booster, features: list[str]) -> Any:
             self._bst.save_model(path)
 
         def predict(self, X_df: pd.DataFrame) -> np.ndarray:
+            from .feature_matrix import sanitize_training_features
+
             cols = list(self.feature_names_in_)
-            dm = xgb.DMatrix(X_df.loc[:, cols], feature_names=cols)
+            dm = xgb.DMatrix(sanitize_training_features(X_df.loc[:, cols]), feature_names=cols)
             return self._bst.predict(dm)
 
     return _BoosterWrapper(bst, features)
@@ -80,8 +82,10 @@ def train_xgb_regressor(
     train_X, use_features = select_feature_columns(train_X, features)
     val_X, _ = select_feature_columns(val_X, features)
 
-    train_X = train_X.astype("float32", copy=False)
-    val_X = val_X.astype("float32", copy=False)
+    from .feature_matrix import sanitize_training_features
+
+    train_X = sanitize_training_features(train_X)
+    val_X = sanitize_training_features(val_X)
     train_y = pd.to_numeric(train_y, errors="coerce").astype("float32")
     val_y = pd.to_numeric(val_y, errors="coerce").astype("float32")
 

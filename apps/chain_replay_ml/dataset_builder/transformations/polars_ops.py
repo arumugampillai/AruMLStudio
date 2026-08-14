@@ -261,11 +261,11 @@ def apply_diff_clip_ops_via_polars(
 def apply_derived_ops_via_polars(
     df: pd.DataFrame,
     *,
-    outputs: list[tuple[str, str, list[tuple[int, float]]]],
+    outputs: list[tuple[str, list[tuple[str, int, float]]]],
     partition_by: list[str],
     pandas_fallback,
 ) -> pd.DataFrame:
-    """``outputs`` = ``(feature, out_col, [(rows, coeff), ...])``."""
+    """``outputs`` = ``(out_col, [(feature, rows, coeff), ...])``."""
     if not outputs:
         return df
 
@@ -275,9 +275,9 @@ def apply_derived_ops_via_polars(
         pl = require_polars()
         pl_df = _to_polars(df)
         exprs = []
-        for feat, out_col, terms in outputs:
+        for out_col, terms in outputs:
             pieces = []
-            for rows, coeff in terms:
+            for feat, rows, coeff in terms:
                 shifted = pl.col(feat).cast(pl.Float64, strict=False).shift(int(rows))
                 if partition_by:
                     shifted = shifted.over(partition_by)

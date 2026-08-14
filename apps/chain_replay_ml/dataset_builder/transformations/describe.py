@@ -183,6 +183,75 @@ def master_stage_descriptor(master_features: list[str] | None = None) -> StageDe
     )
 
 
+def _describe_config_entry(
+    entry: dict[str, Any],
+    stages: list[StageDescriptor],
+    *,
+    master: list[str],
+    interval: float | int | None,
+    cfg: dict[str, Any],
+) -> StageDescriptor | None:
+    """Describe one config transformation entry against the current upstream plan."""
+    tid = str(entry.get("id") or "").strip()
+    if not tid:
+        return None
+    enabled = bool(entry.get("enabled", False))
+    params = entry.get("params") if isinstance(entry.get("params"), dict) else {}
+    try:
+        meta = get_transformation(tid)
+    except KeyError:
+        return None
+    order = int(entry.get("order", meta.order) or meta.order)
+    inst = get_transformation(tid)
+    inst.enabled = enabled
+    inst.order = order
+    if isinstance(entry.get("depends_on"), (list, tuple)) and entry.get("depends_on"):
+        inst.depends_on = [
+            str(d).strip() for d in entry["depends_on"] if str(d).strip()
+        ]
+    else:
+        inst.depends_on = list(getattr(type(inst), "depends_on", []) or [])
+    setattr(inst, "params", dict(params or {}))
+
+    upstream = PipelineDescription(
+        stages=list(stages),
+        master_features=list(master),
+        sample_interval_sec=interval,
+        config=cfg,
+    )
+    try:
+        stage = inst.describe(
+            dict(params or {}),
+            upstream=upstream,
+            master_features=master,
+            sample_interval_sec=interval,
+            enabled=enabled,
+        )
+    except Exception:
+        stage = StageDescriptor(
+            id=str(inst.id),
+            name=str(inst.name or inst.id),
+            order=int(inst.order),
+            enabled=enabled,
+            depends_on=tuple(inst.depends_on or ()),
+            input_sources=(MASTER_STAGE_ID,),
+            output_descriptors=(),
+            notes="describe() failed; outputs unavailable.",
+        )
+    if stage.order != order:
+        stage = StageDescriptor(
+            id=stage.id,
+            name=stage.name,
+            order=order,
+            enabled=stage.enabled,
+            depends_on=stage.depends_on,
+            input_sources=stage.input_sources,
+            output_descriptors=stage.output_descriptors,
+            notes=stage.notes,
+        )
+    return stage
+
+
 def describe_pipeline_stages(
     config: dict[str, Any] | list[Any] | None = None,
     *,
@@ -192,8 +261,10 @@ def describe_pipeline_stages(
 ) -> PipelineDescription:
     """Build the self-describing pipeline catalog from config + registry.
 
-    Walks transforms in execution order. Each stage's ``describe()`` sees the
-    accumulating upstream catalog so planned outputs can reference prior stages.
+    Walks each config entry in execution order (multiple stages may share the
+    same transform ``id``). Each stage's ``describe()`` sees the accumulating
+    upstream catalog. Registered transforms absent from the config are still
+    listed once (disabled) for catalogue completeness.
     """
     ensure_builtin_transformations()
     cfg = normalize_transformation_config(config)
@@ -204,78 +275,45 @@ def describe_pipeline_stages(
     master = [str(f).strip() for f in (master_features or []) if str(f).strip()]
     stages: list[StageDescriptor] = [master_stage_descriptor(master)]
 
-    entry_by_id: dict[str, dict[str, Any]] = {}
+    config_ids: set[str] = set()
     for entry in list(cfg.get("transformations") or []):
         if not isinstance(entry, dict):
             continue
         tid = str(entry.get("id") or "").strip()
-        if tid:
-            entry_by_id[tid] = entry
+        if not tid:
+            continue
+        config_ids.add(tid)
+        enabled = bool(entry.get("enabled", False))
+        if not include_disabled and not enabled:
+            continue
+        stage = _describe_config_entry(
+            entry,
+            stages,
+            master=master,
+            interval=interval,
+            cfg=cfg,
+        )
+        if stage is not None:
+            stages.append(stage)
 
-    # All registered transforms (stable order); disabled stages still describe.
     registered = sorted(
         list_registered_transformations(),
         key=lambda t: (int(t.order), str(t.id)),
     )
     for meta in registered:
-        entry = entry_by_id.get(meta.id) or {}
-        enabled = bool(entry.get("enabled", False))
-        if not include_disabled and not enabled:
+        if meta.id in config_ids:
             continue
-        params = entry.get("params") if isinstance(entry.get("params"), dict) else {}
-        order = int(entry.get("order", meta.order) or meta.order)
-        try:
-            inst = get_transformation(meta.id)
-        except KeyError:
+        if not include_disabled:
             continue
-        inst.enabled = enabled
-        inst.order = order
-        if isinstance(entry.get("depends_on"), (list, tuple)) and entry.get("depends_on"):
-            inst.depends_on = [
-                str(d).strip() for d in entry["depends_on"] if str(d).strip()
-            ]
-        else:
-            inst.depends_on = list(getattr(type(inst), "depends_on", []) or [])
-        setattr(inst, "params", dict(params or {}))
-
-        upstream = PipelineDescription(
-            stages=list(stages),
-            master_features=list(master),
-            sample_interval_sec=interval,
-            config=cfg,
+        stage = _describe_config_entry(
+            {"id": meta.id, "enabled": False, "params": {}},
+            stages,
+            master=master,
+            interval=interval,
+            cfg=cfg,
         )
-        try:
-            stage = inst.describe(
-                dict(params or {}),
-                upstream=upstream,
-                master_features=master,
-                sample_interval_sec=interval,
-                enabled=enabled,
-            )
-        except Exception:
-            stage = StageDescriptor(
-                id=str(inst.id),
-                name=str(inst.name or inst.id),
-                order=int(inst.order),
-                enabled=enabled,
-                depends_on=tuple(inst.depends_on or ()),
-                input_sources=(MASTER_STAGE_ID,),
-                output_descriptors=(),
-                notes="describe() failed; outputs unavailable.",
-            )
-        # Prefer config order if describe omitted it.
-        if stage.order != order:
-            stage = StageDescriptor(
-                id=stage.id,
-                name=stage.name,
-                order=order,
-                enabled=stage.enabled,
-                depends_on=stage.depends_on,
-                input_sources=stage.input_sources,
-                output_descriptors=stage.output_descriptors,
-                notes=stage.notes,
-            )
-        stages.append(stage)
+        if stage is not None:
+            stages.append(stage)
 
     return PipelineDescription(
         stages=stages,

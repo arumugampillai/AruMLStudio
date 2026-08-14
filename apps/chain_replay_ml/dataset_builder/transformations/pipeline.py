@@ -148,9 +148,21 @@ def run_transformation_pipeline(
     """
     cfg = normalize_transformation_config(config)
     registered = registered_transformation_count()
-    enabled = _resolve_enabled_transforms(cfg)
     ctx = context or TransformContext(config=cfg)
     ctx.config = cfg
+    if getattr(ctx, "data_dir", None):
+        from ..pipeline_features_config import sanitize_transformation_config_before_execution
+
+        cfg, skipped_retired = sanitize_transformation_config_before_execution(
+            cfg,
+            str(ctx.data_dir),
+        )
+        ctx.config = cfg
+        log = log_fn or getattr(ctx, "logger", None)
+        if log and skipped_retired:
+            for name in skipped_retired:
+                log(f"SKIPPED_RETIRED_SOURCE: {name}")
+    enabled = _resolve_enabled_transforms(cfg)
     if log_fn is not None and ctx.logger is None:
         ctx.logger = log_fn
 

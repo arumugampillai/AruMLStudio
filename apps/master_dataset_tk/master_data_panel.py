@@ -1108,6 +1108,8 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
                 auto = getattr(self, "_auto_feature_panel", None)
                 if auto is not None and hasattr(auto, "refresh_target_pipelines"):
                     auto.refresh_target_pipelines()
+                if auto is not None and hasattr(auto, "refresh_build_pipelines"):
+                    auto.refresh_build_pipelines()
             return
         self._ensure_feature_analysis_panel()
 
@@ -1118,6 +1120,8 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         auto = getattr(self, "_auto_feature_panel", None)
         if auto is not None and hasattr(auto, "refresh_target_pipelines"):
             auto.refresh_target_pipelines(select_pipeline_id=select_pipeline_id)
+        if auto is not None and hasattr(auto, "refresh_build_pipelines"):
+            auto.refresh_build_pipelines(select_pipeline_id=select_pipeline_id)
 
     def _ensure_feature_analysis_panel(self) -> None:
         if getattr(self, "_feature_analysis_panel", None) is not None:
@@ -3253,11 +3257,13 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
 
     def _laggable_feature_names(self) -> list[str]:
         from chain_replay_ml.dataset_builder.transformations.lag_ui import filter_laggable_features
+        from .build_service import chart_data_dir
 
         return filter_laggable_features(
             self._master_feature_columns(),
             registry_only=True,
             exclude_names=self._registry_retired_features(),
+            data_dir=chart_data_dir(self.chart_dir),
         )
 
     def _refresh_lag_feature_checkboxes(self) -> None:

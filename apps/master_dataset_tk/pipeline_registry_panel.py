@@ -250,7 +250,8 @@ class PipelineRegistryPanel(ttk.Frame):
         ttk.Label(btn_row, text="(from Master Feature Registry — membership only)", foreground="#666").pack(
             side="left", padx=(8, 0)
         )
-        ttk.Button(btn_row, text="Delete Pipeline", command=self._delete_pipeline).pack(side="right")
+        self._delete_pipeline_btn = ttk.Button(btn_row, text="Delete Pipeline", command=self._delete_pipeline)
+        self._delete_pipeline_btn.pack(side="right")
 
         cand_frame = ttk.LabelFrame(detail, text="Candidate Features", padding=4)
         cand_frame.pack(fill="both", expand=True, pady=(8, 0))
@@ -297,14 +298,30 @@ class PipelineRegistryPanel(ttk.Frame):
             self._detail_var.set("Pipeline not found")
             self._cand_list.delete(0, tk.END)
             return
+        from chain_replay_ml.dataset_builder.pipeline_features_prefs import (
+            is_excluded_pipeline_feature,
+        )
+        from .build_service import chart_data_dir
+
+        data_dir = chart_data_dir(self.chart_dir)
+        candidates = [
+            str(n).strip()
+            for n in (row.get("candidate_features") or [])
+            if str(n).strip() and not is_excluded_pipeline_feature(str(n).strip(), data_dir)
+        ]
         self._detail_var.set(
             f"ID: {row['pipeline_id']}  ·  Name: {row['name']}  ·  "
             f"Type: {row['type_label']}  ·  Status: {row['status_label']}\n"
             f"Registry members: {row['registry_feature_count']}  ·  "
-            f"Candidates: {row['candidate_count']}"
+            f"Candidates: {len(candidates)}"
         )
+        is_base = bool(row.get("is_base")) or str(row.get("type") or "") == "base"
+        try:
+            self._delete_pipeline_btn.configure(state="disabled" if is_base else "normal")
+        except tk.TclError:
+            pass
         self._cand_list.delete(0, tk.END)
-        for name in row.get("candidate_features") or []:
+        for name in candidates:
             self._cand_list.insert(tk.END, name)
 
     def _open_create(self) -> None:
@@ -345,10 +362,10 @@ class PipelineRegistryPanel(ttk.Frame):
         if not row:
             messagebox.showerror("Delete Pipeline", "Pipeline not found.", parent=self)
             return
-        if str(row.get("type") or "") == "existing":
+        if str(row.get("type") or "") == "base" or row.get("is_base"):
             messagebox.showinfo(
                 "Delete Pipeline",
-                "The existing default pipeline cannot be deleted.",
+                "The Base pipeline cannot be deleted.",
                 parent=self,
             )
             return
@@ -380,10 +397,10 @@ class PipelineRegistryPanel(ttk.Frame):
         row = get_pipeline(self.chart_dir, pid)
         if not row:
             return
-        if str(row.get("type") or "") == "existing":
+        if str(row.get("type") or "") == "base" or row.get("is_base"):
             messagebox.showinfo(
                 "Select Features",
-                "The existing default pipeline uses legacy pipeline features, not registry membership.",
+                "The Base pipeline uses the approved feature pool, not registry membership selection.",
                 parent=self,
             )
             return

@@ -67,6 +67,24 @@ def registry_feature_names(*, data_dir: str | None = None) -> list[str]:
     return names
 
 
+def get_active_feature_names(data_dir: str) -> list[str]:
+    """Authoritative active (non-retired) Feature Registry names for transformations."""
+    return registry_feature_names(data_dir=data_dir)
+
+
+def transformation_forbidden_feature_names(data_dir: str | None = None) -> frozenset[str]:
+    """Registry-retired, pipeline-retired, and static retired — never transform sources or outputs."""
+    from .feature_migration import RETIRED_FEATURES
+
+    skip: set[str] = set(RETIRED_FEATURES)
+    if data_dir:
+        from .pipeline_features_prefs import load_retired_pipeline_features
+
+        skip |= set(load_retired_pipeline_features(data_dir))
+        skip |= set(registry_retired_feature_names(data_dir))
+    return frozenset(skip)
+
+
 def pipeline_feature_names(
     *,
     data_dir: str | None = None,
@@ -197,17 +215,154 @@ def feature_sources_catalog(
     }
 
 
+DATASET_SOURCE_FEATURE_REGISTRY = "feature_registry"
+DATASET_SOURCE_BASE_PIPELINE = "base_pipeline"
+DATASET_SOURCE_OTHER_PIPELINE = "other_pipeline"
+
+_DATASET_SOURCE_LABELS: dict[str, str] = {
+    DATASET_SOURCE_FEATURE_REGISTRY: "Feature Registry",
+    DATASET_SOURCE_BASE_PIPELINE: "Base Pipeline",
+    DATASET_SOURCE_OTHER_PIPELINE: "Other Pipeline",
+}
+
+
+def dataset_feature_source_label(bucket: str) -> str:
+    return _DATASET_SOURCE_LABELS.get(str(bucket or "").strip(), "Other Pipeline")
+
+
+def _matches_pipeline_catalogue_feature(name: str, catalogue: frozenset[str]) -> bool:
+    """True when ``name`` is a catalogue column or a transform output of one."""
+    n = str(name or "").strip()
+    if not n or not catalogue:
+        return False
+    if n in catalogue:
+        return True
+    for base in catalogue:
+        b = str(base).strip()
+        if b and n.startswith(f"{b}_"):
+            return True
+    return False
+
+
+def base_pipeline_feature_names(data_dir: str) -> frozenset[str]:
+    """Active Pipeline Features catalogue (approved pool / PIPELINE_OWNED minus retired)."""
+    names = pipeline_feature_names(data_dir=data_dir)
+    if names:
+        return frozenset(names)
+    from .pipeline_registry_store import ensure_default_existing_pipeline, is_base_pipeline_record
+
+    doc = ensure_default_existing_pipeline(data_dir)
+    stored: set[str] = set()
+    for rec in (doc.get("pipelines") or {}).values():
+        if not isinstance(rec, dict) or not is_base_pipeline_record(rec):
+            continue
+        stored.update(
+            str(n).strip() for n in (rec.get("candidate_features") or []) if str(n).strip()
+        )
+        break
+    return frozenset(stored)
+
+
+def dataset_registry_export_feature_names(
+    metadata: dict[str, Any] | None,
+    *,
+    data_dir: str,
+) -> frozenset[str]:
+    """Selected registry export names for a dataset (snapshot at build, else current prefs)."""
+    if isinstance(metadata, dict):
+        snap = metadata.get("registry_export_features")
+        if isinstance(snap, list) and snap:
+            return frozenset(str(n).strip() for n in snap if str(n).strip())
+    from .registry_features_prefs import resolve_registry_export_features
+
+    return resolve_registry_export_features(data_dir)
+
+
+def dataset_base_pipeline_export_feature_names(
+    metadata: dict[str, Any] | None,
+    *,
+    data_dir: str,
+) -> frozenset[str]:
+    """Base pipeline catalogue snapshot at build (else current active catalogue)."""
+    if isinstance(metadata, dict):
+        snap = metadata.get("base_pipeline_export_features")
+        if isinstance(snap, list) and snap:
+            return frozenset(str(n).strip() for n in snap if str(n).strip())
+    return base_pipeline_feature_names(data_dir)
+
+
+def other_pipeline_feature_names_from_metadata(
+    metadata: dict[str, Any] | None,
+) -> frozenset[str]:
+    """Experimental pipeline candidate snapshot stored on a built dataset."""
+    if not isinstance(metadata, dict):
+        return frozenset()
+    prov = metadata.get("pipeline_provenance")
+    if not isinstance(prov, dict):
+        return frozenset()
+    return frozenset(
+        str(n).strip() for n in (prov.get("candidate_features") or []) if str(n).strip()
+    )
+
+
+def classify_dataset_feature_source(
+    feature: str,
+    *,
+    data_dir: str,
+    registry_names: frozenset[str] | None = None,
+    base_pipeline_names: frozenset[str] | None = None,
+) -> str:
+    """Partition one dataset column into Registry / Base Pipeline / Other Pipeline.
+
+    Order (each step only when not already classified):
+    1. Feature Registry — exact name in the *selected* registry export set
+    2. Base Pipeline — approved Pipeline Features catalogue name or derived output
+    3. Other Pipeline — experimental pipeline candidates and remainder
+    """
+    name = str(feature or "").strip()
+    if not name:
+        return DATASET_SOURCE_OTHER_PIPELINE
+    registry = (
+        registry_names
+        if registry_names is not None
+        else dataset_registry_export_feature_names(None, data_dir=data_dir)
+    )
+    if name in registry:
+        return DATASET_SOURCE_FEATURE_REGISTRY
+    base = (
+        base_pipeline_names
+        if base_pipeline_names is not None
+        else base_pipeline_feature_names(data_dir)
+    )
+    from .feature_migration import is_pipeline_owned
+
+    if is_pipeline_owned(name) or _matches_pipeline_catalogue_feature(name, base):
+        return DATASET_SOURCE_BASE_PIPELINE
+    return DATASET_SOURCE_OTHER_PIPELINE
+
+
 __all__ = [
+    "DATASET_SOURCE_BASE_PIPELINE",
+    "DATASET_SOURCE_FEATURE_REGISTRY",
+    "DATASET_SOURCE_OTHER_PIPELINE",
     "FEATURE_SOURCE_PIPELINE",
     "FEATURE_SOURCE_REGISTRY",
     "GENERATOR_FAMILY_LABELS",
     "GENERATOR_FAMILY_ORDER",
+    "base_pipeline_feature_names",
+    "classify_dataset_feature_source",
+    "dataset_feature_source_label",
+    "dataset_registry_export_feature_names",
+    "dataset_base_pipeline_export_feature_names",
+    "other_pipeline_feature_names_from_metadata",
     "feature_sources_catalog",
     "pipeline_feature_names",
     "pipeline_feature_source",
     "pipeline_features_by_family",
     "pipeline_family_of",
+    "get_active_feature_names",
     "registry_feature_names",
     "registry_feature_source",
     "registry_retired_feature_names",
+    "transformation_forbidden_feature_names",
 ]

@@ -481,6 +481,8 @@ def create_master_registry_dataset(
     dataset_kind: str | None = None,
     pipeline_no_null_report: bool = False,
     registry_export_features: frozenset[str] | None = None,
+    pipeline_provenance: dict[str, Any] | None = None,
+    base_pipeline_export_features: frozenset[str] | None = None,
     on_progress: Callable[[str, int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Export filtered master rows to dataset registry as Parquet + metadata JSON.
@@ -1615,6 +1617,21 @@ def create_master_registry_dataset(
             master_day_rows=master_day_rows,
         )
         metadata["trading_day_filter"] = filter_meta
+    if registry_export_features is not None:
+        metadata["registry_export_features"] = sorted(
+            {str(n).strip() for n in registry_export_features if str(n).strip()}
+        )
+    if base_pipeline_export_features is not None:
+        metadata["base_pipeline_export_features"] = sorted(
+            {str(n).strip() for n in base_pipeline_export_features if str(n).strip()}
+        )
+    if isinstance(pipeline_provenance, dict) and pipeline_provenance:
+        metadata["pipeline_provenance"] = dict(pipeline_provenance)
+        metadata["pipeline_id"] = str(pipeline_provenance.get("pipeline_id") or "")
+        metadata["pipeline_name"] = str(pipeline_provenance.get("pipeline_name") or "")
+        metadata["pipeline_type"] = str(pipeline_provenance.get("pipeline_type") or "")
+        metadata["pipeline_snapshot_id"] = str(pipeline_provenance.get("pipeline_snapshot_id") or "")
+        metadata["pipeline_feature_count"] = len(pipeline_provenance.get("candidate_features") or [])
 
     with open(json_path, "w", encoding="utf-8") as fh:
         json.dump(metadata, fh, indent=2, ensure_ascii=False)

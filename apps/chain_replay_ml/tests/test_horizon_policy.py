@@ -65,6 +65,22 @@ class HorizonPolicyTests(unittest.TestCase):
                 sample_interval_sec=3.0,
             )
 
+    def test_parse_preserves_duplicate_seconds_with_distinct_columns(self) -> None:
+        features, offsets = parse_features_and_horizons(
+            transform_name="Return Transformation",
+            params={
+                "features": ["option_oi"],
+                "horizons": [
+                    {"seconds": 60.0, "column": "oi_change_1m"},
+                    {"seconds": 60.0, "column": "oi_change_pct_1m"},
+                ],
+            },
+            sample_interval_sec=3.0,
+        )
+        self.assertEqual(features, ["option_oi"])
+        cols = [column for _, _, _, column in offsets]
+        self.assertEqual(cols, ["oi_change_1m", "oi_change_pct_1m"])
+
     def test_custom_document(self) -> None:
         policies = load_horizon_policy(
             document={

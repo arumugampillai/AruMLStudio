@@ -174,6 +174,7 @@ def auto_feature_transform_prefs_snapshot(
     premium_min: str | float,
     premium_max: str | float,
     target_pipeline_id: str | None = None,
+    build_pipeline_id: str | None = None,
 ) -> dict[str, Any]:
     try:
         interval = max(1, int(interval_sec))
@@ -196,6 +197,7 @@ def auto_feature_transform_prefs_snapshot(
         "premium_min": str(premium_min if premium_min is not None else "15"),
         "premium_max": str(premium_max if premium_max is not None else "40"),
         "target_pipeline_id": str(target_pipeline_id or "").strip().upper(),
+        "build_pipeline_id": str(build_pipeline_id or "").strip().upper(),
     }
 
 
@@ -232,6 +234,7 @@ def apply_auto_feature_transform_prefs(
         "premium_min": str(src.get("premium_min") if src.get("premium_min") is not None else "15"),
         "premium_max": str(src.get("premium_max") if src.get("premium_max") is not None else "40"),
         "target_pipeline_id": str(src.get("target_pipeline_id") or "").strip().upper(),
+        "build_pipeline_id": str(src.get("build_pipeline_id") or "").strip().upper(),
         "candidate_generation": normalize_candidate_generation_prefs(
             src.get("candidate_generation") if isinstance(src.get("candidate_generation"), dict) else None
         ),

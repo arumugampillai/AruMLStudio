@@ -116,6 +116,7 @@ class ReturnTransformation(FeatureTransformation):
 
         def _pandas_fallback(frame: pd.DataFrame) -> pd.DataFrame:
             local = frame.copy()
+            new_cols: dict[str, pd.Series] = {}
             for feat, rows, col in specs:
                 lagged = shift_feature_columns(
                     local, feature=feat, rows=rows, partition_by=partition_by
@@ -127,8 +128,13 @@ class ReturnTransformation(FeatureTransformation):
                     series = (local[feat] - lagged) / denom
                 if scale != 1.0:
                     series = series * scale
-                local[col] = series
-            return local
+                new_cols[col] = series
+            if not new_cols:
+                return local
+            return pd.concat(
+                [local, pd.DataFrame(new_cols, index=local.index)],
+                axis=1,
+            )
 
         from .polars_ops import apply_return_ops_via_polars
 

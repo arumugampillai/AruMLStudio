@@ -52,6 +52,27 @@ class DifferenceClipTransformation(FeatureTransformation):
     depends_on: list[str] = []
     params: dict[str, Any] = {}
 
+    def describe(
+        self,
+        params: dict[str, Any] | None = None,
+        *,
+        upstream=None,
+        master_features: list[str] | None = None,
+        sample_interval_sec: float | int | None = None,
+        enabled: bool | None = None,
+    ):
+        from .describe_helpers import describe_time_shift_stage
+
+        del upstream, master_features
+        return describe_time_shift_stage(
+            self,
+            params,
+            sample_interval_sec=sample_interval_sec,
+            enabled=enabled,
+            kind="difference_clip",
+            name_fn=difference_clip_column_name,
+        )
+
     def transform(self, df: pd.DataFrame, context: TransformContext) -> TransformationResult:
         t0 = time.perf_counter()
         params = resolve_transform_params(self.id, getattr(self, "params", None), context.config)

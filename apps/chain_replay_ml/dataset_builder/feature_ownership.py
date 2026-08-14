@@ -166,6 +166,23 @@ def is_canonical(feature: str) -> bool:
     return cat in (OWNERSHIP_BASE, OWNERSHIP_COMPUTED_BASE)
 
 
+def non_registry_transform_source_names(data_dir: str | None = None) -> frozenset[str]:
+    """Names unsuitable as lag/diff/return sources when Master export is the input grid."""
+    from .feature_migration import is_pipeline_owned
+
+    names: set[str] = set(_COMPUTED_BASE_EXACT)
+    if data_dir:
+        try:
+            from .feature_sources_catalog import registry_feature_names
+
+            for n in registry_feature_names(data_dir=data_dir):
+                if _is_computed_base_name(n) or is_pipeline_owned(n):
+                    names.add(n)
+        except Exception:
+            pass
+    return frozenset(names)
+
+
 def litmus_is_historical(requires_prior_rows: bool) -> bool:
     """Litmus test helper: deleting all previous rows would make it impossible."""
     return bool(requires_prior_rows)
@@ -774,6 +791,7 @@ __all__ = [
     "ownership_of",
     "future_generator_of",
     "is_canonical",
+    "non_registry_transform_source_names",
     "litmus_is_historical",
     "looks_historical_by_name",
     "is_interaction_feature",

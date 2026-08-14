@@ -31,7 +31,7 @@ def _lifecycle_baseline_composite(config: TrainingConfig) -> float | None:
 from .config_validator import validate_training_config
 from .dataset_loader import DatasetLoaderError, load_training_xy
 from .evaluator import evaluate_predictions, evaluate_regression, resolve_ltp_baseline_from_frames
-from .feature_matrix import FeatureMatrixError, drop_invalid_rows, validate_feature_matrix
+from .feature_matrix import FeatureMatrixError, drop_invalid_rows, sanitize_training_features, validate_feature_matrix
 from .naming import suggest_model_name_from_split
 from .paths import model_artifact_paths, model_package_dir, safe_model_name
 from .progress import TRAIN_STEP_ORDER, TrainStageTracker
@@ -427,6 +427,7 @@ def _train_single_split(
         _check_cancel()
         try:
             X, y, context_df = drop_invalid_rows(X, y, context_df)
+            X = sanitize_training_features(X)
             matrix_report = validate_feature_matrix(X, y)
         except FeatureMatrixError as exc:
             tracker.emit("preparing_matrix", "fail", detail=str(exc))
@@ -886,6 +887,7 @@ def _train_walk_forward(
         _check_cancel()
         try:
             X, y, context_df = drop_invalid_rows(X, y, context_df)
+            X = sanitize_training_features(X)
             matrix_report = validate_feature_matrix(X, y)
         except FeatureMatrixError as exc:
             tracker.emit("preparing_matrix", "fail", detail=str(exc))

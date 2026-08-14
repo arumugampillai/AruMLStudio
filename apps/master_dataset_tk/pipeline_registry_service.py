@@ -23,6 +23,19 @@ def load_pipelines(chart_dir: str) -> list[dict[str, Any]]:
     return list_pipelines(doc)
 
 
+def get_experimental_pipelines(chart_dir: str) -> list[dict[str, Any]]:
+    """Experimental pipelines only (excludes Base pipeline)."""
+    from chain_replay_ml.dataset_builder.pipeline_registry_store import (
+        ensure_default_existing_pipeline,
+        list_experimental_pipelines,
+        load_store,
+    )
+
+    data_dir = data_dir_for(chart_dir)
+    doc = ensure_default_existing_pipeline(data_dir)
+    return list_experimental_pipelines(doc)
+
+
 def get_pipeline(chart_dir: str, pipeline_id: str) -> dict[str, Any] | None:
     from chain_replay_ml.dataset_builder.pipeline_registry_store import (
         ensure_default_existing_pipeline,
@@ -33,6 +46,48 @@ def get_pipeline(chart_dir: str, pipeline_id: str) -> dict[str, Any] | None:
     data_dir = data_dir_for(chart_dir)
     doc = ensure_default_existing_pipeline(data_dir)
     return get_pipeline_summary(doc, pipeline_id)
+
+
+def is_base_pipeline(chart_dir: str, pipeline_id: str) -> bool:
+    from chain_replay_ml.dataset_builder.pipeline_registry_store import (
+        ensure_default_existing_pipeline,
+        get_pipeline,
+        is_base_pipeline_record,
+        load_store,
+    )
+
+    data_dir = data_dir_for(chart_dir)
+    doc = ensure_default_existing_pipeline(data_dir)
+    rec = get_pipeline(doc, pipeline_id)
+    return is_base_pipeline_record(rec)
+
+
+def build_pipeline_snapshot(chart_dir: str, pipeline_id: str) -> dict[str, Any] | None:
+    from chain_replay_ml.dataset_builder.pipeline_registry_store import (
+        build_pipeline_snapshot as _build_snapshot,
+        ensure_default_existing_pipeline,
+        get_pipeline,
+        load_store,
+    )
+
+    data_dir = data_dir_for(chart_dir)
+    doc = ensure_default_existing_pipeline(data_dir)
+    rec = get_pipeline(doc, pipeline_id)
+    if not rec:
+        return None
+    return _build_snapshot(rec, pipeline_id=pipeline_id)
+
+
+def resolve_pipeline_dataset_feature_names(chart_dir: str, pipeline_id: str) -> list[str]:
+    from chain_replay_ml.dataset_builder.pipeline_registry_store import (
+        ensure_default_existing_pipeline,
+        load_store,
+        resolve_pipeline_dataset_feature_names as _resolve,
+    )
+
+    data_dir = data_dir_for(chart_dir)
+    doc = ensure_default_existing_pipeline(data_dir)
+    return _resolve(data_dir, doc, pipeline_id)
 
 
 def create_pipeline(
@@ -87,6 +142,36 @@ def delete_pipeline(chart_dir: str, pipeline_id: str) -> bool:
     return deleted
 
 
+def update_pipeline_transformation_config(
+    chart_dir: str,
+    pipeline_id: str,
+    transformation_config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    from chain_replay_ml.dataset_builder.pipeline_registry_store import (
+        get_pipeline_summary,
+        load_store,
+        save_store,
+        update_pipeline,
+    )
+
+    data_dir = data_dir_for(chart_dir)
+    if isinstance(transformation_config, dict):
+        from master_dataset_tk.auto_candidate_generation import (
+            sanitize_transformation_config_for_data_dir,
+        )
+
+        transformation_config = sanitize_transformation_config_for_data_dir(
+            transformation_config,
+            data_dir,
+        )
+    doc = load_store(data_dir)
+    rec = update_pipeline(doc, pipeline_id, transformation_config=transformation_config)
+    if rec is None:
+        return None
+    save_store(data_dir, doc)
+    return get_pipeline_summary(doc, pipeline_id)
+
+
 def set_pipeline_registry_members(
     chart_dir: str,
     pipeline_id: str,
@@ -123,8 +208,17 @@ def add_pipeline_candidates(
     )
 
     data_dir = data_dir_for(chart_dir)
+    from chain_replay_ml.dataset_builder.pipeline_features_prefs import (
+        is_excluded_pipeline_feature,
+    )
+
+    clean_names = [
+        str(n).strip()
+        for n in names
+        if str(n).strip() and not is_excluded_pipeline_feature(str(n).strip(), data_dir)
+    ]
     doc = load_store(data_dir)
-    rec = add_candidate_features(doc, pipeline_id, names, replace=replace)
+    rec = add_candidate_features(doc, pipeline_id, clean_names, replace=replace)
     if rec is None:
         return None
     save_store(data_dir, doc)
