@@ -82,6 +82,7 @@ _META_EXTRA_COLUMNS: dict[str, str] = {
     "feature_hash": "TEXT",
     "target_hash": "TEXT",
     "dataset_fingerprint": "TEXT",
+    "feature_project_id": "TEXT",
     "last_day_added": "TEXT",
     "last_day_deleted": "TEXT",
     "last_modified": "TEXT",
@@ -346,7 +347,51 @@ class MasterStore:
             WHERE metadata_status = 'OK' OR metadata_status IS NULL
             """
         )
+        self._backfill_feature_project_id()
         self.conn.commit()
+
+    def _backfill_feature_project_id(self) -> None:
+        """Existing master DBs without project binding default to reserved ``all``."""
+        cols = {
+            str(row[1])
+            for row in self.conn.execute("PRAGMA table_info(master_dataset_meta)").fetchall()
+        }
+        if "feature_project_id" not in cols:
+            return
+        from .feature_project_organization import RESERVED_ALL_PROJECT_ID
+        from .master_feature_project import (
+            META_CONFIG_KEY,
+            normalize_feature_project_id,
+            read_master_config_feature_project_id,
+        )
+
+        row = self.conn.execute(
+            "SELECT feature_project_id FROM master_dataset_meta WHERE id = 1"
+        ).fetchone()
+        col_raw = row[0] if row else None
+        col_pid = (
+            normalize_feature_project_id(str(col_raw))
+            if col_raw is not None and str(col_raw).strip()
+            else None
+        )
+        cfg_pid = read_master_config_feature_project_id(self)
+        pid = col_pid or cfg_pid or RESERVED_ALL_PROJECT_ID
+        need_col = col_pid != pid
+        need_cfg = cfg_pid != pid
+        if not need_col and not need_cfg:
+            return
+        if need_col:
+            self.conn.execute(
+                "UPDATE master_dataset_meta SET feature_project_id = ? WHERE id = 1",
+                (pid,),
+            )
+        if need_cfg:
+            cfg = self.get_meta("master_config")
+            if not isinstance(cfg, dict):
+                cfg = {}
+            cfg = dict(cfg)
+            cfg[META_CONFIG_KEY] = pid
+            self.set_meta("master_config", cfg)
 
     def _migrate_days_schema(self) -> None:
         existing = {

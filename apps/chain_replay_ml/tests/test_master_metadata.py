@@ -76,6 +76,34 @@ class TestMasterMetadata(unittest.TestCase):
         finally:
             store.close()
 
+    def test_read_status_includes_feature_project_id(self) -> None:
+        store = self._store()
+        try:
+            from chain_replay_ml.dataset_builder.master_feature_project import set_master_feature_project_id
+
+            set_master_feature_project_id(store, self.tmp, "all")
+            svc = MasterDatasetService(self.db_path)
+            status = svc.read_status(data_dir=self.tmp, market="NIFTY", interval_sec=10)
+            self.assertEqual(status.get("feature_project_id"), "all")
+        finally:
+            store.close()
+
+    def test_backfill_feature_project_id_defaults_to_all(self) -> None:
+        store = self._store()
+        try:
+            store.conn.execute(
+                "UPDATE master_dataset_meta SET feature_project_id = NULL WHERE id = 1"
+            )
+            store.conn.commit()
+            store._backfill_feature_project_id()
+            meta = store.read_master_meta_dict()
+            self.assertEqual(meta.get("feature_project_id"), "all")
+            cfg = store.get_meta("master_config")
+            self.assertIsInstance(cfg, dict)
+            self.assertEqual(cfg.get("feature_project_id"), "all")
+        finally:
+            store.close()
+
     def test_delete_day_updates_metadata(self) -> None:
         store = self._store()
         try:

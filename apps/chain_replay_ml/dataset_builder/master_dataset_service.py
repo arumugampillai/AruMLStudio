@@ -143,6 +143,11 @@ class MasterDatasetService:
             cfg = store.get_meta("master_config")
             if isinstance(cfg, dict):
                 out["master_config"] = cfg
+            fpid = store.read_master_meta_dict().get("feature_project_id")
+            if fpid is not None and str(fpid).strip():
+                out["feature_project_id"] = str(fpid).strip().lower()
+            elif isinstance(cfg, dict) and cfg.get("feature_project_id"):
+                out["feature_project_id"] = str(cfg.get("feature_project_id")).strip().lower()
             out["coverage_by_day"] = store.get_coverage_by_day()
             schema_meta = store.get_meta("build_schema")
             if isinstance(schema_meta, dict):

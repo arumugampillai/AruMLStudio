@@ -461,6 +461,7 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         self._lag_warn_var = tk.StringVar(value="")
         self._lag_search_var = tk.StringVar(value="")
         self._lag_category_expanded: dict[str, bool] = {}
+        self._manual_transform_project_var = tk.StringVar(value="—")
         self._lag_available_features: list[str] = []
         self._pending_lag_features: list[str] | None = None
         self._day_selection_explicit = False
@@ -1650,7 +1651,20 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
             frame,
             textvariable=self._lag_horizon_policy_var,
             foreground="#666",
-        ).pack(anchor="w", pady=(0, 4))
+        ).pack(anchor="w", pady=(0, 2))
+        project_row = ttk.Frame(frame)
+        project_row.pack(anchor="w", fill="x", pady=(0, 4))
+        ttk.Label(project_row, text="Feature Project:").pack(side="left")
+        ttk.Label(
+            project_row,
+            textvariable=self._manual_transform_project_var,
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=(6, 0))
+        ttk.Label(
+            project_row,
+            text="(from Master Dataset)",
+            foreground="#666",
+        ).pack(side="left", padx=(8, 0))
 
         body = ttk.Frame(frame)
         body.pack(fill="x", expand=False, pady=(4, 0))
@@ -1906,7 +1920,6 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
     ) -> None:
         from chain_replay_ml.dataset_builder.transformations.lag_ui import (
             default_selected_lag_features,
-            group_features_by_category,
         )
 
         host = getattr(self, feat_host_attr, None)
@@ -1946,10 +1959,13 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         if not hasattr(self, expanded_attr):
             setattr(self, expanded_attr, {})
         expanded_map: dict[str, bool] = getattr(self, expanded_attr)
-        grouped = group_features_by_category(available)
-        for cat, names in grouped.items():
-            expanded_map.setdefault(cat, False)
-            is_expanded = expanded_map.get(cat, False)
+        groups = self._manual_transform_feature_groups_for(available)
+        for group in groups:
+            gid = str(group.get("id") or "")
+            label = str(group.get("label") or gid)
+            names = list(group.get("features") or [])
+            expanded_map.setdefault(gid, False)
+            is_expanded = expanded_map.get(gid, False)
             marker = "▼" if is_expanded else "▶"
             selected_n = sum(
                 1 for n in names
@@ -1959,9 +1975,9 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
             header.pack(fill="x", anchor="w", pady=(4, 0))
             ttk.Button(
                 header,
-                text=f"{marker} {cat}  ({selected_n}/{len(names)})",
+                text=f"{marker} {label}  ({selected_n}/{len(names)})",
                 width=36,
-                command=lambda c=cat, fh=feat_host_attr, fv=feature_vars_attr,
+                command=lambda c=gid, fh=feat_host_attr, fv=feature_vars_attr,
                                pa=pending_attr, oc=on_change, df=default_fn:
                     self._toggle_flat_category(c, fh, fv, pa, oc, df),
             ).pack(side="left", anchor="w")
@@ -3255,15 +3271,81 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         schema = d.get("build_schema") if isinstance(d.get("build_schema"), dict) else {}
         return [str(c) for c in (schema.get("feature_columns") or d.get("feature_columns") or [])]
 
+    def _master_feature_project_id(self) -> str | None:
+        d = self._preview_detail or self._detail or {}
+        raw = d.get("feature_project_id")
+        if raw is not None and str(raw).strip():
+            return str(raw).strip().lower()
+        cfg = d.get("master_config")
+        if isinstance(cfg, dict) and cfg.get("feature_project_id"):
+            return str(cfg.get("feature_project_id")).strip().lower()
+        meta = d.get("master_meta")
+        if isinstance(meta, dict) and meta.get("feature_project_id"):
+            return str(meta.get("feature_project_id")).strip().lower()
+        return None
+
+    def _resolved_master_feature_project_id(self) -> str:
+        from chain_replay_ml.dataset_builder.master_feature_project import (
+            MasterFeatureProjectError,
+            resolve_master_feature_project_id_for_path,
+        )
+
+        pid = self._master_feature_project_id()
+        if pid:
+            return pid
+        path = self._master_db_path()
+        if not path or not os.path.isfile(path):
+            raise MasterFeatureProjectError(
+                "Master database not found — load a master dataset first."
+            )
+        return resolve_master_feature_project_id_for_path(
+            path,
+            chart_data_dir(self.chart_dir),
+        )
+
+    def _manual_transform_feature_groups_for(
+        self,
+        available: list[str],
+    ) -> list[dict[str, Any]]:
+        from chain_replay_ml.dataset_builder.manual_transform_feature_groups import (
+            grouped_features_for_manual_transform,
+        )
+        from chain_replay_ml.dataset_builder.transformations.lag_ui import (
+            group_features_by_category,
+        )
+
+        if not available:
+            return []
+        try:
+            pid = self._resolved_master_feature_project_id()
+            groups = grouped_features_for_manual_transform(
+                chart_data_dir(self.chart_dir),
+                pid,
+                available,
+            )
+            if groups:
+                return groups
+        except Exception:
+            pass
+        grouped = group_features_by_category(available)
+        return [
+            {"id": label, "label": label, "features": list(names)}
+            for label, names in grouped.items()
+        ]
+
     def _laggable_feature_names(self) -> list[str]:
         from chain_replay_ml.dataset_builder.transformations.lag_ui import filter_laggable_features
-        from .build_service import chart_data_dir
 
+        try:
+            project_id = self._resolved_master_feature_project_id()
+        except Exception:
+            project_id = None
         return filter_laggable_features(
             self._master_feature_columns(),
             registry_only=True,
             exclude_names=self._registry_retired_features(),
             data_dir=chart_data_dir(self.chart_dir),
+            feature_project_id=project_id,
         )
 
     def _refresh_lag_feature_checkboxes(self) -> None:
@@ -3278,6 +3360,10 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         }
         self._lag_available_features = list(available)
         self._lag_feature_vars = {}
+        try:
+            self._manual_transform_project_var.set(self._resolved_master_feature_project_id())
+        except Exception:
+            self._manual_transform_project_var.set("—")
         if not available:
             self._rebuild_lag_feature_list()
             self._update_lag_preview()
@@ -3365,7 +3451,6 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
     def _rebuild_lag_feature_list(self) -> None:
         from chain_replay_ml.dataset_builder.transformations.lag_ui import (
             filter_features_by_search,
-            group_features_by_category,
         )
 
         if not hasattr(self, "_lag_feat_host"):
@@ -3381,32 +3466,39 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
             ).pack(anchor="w")
             return
         query = self._lag_search_var.get() if hasattr(self, "_lag_search_var") else ""
-        visible = filter_features_by_search(available, query)
-        if not visible:
+        searching = bool(str(query or "").strip())
+        groups = self._manual_transform_feature_groups_for(available)
+        if not groups:
             ttk.Label(
                 self._lag_feat_host,
-                text=f"No features match “{query.strip()}”.",
+                text="No features match the master dataset / project scope.",
                 foreground="#888",
             ).pack(anchor="w")
             return
-        searching = bool(str(query or "").strip())
-        grouped = group_features_by_category(visible)
-        for cat, names in grouped.items():
-            # Collapse by default so first open does not create hundreds of widgets.
-            expanded = True if searching else self._lag_category_expanded.get(cat, False)
-            self._lag_category_expanded.setdefault(cat, False)
+        any_visible = False
+        for group in groups:
+            gid = str(group.get("id") or "")
+            label = str(group.get("label") or gid)
+            all_names = list(group.get("features") or [])
+            visible = filter_features_by_search(all_names, query)
+            if searching and not visible:
+                continue
+            any_visible = True
+            names = visible if searching else all_names
+            expanded = True if searching else self._lag_category_expanded.get(gid, False)
+            self._lag_category_expanded.setdefault(gid, False)
             header = ttk.Frame(self._lag_feat_host)
             header.pack(fill="x", anchor="w", pady=(4, 0))
             marker = "▼" if expanded else "▶"
             selected_n = sum(
-                1 for n in names
+                1 for n in all_names
                 if n in self._lag_feature_vars and self._lag_feature_vars[n].get()
             )
             ttk.Button(
                 header,
-                text=f"{marker} {cat}  ({selected_n}/{len(names)})",
+                text=f"{marker} {label}  ({selected_n}/{len(all_names)})",
                 width=36,
-                command=lambda c=cat: self._toggle_lag_category(c),
+                command=lambda c=gid: self._toggle_lag_category(c),
             ).pack(side="left", anchor="w")
             if not expanded:
                 continue
@@ -3421,6 +3513,12 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
                     variable=var,
                     command=self._on_lag_settings_changed,
                 ).pack(anchor="w")
+        if searching and not any_visible:
+            ttk.Label(
+                self._lag_feat_host,
+                text=f"No features match “{query.strip()}”.",
+                foreground="#888",
+            ).pack(anchor="w")
 
     def _toggle_lag_category(self, category: str) -> None:
         cur = self._lag_category_expanded.get(category, True)
@@ -3532,10 +3630,6 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         self._rebuild_ohlc_feature_list()
 
     def _rebuild_ohlc_feature_list(self) -> None:
-        from chain_replay_ml.dataset_builder.transformations.lag_ui import (
-            group_features_by_category,
-        )
-
         if not hasattr(self, "_ohlc_feat_host"):
             return
         for child in self._ohlc_feat_host.winfo_children():
@@ -3550,10 +3644,13 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
             return
         if not hasattr(self, "_ohlc_category_expanded"):
             self._ohlc_category_expanded: dict[str, bool] = {}
-        grouped = group_features_by_category(available)
-        for cat, names in grouped.items():
-            self._ohlc_category_expanded.setdefault(cat, False)
-            is_expanded = self._ohlc_category_expanded.get(cat, False)
+        groups = self._manual_transform_feature_groups_for(available)
+        for group in groups:
+            gid = str(group.get("id") or "")
+            label = str(group.get("label") or gid)
+            names = list(group.get("features") or [])
+            self._ohlc_category_expanded.setdefault(gid, False)
+            is_expanded = self._ohlc_category_expanded.get(gid, False)
             marker = "▼" if is_expanded else "▶"
             selected_n = sum(
                 1 for n in names
@@ -3563,9 +3660,9 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
             header.pack(fill="x", anchor="w", pady=(4, 0))
             ttk.Button(
                 header,
-                text=f"{marker} {cat}  ({selected_n}/{len(names)})",
+                text=f"{marker} {label}  ({selected_n}/{len(names)})",
                 width=36,
-                command=lambda c=cat: self._toggle_ohlc_category(c),
+                command=lambda c=gid: self._toggle_ohlc_category(c),
             ).pack(side="left", anchor="w")
             if not is_expanded:
                 continue
@@ -4670,26 +4767,16 @@ class MasterDataPanel(NormRegimeMathTransformMixin, ttk.Frame, LazyLoadMixin):
         )
 
     def _registry_feature_count(self) -> int:
-        """Canonical Feature Registry count present in this Master (not raw DB width).
-
-        Overview still shows the on-disk Master ``feature_count`` (may be stale).
-        Create Dataset / Feature Transformation Preview use this filtered count.
-        """
-        from chain_replay_ml.dataset_builder.transformations.lag_ui import (
-            registry_feature_count_from_master,
-        )
-
+        """Registry features in master scope for this dataset's Feature Project."""
+        names = self._laggable_feature_names()
+        if names:
+            return len(names)
         d = self._preview_detail or self._detail or {}
         schema = d.get("build_schema") if isinstance(d.get("build_schema"), dict) else {}
-        fallback = int(
+        return int(
             d.get("feature_count")
             or schema.get("feature_count")
             or 0
-        )
-        return registry_feature_count_from_master(
-            self._master_feature_columns(),
-            fallback_feature_count=fallback,
-            exclude_names=self._registry_retired_features(),
         )
 
     def _update_registry_export_panel(self) -> None:

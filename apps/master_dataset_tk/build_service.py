@@ -42,6 +42,7 @@ def build_master_insert_config(
     gap_policy: dict[str, Any] | None = None,
     low_memory: bool = False,
     build_profiler: bool = False,
+    feature_project_id: str | None = None,
 ) -> DatasetBuildConfig:
     registry = _load_feature_registry()
     data_dir = chart_data_dir(chart_dir)
@@ -66,6 +67,10 @@ def build_master_insert_config(
         sampling_interval_sec=int(sampling_doc["trainingIntervalSec"]),
     )
 
+    from chain_replay_ml.dataset_builder.master_feature_project import normalize_feature_project_id
+
+    feat_project_id = normalize_feature_project_id(feature_project_id)
+
     return DatasetBuildConfig(
         dataset_name=f"master_insert_{uuid.uuid4().hex[:8]}",
         sources=list(sources),
@@ -83,6 +88,7 @@ def build_master_insert_config(
         skip_parquet_export=True,
         gap_policy=normalize_gap_policy(gap_policy or default_gap_policy()),
         build_profiler=bool(build_profiler),
+        feature_project_id=feat_project_id,
     )
 
 
@@ -197,6 +203,7 @@ class MasterBuildRunner:
         gap_policy: dict[str, Any] | None = None,
         low_memory: bool = False,
         build_profiler: bool = False,
+        feature_project_id: str | None = None,
         on_progress: ProgressCallback,
         on_done: Callable[[dict[str, Any]], None],
     ) -> None:
@@ -216,6 +223,7 @@ class MasterBuildRunner:
             gap_policy=gap_policy,
             low_memory=low_memory,
             build_profiler=build_profiler,
+            feature_project_id=feature_project_id,
         )
         self._on_progress = on_progress
         self._on_done = on_done

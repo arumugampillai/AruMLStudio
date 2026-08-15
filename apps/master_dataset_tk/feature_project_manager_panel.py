@@ -1,22 +1,31 @@
-"""Feature Project Manager — list + editor workspace (refs only, no feature ownership)."""
+"""Feature Project Manager — project picker, editor, project-specific group organization."""
 
 from __future__ import annotations
 
 import json
+import re
 import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 from typing import Any, Callable
 
-from chain_replay_ml.dataset_builder.orchestrator import _load_feature_registry
-
-from .fold_replay_widgets import place_toplevel_beside_main
-from . import feature_registry_service as svc
-from .feature_selection_engine import (
-    all_group_ids,
-    group_meta,
-    sync_enabled_groups_from_features,
+from chain_replay_ml.dataset_builder.feature_project_organization import (
+    backfill_feature_group_map,
+    canonical_group_for_feature,
+    is_canonical_domain_id,
+    is_reserved_all_project_id,
+    migrate_project_organization,
+    normalize_custom_project_groups,
+    project_group_tree,
+    project_registry_groups,
+    RESERVED_ALL_PROJECT_ID,
+    sync_project_group_ids,
 )
+
+from .build_config_prefs import active_feature_project_id, set_active_feature_project_id
+from .fold_replay_widgets import place_toplevel_beside_main
+from . import feature_registry_format as fmt
+from . import feature_registry_service as svc
 
 
 def _fmt_ts(value: Any) -> str:
@@ -49,8 +58,17 @@ def _warmup_label(minutes: Any) -> str:
     return f"{n} minutes"
 
 
+def _slug_group_id(label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", str(label or "").strip().lower()).strip("_")
+    return slug or "group"
+
+
+_NEW_PROJECT_LABEL = "(new project — not saved)"
+_ALL_PROJECTS_LABEL = RESERVED_ALL_PROJECT_ID
+
+
 class FeatureProjectManagerPanel(ttk.Frame):
-    """Split Project Manager: project table (left) + editor (right)."""
+    """Feature Project Manager — references only; Registry remains source of truth."""
 
     def __init__(
         self,
@@ -65,13 +83,20 @@ class FeatureProjectManagerPanel(ttk.Frame):
         self._on_changed = on_changed
         self._on_close = on_close
         self._catalog: dict[str, Any] | None = None
-        self._registry: dict[str, Any] = {}
+        self._group_tree_rows: list[dict[str, Any]] = []
         self._projects: list[dict[str, Any]] = []
-        self._selected_id: str | None = None
+        self._selected_id: str | None = RESERVED_ALL_PROJECT_ID
+        self._is_new_project = False
+        self._id_user_edited = False
         self._selected_features: set[str] = set()
+        self._project_groups: list[dict[str, str]] = []
+        self._feature_group_map: dict[str, str] = {}
+        self._feature_meta: dict[str, dict[str, str]] = {}
+        self._project_label_to_id: dict[str, str] = {}
+        self._group_label_to_id: dict[str, str] = {}
         self._dirty = False
         self._loading = False
-        self._group_filter: str | None = None
+        self._project_var = tk.StringVar(value=_ALL_PROJECTS_LABEL)
         self._build_ui()
 
     def set_chart_dir(self, chart_dir: str) -> None:
@@ -79,180 +104,205 @@ class FeatureProjectManagerPanel(ttk.Frame):
 
     def refresh(self) -> None:
         try:
+            svc.ensure_all_project(self.chart_dir)
             self._catalog = svc.load_catalog(self.chart_dir)
-            self._registry = _load_feature_registry() or {}
+            data_dir = svc.data_dir_for(self.chart_dir)
+            self._group_tree_rows = project_group_tree(
+                project_groups=self._project_groups,
+                feature_group_map=self._feature_group_map,
+                data_dir=data_dir,
+            )
             self._projects = list((self._catalog or {}).get("projects") or [])
+            if not self._projects:
+                self._projects = list(svc.list_projects(self.chart_dir))
+            self._build_feature_meta()
         except Exception as exc:
-            messagebox.showerror("Project Manager", f"Failed to load projects:\n{exc}", parent=self)
+            messagebox.showerror("Feature Project Manager", f"Failed to load projects:\n{exc}", parent=self)
             return
-        self._render_project_list()
-        if self._selected_id and any(p.get("id") == self._selected_id for p in self._projects):
-            self._load_project(self._selected_id, force=True)
-        elif self._projects:
-            self._load_project(str(self._projects[0].get("id") or ""), force=True)
+        self._populate_project_combo()
+        if self._is_new_project:
+            self._reload_group_tree_rows()
+            self._render_group_tree()
+            self._refresh_group_combos()
+            self._update_editing_state()
+            return
+        if not self._dirty:
+            self._selected_id = active_feature_project_id(self.chart_dir)
+        load_id = self._selected_id or RESERVED_ALL_PROJECT_ID
+        if any(p.get("id") == load_id for p in self._projects):
+            self._load_project(load_id, force=True)
         else:
-            self._clear_editor()
+            self._load_project(RESERVED_ALL_PROJECT_ID, force=True)
+
+    def _data_dir(self) -> str:
+        return svc.data_dir_for(self.chart_dir)
+
+    def _reload_group_tree_rows(self) -> None:
+        self._group_tree_rows = project_group_tree(
+            project_groups=self._project_groups,
+            feature_group_map=self._feature_group_map,
+            data_dir=self._data_dir(),
+        )
 
     def _notify_changed(self) -> None:
         if self._on_changed:
             self._on_changed()
 
+    def _build_feature_meta(self) -> None:
+        self._feature_meta = {}
+        for row in (self._catalog or {}).get("features") or []:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "").strip()
+            if not name:
+                continue
+            self._feature_meta[name] = {
+                "feature_id": str(row.get("feature_id") or "").strip(),
+                "label": str(row.get("display_name") or row.get("label") or name).strip(),
+            }
+
     def _build_ui(self) -> None:
         hdr = ttk.Frame(self, padding=(8, 6, 8, 0))
         hdr.pack(fill="x")
-        ttk.Label(hdr, text="Project Manager", font=("Segoe UI", 12, "bold")).pack(side="left")
+        ttk.Label(hdr, text="Feature Project Manager", font=("Segoe UI", 12, "bold")).pack(side="left")
         ttk.Label(
             hdr,
-            text="Feature projects store references only — Feature Registry is source of truth.",
+            text="Projects organize Registry features — moving groups does not change the Registry.",
             foreground="#888",
         ).pack(side="left", padx=(10, 0))
         if self._on_close:
             ttk.Button(hdr, text="Close", command=self._on_close).pack(side="right")
 
-        body = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
-        body.pack(fill="both", expand=True, padx=8, pady=8)
+        outer = ttk.Frame(self, padding=8)
+        outer.pack(fill="both", expand=True)
+        scroll = ttk.Scrollbar(outer, orient=tk.VERTICAL)
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        scroll.config(command=canvas.yview)
+        canvas.config(yscrollcommand=scroll.set)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill="both", expand=True)
+        body = ttk.Frame(canvas)
+        canvas_window = canvas.create_window((0, 0), window=body, anchor="nw")
 
-        left = ttk.Frame(body)
-        body.add(left, weight=2)
-        right = ttk.Frame(body)
-        body.add(right, weight=3)
+        def _on_configure(_event: tk.Event) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
 
-        self._build_list_side(left)
-        self._build_editor_side(right)
+        def _on_canvas_configure(event: tk.Event) -> None:
+            canvas.itemconfigure(canvas_window, width=event.width)
 
-    def _build_list_side(self, parent: ttk.Frame) -> None:
-        tools = ttk.Frame(parent)
-        tools.pack(fill="x", pady=(0, 6))
+        body.bind("<Configure>", _on_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        top = ttk.Frame(body)
+        top.pack(fill="x", pady=(0, 8))
+        ttk.Label(top, text="Project:").pack(side="left")
+        self._project_cb = ttk.Combobox(
+            top,
+            textvariable=self._project_var,
+            width=36,
+            state="readonly",
+        )
+        self._project_cb.pack(side="left", padx=(8, 12))
+        self._project_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_project_selected())
+        self._project_action_buttons: list[ttk.Button] = []
+        self._btn_delete: ttk.Button | None = None
         for text, cmd in (
-            ("New Project", self._wizard_new),
-            ("Clone Project", self._clone_selected),
-            ("Delete Project", self._delete_selected),
-            ("Rename Project", self._rename_selected),
-            ("Export Project", self._export_selected),
-            ("Import Project", self._import_project),
-            ("Refresh", self.refresh),
+            ("New Project", self._new_project),
+            ("Clone", self._clone_selected),
+            ("Delete", self._delete_selected),
+            ("Rename", self._rename_selected),
+            ("Save Project", self._save_current),
         ):
-            ttk.Button(tools, text=text, command=cmd).pack(side="left", padx=(0, 4))
+            btn = ttk.Button(top, text=text, command=cmd)
+            btn.pack(side="left", padx=(0, 4))
+            if text == "Delete":
+                self._btn_delete = btn
+            if text != "New Project":
+                self._project_action_buttons.append(btn)
+        ttk.Button(top, text="Refresh", command=self.refresh).pack(side="left", padx=(8, 0))
 
-        cols = ("name", "id", "features", "warmup", "modified", "models", "status")
-        self._tree = ttk.Treeview(parent, columns=cols, show="headings", selectmode="browse", height=18)
-        headings = {
-            "name": ("Project Name", 140),
-            "id": ("Project ID", 110),
-            "features": ("Features", 70),
-            "warmup": ("Warmup", 90),
-            "modified": ("Last Modified", 120),
-            "models": ("Models", 60),
-            "status": ("Status", 70),
-        }
-        for c, (title, width) in headings.items():
-            self._tree.heading(c, text=title)
-            self._tree.column(c, width=width, anchor="w")
-        sb = ttk.Scrollbar(parent, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=sb.set)
-        self._tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-        self._tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        ttk.Separator(body, orient=tk.HORIZONTAL).pack(fill="x", pady=(0, 8))
 
-    def _build_editor_side(self, parent: ttk.Frame) -> None:
-        self._editor = ttk.Frame(parent)
-        self._editor.pack(fill="both", expand=True)
-
-        meta = ttk.LabelFrame(self._editor, text="Project", padding=8)
+        meta = ttk.LabelFrame(body, text="Project Details", padding=8)
         meta.pack(fill="x", pady=(0, 8))
-
         grid = ttk.Frame(meta)
         grid.pack(fill="x")
         self._name_var = tk.StringVar()
         self._id_var = tk.StringVar()
         self._warmup_var = tk.StringVar()
         self._sampling_var = tk.StringVar()
+        self._editable_entries: list[ttk.Entry] = []
         rows = (
-            ("Project Name", self._name_var, False),
-            ("Project ID", self._id_var, True),
-            ("Warmup Period (minutes)", self._warmup_var, False),
-            ("Default Sampling (future)", self._sampling_var, False),
+            ("Name", self._name_var, False),
+            ("ID", self._id_var, False),
+            ("Warmup", self._warmup_var, False),
+            ("Sampling", self._sampling_var, False),
         )
         for i, (label, var, readonly) in enumerate(rows):
             ttk.Label(grid, text=label).grid(row=i, column=0, sticky="w", pady=2, padx=(0, 8))
-            ent = ttk.Entry(grid, textvariable=var, width=36, state="readonly" if readonly else "normal")
+            state = "readonly" if readonly else "normal"
+            ent = ttk.Entry(grid, textvariable=var, width=40, state=state)
             ent.grid(row=i, column=1, sticky="ew", pady=2)
+            self._editable_entries.append(ent)
+            if label == "ID":
+                self._id_entry = ent
             if not readonly:
                 var.trace_add("write", lambda *_: self._mark_dirty())
+        self._name_var.trace_add("write", lambda *_: self._on_name_changed())
+        self._id_var.trace_add("write", lambda *_: self._on_id_changed())
         grid.columnconfigure(1, weight=1)
-
         ttk.Label(meta, text="Description").pack(anchor="w", pady=(8, 2))
         self._desc = scrolledtext.ScrolledText(meta, height=2, font=("Segoe UI", 9), wrap="word")
         self._desc.pack(fill="x")
         self._desc.bind("<<Modified>>", self._on_desc_modified)
 
-        sel = ttk.LabelFrame(self._editor, text="Feature Selection", padding=8)
-        sel.pack(fill="both", expand=True, pady=(0, 8))
+        ttk.Separator(body, orient=tk.HORIZONTAL).pack(fill="x", pady=(0, 8))
 
-        top = ttk.Frame(sel)
-        top.pack(fill="x", pady=(0, 6))
-        ttk.Label(top, text="Feature Groups").pack(side="left", anchor="n")
-        self._group_list = tk.Listbox(top, height=10, exportselection=False, width=28)
-        self._group_list.pack(side="left", padx=(8, 12))
-        self._group_list.bind("<<ListboxSelect>>", lambda _e: self._refresh_available())
+        groups_box = ttk.LabelFrame(body, text="Feature Groups", padding=8)
+        groups_box.pack(fill="both", expand=True, pady=(0, 8))
+        grp_tools = ttk.Frame(groups_box)
+        grp_tools.pack(fill="x", pady=(0, 6))
+        self._btn_new_group = ttk.Button(grp_tools, text="+ New Group", command=self._new_group)
+        self._btn_new_group.pack(side="left")
+        self._group_tree = self._make_group_tree(groups_box)
 
-        search_col = ttk.Frame(top)
-        search_col.pack(side="left", fill="y", anchor="n")
-        ttk.Label(search_col, text="Search").pack(anchor="w")
-        self._search_var = tk.StringVar()
-        self._search_var.trace_add("write", lambda *_: self._refresh_available())
-        ttk.Entry(search_col, textvariable=self._search_var, width=24).pack(anchor="w", pady=(2, 6))
-        ttk.Button(
-            search_col, text="Select Entire Group", command=self._select_entire_group,
-        ).pack(anchor="w", pady=(0, 4))
-        ttk.Button(
-            search_col, text="Unselect Entire Group", command=self._unselect_entire_group,
-        ).pack(anchor="w")
-
-        lists = ttk.Frame(sel)
-        lists.pack(fill="both", expand=True)
+        feat_box = ttk.Frame(body)
+        feat_box.pack(fill="x", pady=(0, 8))
+        lists = ttk.Frame(feat_box)
+        lists.pack(fill="x")
         left_box = ttk.Frame(lists)
-        left_box.pack(side="left", fill="both", expand=True)
+        left_box.pack(side="left", fill="both", expand=True, padx=(0, 4))
         ttk.Label(left_box, text="Available Features").pack(anchor="w")
-        self._avail = tk.Listbox(left_box, selectmode="extended", exportselection=False)
+        self._avail_search_var = tk.StringVar()
+        self._avail_search_var.trace_add("write", lambda *_: self._refresh_available())
+        ttk.Entry(left_box, textvariable=self._avail_search_var).pack(fill="x", pady=(2, 4))
+        self._avail = tk.Listbox(left_box, selectmode="extended", exportselection=False, height=8)
         self._avail.pack(fill="both", expand=True)
+
         mid = ttk.Frame(lists)
         mid.pack(side="left", padx=8, fill="y")
-        ttk.Button(mid, text="Add →", command=self._add_features).pack(pady=4)
-        ttk.Button(mid, text="← Remove", command=self._remove_features).pack(pady=4)
-        right_box = ttk.Frame(lists)
-        right_box.pack(side="left", fill="both", expand=True)
-        ttk.Label(right_box, text="Selected Features").pack(anchor="w")
-        self._selected_list = tk.Listbox(right_box, selectmode="extended", exportselection=False)
-        self._selected_list.pack(fill="both", expand=True)
+        self._btn_add = ttk.Button(mid, text="Add →", command=self._add_features)
+        self._btn_add.pack(pady=4)
+        self._btn_remove = ttk.Button(mid, text="← Remove", command=self._remove_features)
+        self._btn_remove.pack(pady=4)
 
-        bottom = ttk.Frame(self._editor)
-        bottom.pack(fill="x")
-        summary = ttk.LabelFrame(bottom, text="Project Summary", padding=8)
-        summary.pack(side="left", fill="both", expand=True, padx=(0, 8))
-        self._summary_var = tk.StringVar(value="Select a project.")
+        move_row = ttk.Frame(feat_box)
+        move_row.pack(fill="x", pady=(8, 0))
+        ttk.Label(move_row, text="Move to Group:").pack(side="left")
+        self._move_group_var = tk.StringVar()
+        self._move_group_cb = ttk.Combobox(move_row, textvariable=self._move_group_var, width=28, state="readonly")
+        self._move_group_cb.pack(side="left", padx=(6, 8))
+        self._btn_move = ttk.Button(move_row, text="Move", command=self._move_selected_to_group)
+        self._btn_move.pack(side="left")
+
+        ttk.Separator(body, orient=tk.HORIZONTAL).pack(fill="x", pady=(8, 8))
+
+        summary = ttk.LabelFrame(body, text="Project Summary", padding=8)
+        summary.pack(fill="x")
+        self._summary_var = tk.StringVar(value="Select or create a project.")
         ttk.Label(summary, textvariable=self._summary_var, justify="left").pack(anchor="w")
-
-        future = ttk.LabelFrame(bottom, text="Future settings", padding=8)
-        future.pack(side="left", fill="both", expand=True, padx=(0, 8))
-        ttk.Label(
-            future,
-            text=(
-                "Reserved for:\n"
-                "• Default Build Configuration\n"
-                "• Default Label Configuration\n"
-                "• Feature Validation Rules\n"
-                "• Experiment History / Model Associations"
-            ),
-            foreground="#888",
-            justify="left",
-        ).pack(anchor="w")
-
-        actions = ttk.Frame(bottom)
-        actions.pack(side="right", fill="y")
-        ttk.Button(actions, text="Save Project", command=self._save_current).pack(pady=2)
         self._dirty_var = tk.StringVar(value="")
-        ttk.Label(actions, textvariable=self._dirty_var, foreground="#B45309").pack()
+        ttk.Label(summary, textvariable=self._dirty_var, foreground="#B45309").pack(anchor="w", pady=(6, 0))
 
     def _mark_dirty(self) -> None:
         if self._loading:
@@ -265,42 +315,67 @@ class FeatureProjectManagerPanel(ttk.Frame):
             self._desc.edit_modified(False)
             self._mark_dirty()
 
-    def _render_project_list(self) -> None:
-        selected = self._selected_id
-        self._tree.delete(*self._tree.get_children())
-        for p in self._projects:
-            pid = str(p.get("id") or "")
-            feats = p.get("feature_names") or []
-            status = "ready" if feats else "empty"
-            self._tree.insert(
-                "",
-                "end",
-                iid=pid,
-                values=(
-                    p.get("label") or pid,
-                    pid,
-                    f"{len(feats):,}",
-                    _warmup_label(p.get("warmup_minutes")),
-                    _fmt_ts(p.get("updated_at") or p.get("created_at")),
-                    "—",
-                    status,
-                ),
-            )
-        if selected and self._tree.exists(selected):
-            self._tree.selection_set(selected)
-            self._tree.see(selected)
-
-    def _on_tree_select(self, _event: tk.Event | None = None) -> None:
-        sel = self._tree.selection()
-        if not sel:
+    def _on_name_changed(self) -> None:
+        if self._loading or not self._is_new_project or self._id_user_edited:
             return
-        pid = sel[0]
-        if pid == self._selected_id and not self._dirty:
+        label = self._name_var.get().strip()
+        if label:
+            self._loading = True
+            try:
+                self._id_var.set(svc.suggest_project_id(self.chart_dir, label))
+            finally:
+                self._loading = False
+
+    def _on_id_changed(self) -> None:
+        if self._loading:
+            return
+        if self._is_new_project:
+            self._id_user_edited = True
+
+    def _populate_project_combo(self) -> None:
+        labels: list[str] = [_ALL_PROJECTS_LABEL]
+        self._project_label_to_id = {_ALL_PROJECTS_LABEL: RESERVED_ALL_PROJECT_ID}
+        for p in self._projects:
+            pid = str(p.get("id") or "").strip()
+            if not pid or is_reserved_all_project_id(pid):
+                continue
+            name = str(p.get("label") or pid)
+            label = f"{name} ({pid})"
+            labels.append(label)
+            self._project_label_to_id[label] = pid
+        if self._is_new_project:
+            labels.insert(1, _NEW_PROJECT_LABEL)
+            self._project_label_to_id[_NEW_PROJECT_LABEL] = ""
+        self._project_cb["values"] = labels
+        if self._is_new_project:
+            self._project_var.set(_NEW_PROJECT_LABEL)
+            return
+        want = self._selected_id
+        if want:
+            for label, pid in self._project_label_to_id.items():
+                if pid == want:
+                    self._project_var.set(label)
+                    return
+        self._project_var.set(_ALL_PROJECTS_LABEL)
+
+    def _on_project_selected(self) -> None:
+        label = str(self._project_var.get() or "").strip()
+        if label == _NEW_PROJECT_LABEL:
+            return
+        if label == _ALL_PROJECTS_LABEL:
+            pid = RESERVED_ALL_PROJECT_ID
+        else:
+            pid = self._project_label_to_id.get(label, "")
+        if not pid:
+            self._project_var.set(_ALL_PROJECTS_LABEL)
+            return
+        if pid == self._selected_id and not self._dirty and not self._is_new_project:
             return
         if self._dirty and not self._confirm_discard():
-            if self._selected_id and self._tree.exists(self._selected_id):
-                self._tree.selection_set(self._selected_id)
+            self._populate_project_combo()
             return
+        self._is_new_project = False
+        self._id_user_edited = False
         self._load_project(pid, force=True)
 
     def _confirm_discard(self) -> bool:
@@ -318,166 +393,528 @@ class FeatureProjectManagerPanel(ttk.Frame):
                 return p
         return None
 
-    def _clear_editor(self) -> None:
+    def _clear_editor(self, *, summary: str | None = None) -> None:
         self._loading = True
         self._selected_id = None
+        self._is_new_project = False
+        self._id_user_edited = False
         self._selected_features.clear()
+        self._project_groups = []
+        self._feature_group_map = {}
         self._name_var.set("")
         self._id_var.set("")
         self._warmup_var.set("")
         self._sampling_var.set("")
         self._desc.delete("1.0", tk.END)
-        self._group_list.delete(0, tk.END)
+        self._reload_group_tree_rows()
+        self._render_group_tree()
         self._avail.delete(0, tk.END)
-        self._selected_list.delete(0, tk.END)
-        self._summary_var.set("No projects yet. Click New Project.")
+        if summary is None:
+            summary = (
+                "No projects yet. Click New Project."
+                if not self._projects
+                else "Browse mode — all Registry groups shown.\n"
+                "Select a project from the list, or click New Project to edit membership."
+            )
+        self._summary_var.set(summary)
         self._dirty = False
         self._dirty_var.set("")
+        self._refresh_available()
+        self._refresh_group_combos()
+        try:
+            self._id_entry.configure(state="normal")
+        except tk.TclError:
+            pass
         self._loading = False
+        self._update_editing_state()
 
     def _load_project(self, pid: str, *, force: bool = False) -> None:
+        if not force and pid == self._selected_id and not self._dirty:
+            return
         proj = self._project_by_id(pid)
         if not proj:
-            self._clear_editor()
+            self._load_project(RESERVED_ALL_PROJECT_ID, force=True)
             return
+        migrated = migrate_project_organization(dict(proj), data_dir=self._data_dir())
         self._loading = True
+        self._is_new_project = False
+        self._id_user_edited = False
         self._selected_id = pid
         self._selected_features = {
-            str(n) for n in (proj.get("feature_names") or proj.get("enabled_features") or [])
+            str(n) for n in (migrated.get("feature_names") or migrated.get("enabled_features") or [])
         }
-        self._name_var.set(str(proj.get("label") or ""))
+        self._project_groups = normalize_custom_project_groups(migrated.get("project_groups"))
+        self._feature_group_map = backfill_feature_group_map(
+            self._selected_features,
+            project_groups=self._project_groups,
+            feature_group_map=dict(migrated.get("feature_group_map") or {}),
+        )
+        self._name_var.set(str(migrated.get("label") or ""))
         self._id_var.set(pid)
-        warm = proj.get("warmup_minutes")
-        self._warmup_var.set("" if warm is None else str(warm))
-        self._sampling_var.set(str(proj.get("default_sampling") or ""))
+        try:
+            self._id_entry.configure(state="readonly")
+        except tk.TclError:
+            pass
+        self._warmup_var.set("" if migrated.get("warmup_minutes") is None else str(migrated.get("warmup_minutes")))
+        self._sampling_var.set(str(migrated.get("default_sampling") or ""))
         self._desc.delete("1.0", tk.END)
-        self._desc.insert("1.0", str(proj.get("description") or ""))
+        self._desc.insert("1.0", str(migrated.get("description") or ""))
         self._desc.edit_modified(False)
-        self._populate_groups()
+        self._reload_group_tree_rows()
+        self._render_group_tree()
+        self._refresh_group_combos()
         self._refresh_available()
-        self._refresh_selected_list()
-        self._update_summary(proj)
-        if self._tree.exists(pid):
-            self._tree.selection_set(pid)
-            self._tree.see(pid)
+        self._update_summary(migrated)
+        self._populate_project_combo()
+        self._project_var.set(
+            next(
+                (lbl for lbl, p in self._project_label_to_id.items() if p == pid),
+                _ALL_PROJECTS_LABEL,
+            )
+        )
         self._dirty = False
         self._dirty_var.set("")
         self._loading = False
+        set_active_feature_project_id(self.chart_dir, pid)
+        self._update_editing_state()
 
-    def _populate_groups(self) -> None:
-        self._group_list.delete(0, tk.END)
-        self._group_list.insert(tk.END, "(all groups)")
-        self._group_ids_order: list[str | None] = [None]
-        for gid in all_group_ids(self._registry):
-            meta = group_meta(self._registry, gid) or {}
-            label = str(meta.get("label") or gid)
-            self._group_list.insert(tk.END, f"{label} ({gid})")
-            self._group_ids_order.append(gid)
-        self._group_list.selection_set(0)
-        self._group_filter = None
+    def _feature_display(self, name: str) -> str:
+        meta = self._feature_meta.get(name) or {}
+        fid = meta.get("feature_id") or "—"
+        return f"{fid}  {name}"
 
-    def _current_group_id(self) -> str | None:
-        sel = self._group_list.curselection()
-        if not sel:
-            return self._group_filter
-        idx = int(sel[0])
-        if 0 <= idx < len(getattr(self, "_group_ids_order", [])):
-            self._group_filter = self._group_ids_order[idx]
-        return self._group_filter
+    def _all_registry_feature_names(self) -> list[str]:
+        names: list[str] = []
+        for row in (self._catalog or {}).get("features") or []:
+            if isinstance(row, dict) and row.get("name"):
+                names.append(str(row["name"]))
+        return list(dict.fromkeys(names))
 
-    def _features_in_group(self, gid: str | None) -> list[str]:
-        if gid is None:
-            names: list[str] = []
-            for g in all_group_ids(self._registry):
-                meta = group_meta(self._registry, g) or {}
-                names.extend(str(f) for f in (meta.get("features") or []))
-            # unique preserve order
-            seen: set[str] = set()
-            out: list[str] = []
-            for n in names:
-                if n not in seen:
-                    seen.add(n)
-                    out.append(n)
-            return out
-        meta = group_meta(self._registry, gid) or {}
-        return [str(f) for f in (meta.get("features") or [])]
+    def _make_group_tree(self, parent: tk.Misc) -> ttk.Treeview:
+        frame = ttk.Frame(parent, height=280)
+        frame.pack(fill="x", expand=False)
+        frame.pack_propagate(False)
+        tree = ttk.Treeview(frame, columns=("count",), show="tree headings", height=14)
+        tree.heading("#0", text="Group / Feature")
+        tree.heading("count", text="#")
+        tree.column("#0", width=280, stretch=True)
+        tree.column("count", width=48, anchor="e")
+        sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        tree.bind("<Button-3>", self._on_group_tree_context_menu)
+        tree.bind("<Button-2>", self._on_group_tree_context_menu)
+        return tree
+
+    def _update_editing_state(self) -> None:
+        reserved = is_reserved_all_project_id(self._selected_id or "")
+        if self._btn_delete is not None:
+            self._btn_delete.configure(state="disabled" if reserved else "normal")
+        for ent in self._editable_entries:
+            if ent is self._id_entry:
+                continue
+            ent.configure(state="normal")
+        self._desc.configure(state="normal")
+        try:
+            if self._is_new_project:
+                self._id_entry.configure(state="normal")
+            else:
+                self._id_entry.configure(state="readonly")
+        except tk.TclError:
+            pass
+
+    def _is_project_active(self) -> bool:
+        return self._is_new_project or self._selected_id is not None
+
+    def _group_tree_options(self) -> list[dict[str, str]]:
+        return [
+            {"id": str(g.get("id") or ""), "label": str(g.get("label") or g.get("id") or "")}
+            for g in self._group_tree_rows
+            if str(g.get("id") or "").strip()
+        ]
+
+    def _group_tree_options(self) -> list[dict[str, str]]:
+        tree = self._group_tree
+        tree.delete(*tree.get_children())
+        doc = {
+            "feature_names": sorted(self._selected_features),
+            "project_groups": self._project_groups,
+            "feature_group_map": self._feature_group_map,
+        }
+        for g in project_registry_groups(doc, data_dir=self._data_dir()):
+            gid = str(g.get("id") or "").strip()
+            if not gid:
+                continue
+            label = str(g.get("label") or gid)
+            feats = list(g.get("features") or [])
+            parent_iid = tree.insert(
+                "",
+                "end",
+                iid=f"group:{gid}",
+                text=label,
+                values=(len(feats),),
+                open=False,
+            )
+            for feat in feats:
+                tree.insert(parent_iid, "end", iid=f"feat:{feat}", text=feat, values=("",))
+
+    def _tree_feature_name(self, iid: str) -> str | None:
+        if str(iid).startswith("feat:"):
+            return str(iid)[5:]
+        return None
+
+    def _tree_group_id(self, iid: str) -> str | None:
+        if str(iid).startswith("group:"):
+            return str(iid)[6:]
+        return None
+
+    def _on_group_tree_context_menu(self, event: tk.Event) -> None:
+        tree = self._group_tree
+        iid = tree.identify_row(event.y)
+        if not iid:
+            return
+        tree.selection_set(iid)
+        feature_name = self._tree_feature_name(iid)
+        group_id = self._tree_group_id(iid)
+
+        menu = tk.Menu(self, tearoff=0)
+        if feature_name:
+            self._build_feature_context_menu(menu, feature_name)
+        elif group_id and self._is_project_active():
+            self._build_group_context_menu(menu, group_id)
+        else:
+            return
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _build_feature_context_menu(self, menu: tk.Menu, feature_name: str) -> None:
+        picked = self._tree_selected_features()
+        if feature_name not in picked:
+            picked = [feature_name]
+
+        menu.add_command(
+            label="Feature Details",
+            command=lambda name=feature_name: self._show_feature_details(name),
+        )
+
+        if self._is_project_active() and any(n in self._selected_features for n in picked):
+            menu.add_separator()
+            move_sub = tk.Menu(menu, tearoff=0)
+            self._populate_move_to_group_menu(move_sub, picked)
+            menu.add_cascade(label="Move to Group", menu=move_sub)
+            menu.add_command(
+                label="Remove from Project",
+                command=lambda names=picked: self._remove_features_from_project(names),
+            )
+
+    def _build_group_context_menu(self, menu: tk.Menu, group_id: str) -> None:
+        menu.add_command(label="Create Group", command=self._new_group)
+        if is_canonical_domain_id(group_id):
+            return
+        if not any(str(g.get("id") or "") == group_id for g in self._project_groups):
+            return
+        menu.add_separator()
+        menu.add_command(
+            label="Rename Custom Group",
+            command=lambda gid=group_id: self._rename_custom_group(gid),
+        )
+        menu.add_command(
+            label="Delete Custom Group",
+            command=lambda gid=group_id: self._delete_custom_group(gid),
+        )
+
+    def _rename_custom_group(self, group_id: str) -> None:
+        if not self._is_project_active() or is_canonical_domain_id(group_id):
+            return
+        entry = next(
+            (g for g in self._project_groups if str(g.get("id") or "") == group_id),
+            None,
+        )
+        if not entry:
+            return
+        current = str(entry.get("label") or group_id)
+        new_label = simpledialog.askstring(
+            "Rename Custom Group",
+            "Group name:",
+            initialvalue=current,
+            parent=self,
+        )
+        if not new_label or not str(new_label).strip():
+            return
+        text = str(new_label).strip()
+        entry["label"] = text
+        self._reload_group_tree_rows()
+        self._render_group_tree()
+        self._refresh_group_combos()
+        if self._move_group_var.get() == current:
+            self._move_group_var.set(text)
+        self._mark_dirty()
+
+    def _delete_custom_group(self, group_id: str) -> None:
+        if not self._is_project_active() or is_canonical_domain_id(group_id):
+            return
+        label = next(
+            (str(g.get("label") or group_id) for g in self._project_groups if g.get("id") == group_id),
+            group_id,
+        )
+        if not messagebox.askyesno(
+            "Delete Custom Group",
+            f"Delete custom group \"{label}\"?\n\n"
+            "Features in this group will return to their canonical Registry groups.",
+            parent=self,
+        ):
+            return
+        self._project_groups = [
+            g for g in self._project_groups if str(g.get("id") or "") != group_id
+        ]
+        for name, gid in list(self._feature_group_map.items()):
+            if str(gid) == group_id:
+                self._feature_group_map[name] = canonical_group_for_feature(name)
+        self._reload_group_tree_rows()
+        self._render_group_tree()
+        self._refresh_group_combos()
+        self._update_summary()
+        self._mark_dirty()
+
+    def _populate_move_to_group_menu(self, menu: tk.Menu, feature_names: list[str]) -> None:
+        canonical: list[dict[str, str]] = []
+        custom: list[dict[str, str]] = []
+        for g in self._group_tree_options():
+            if is_canonical_domain_id(g["id"]):
+                canonical.append(g)
+            else:
+                custom.append(g)
+        for g in canonical:
+            label = str(g.get("label") or g.get("id") or "")
+            gid = str(g.get("id") or "")
+            menu.add_command(
+                label=label,
+                command=lambda target=gid, names=feature_names: self._move_features_to_group(names, target),
+            )
+        if custom:
+            menu.add_separator()
+            for g in custom:
+                label = str(g.get("label") or g.get("id") or "")
+                gid = str(g.get("id") or "")
+                menu.add_command(
+                    label=label,
+                    command=lambda target=gid, names=feature_names: self._move_features_to_group(names, target),
+                )
+
+    def _move_features_to_group(self, feature_names: list[str], target_gid: str) -> None:
+        if not self._is_project_active() or not target_gid:
+            return
+        moved = False
+        for name in feature_names:
+            if name in self._selected_features:
+                self._feature_group_map[name] = target_gid
+                moved = True
+        if not moved:
+            return
+        self._reload_group_tree_rows()
+        self._render_group_tree()
+        self._refresh_group_combos()
+        self._update_summary()
+        self._mark_dirty()
+
+    def _remove_features_from_project(self, feature_names: list[str]) -> None:
+        if not self._is_project_active():
+            return
+        removed = False
+        for name in feature_names:
+            if name in self._selected_features:
+                self._selected_features.discard(name)
+                self._feature_group_map.pop(name, None)
+                removed = True
+        if not removed:
+            return
+        self._refresh_available()
+        self._reload_group_tree_rows()
+        self._render_group_tree()
+        self._refresh_group_combos()
+        self._update_summary()
+        self._mark_dirty()
+
+    def _show_feature_details(self, name: str) -> None:
+        row: dict[str, Any] | None = None
+        for feat in (self._catalog or {}).get("features") or []:
+            if isinstance(feat, dict) and str(feat.get("name") or "") == name:
+                row = feat
+                break
+        text = fmt.format_feature_detail(row or {"name": name}, self._catalog)
+        win = tk.Toplevel(self)
+        win.title(f"Feature Details — {name}")
+        win.transient(self.winfo_toplevel())
+        win.geometry("520x420")
+        body = ttk.Frame(win, padding=8)
+        body.pack(fill="both", expand=True)
+        detail = scrolledtext.ScrolledText(body, wrap="word", font=("Consolas", 9))
+        detail.pack(fill="both", expand=True)
+        detail.insert("1.0", text)
+        detail.configure(state="disabled")
+        ttk.Button(body, text="Close", command=win.destroy).pack(pady=(8, 0))
+        win.update_idletasks()
+        place_toplevel_beside_main(win, self)
+
+    def _tree_selected_features(self) -> list[str]:
+        out: list[str] = []
+        for iid in self._group_tree.selection():
+            if str(iid).startswith("feat:"):
+                out.append(str(iid)[5:])
+        return out
+
+    def _tree_selected_group_id(self) -> str | None:
+        for iid in self._group_tree.selection():
+            if str(iid).startswith("group:"):
+                return str(iid)[6:]
+        return None
+
+    def _refresh_group_combos(self) -> None:
+        self._group_label_to_id = {}
+        move_labels: list[str] = []
+        used_labels: set[str] = set()
+        for g in self._group_tree_options():
+            label = str(g.get("label") or g.get("id") or "")
+            gid = str(g.get("id") or "")
+            if not gid:
+                continue
+            combo_label = label
+            if combo_label in used_labels:
+                combo_label = f"{label} ({gid})"
+            used_labels.add(combo_label)
+            self._group_label_to_id[combo_label] = gid
+            move_labels.append(combo_label)
+        self._move_group_cb["values"] = move_labels
+        if move_labels and self._move_group_var.get() not in move_labels:
+            self._move_group_var.set(move_labels[0])
 
     def _refresh_available(self) -> None:
-        q = self._search_var.get().strip().lower()
-        gid = self._current_group_id()
+        q = self._avail_search_var.get().strip().lower()
         self._avail.delete(0, tk.END)
-        for name in self._features_in_group(gid):
+        for name in self._all_registry_feature_names():
             if name in self._selected_features:
                 continue
             if q and q not in name.lower():
-                continue
-            self._avail.insert(tk.END, name)
-
-    def _refresh_selected_list(self) -> None:
-        self._selected_list.delete(0, tk.END)
-        for name in sorted(self._selected_features):
-            self._selected_list.insert(tk.END, name)
+                fid = (self._feature_meta.get(name) or {}).get("feature_id") or ""
+                if q not in str(fid).lower():
+                    continue
+            self._avail.insert(tk.END, self._feature_display(name))
 
     def _update_summary(self, proj: dict[str, Any] | None = None) -> None:
-        groups = sync_enabled_groups_from_features(self._registry, self._selected_features)
-        disabled = 0
-        try:
-            disabled_set = svc.disabled_registry_features(self.chart_dir)
-            disabled = sum(1 for n in self._selected_features if n in disabled_set)
-        except Exception:
-            disabled = 0
+        group_count = len(self._group_tree_options())
         warm = self._warmup_var.get().strip()
+        status = "ready" if self._selected_features else "empty"
         self._summary_var.set(
-            f"Feature Groups: {len(groups)}\n"
-            f"Selected Features: {len(self._selected_features)}\n"
+            f"Features: {len(self._selected_features)}\n"
+            f"Groups: {group_count}\n"
+            f"Models: — (future)\n"
+            f"Status: {status}\n"
             f"Warmup: {_warmup_label(warm if warm else None)}\n"
-            f"Disabled Features: {disabled}\n"
-            f"Estimated Build Time: — (future)\n"
-            f"Models Using Project: — (future)\n"
             f"Version: {(proj or {}).get('version') or '1'}"
         )
 
+    def _default_assign_group(self, feature_name: str | None = None) -> str | None:
+        tree_gid = self._tree_selected_group_id()
+        if tree_gid:
+            return tree_gid
+        if feature_name:
+            return canonical_group_for_feature(feature_name)
+        options = self._group_tree_options()
+        if options:
+            return str(options[0]["id"])
+        return None
+
     def _add_features(self) -> None:
-        picked = [self._avail.get(i) for i in self._avail.curselection()]
+        if not self._is_project_active():
+            return
+        picked: list[str] = []
+        for i in self._avail.curselection():
+            line = self._avail.get(i)
+            parts = str(line).split()
+            if len(parts) >= 2:
+                picked.append(parts[-1])
         if not picked:
             return
-        self._selected_features.update(picked)
+        for name in picked:
+            self._selected_features.add(name)
+            gid = self._default_assign_group(name)
+            if gid:
+                self._feature_group_map[name] = gid
         self._refresh_available()
-        self._refresh_selected_list()
+        self._reload_group_tree_rows()
+        self._render_group_tree()
+        self._refresh_group_combos()
         self._update_summary()
         self._mark_dirty()
 
     def _remove_features(self) -> None:
-        picked = [self._selected_list.get(i) for i in self._selected_list.curselection()]
+        if not self._is_project_active():
+            return
+        picked = self._tree_selected_features()
+        if not picked:
+            picked = []
+            for i in self._avail.curselection():
+                line = self._avail.get(i)
+                parts = str(line).split()
+                if len(parts) >= 2:
+                    picked.append(parts[-1])
         if not picked:
             return
         for name in picked:
             self._selected_features.discard(name)
+            self._feature_group_map.pop(name, None)
         self._refresh_available()
-        self._refresh_selected_list()
+        self._reload_group_tree_rows()
+        self._render_group_tree()
+        self._refresh_group_combos()
         self._update_summary()
         self._mark_dirty()
 
-    def _select_entire_group(self) -> None:
-        gid = self._current_group_id()
-        if gid is None:
-            messagebox.showinfo("Feature Selection", "Select a feature group first.", parent=self)
+    def _move_selected_to_group(self) -> None:
+        if not self._is_project_active():
             return
-        self._selected_features.update(self._features_in_group(gid))
-        self._refresh_available()
-        self._refresh_selected_list()
-        self._update_summary()
-        self._mark_dirty()
+        target_label = str(self._move_group_var.get() or "").strip()
+        target_gid = self._group_label_to_id.get(target_label)
+        if not target_gid:
+            messagebox.showinfo("Move to Group", "Select a destination group.", parent=self)
+            return
+        picked = self._tree_selected_features()
+        if not picked:
+            messagebox.showinfo("Move to Group", "Select one or more features in the group tree.", parent=self)
+            return
+        self._move_features_to_group(picked, target_gid)
 
-    def _unselect_entire_group(self) -> None:
-        gid = self._current_group_id()
-        if gid is None:
-            messagebox.showinfo("Feature Selection", "Select a feature group first.", parent=self)
+    def _new_group(self) -> None:
+        if not self._is_project_active():
             return
-        for name in self._features_in_group(gid):
-            self._selected_features.discard(name)
-        self._refresh_available()
-        self._refresh_selected_list()
+        label = simpledialog.askstring("New Group", "Group name:", parent=self)
+        if not label or not str(label).strip():
+            return
+        text = str(label).strip()
+        base = _slug_group_id(text)
+        if is_canonical_domain_id(base):
+            messagebox.showerror(
+                "New Group",
+                f'"{text}" matches a canonical Registry group. Use the existing group in the tree.',
+                parent=self,
+            )
+            return
+        existing = {str(g.get("id") or "") for g in self._project_groups}
+        gid = base
+        if gid in existing:
+            n = 2
+            while f"{base}_{n}" in existing:
+                n += 1
+            gid = f"{base}_{n}"
+        self._project_groups.append({"id": gid, "label": text})
+        self._reload_group_tree_rows()
+        self._render_group_tree()
+        self._refresh_group_combos()
+        self._move_group_var.set(text)
         self._update_summary()
         self._mark_dirty()
 
@@ -491,107 +928,93 @@ class FeatureProjectManagerPanel(ttk.Frame):
             raise ValueError("Warmup must be an integer number of minutes.") from exc
 
     def _save_current(self) -> None:
-        if not self._selected_id:
-            messagebox.showinfo("Project Manager", "Select or create a project first.", parent=self)
+        label = self._name_var.get().strip()
+        if not label:
+            messagebox.showinfo("Save Project", "Project name is required.", parent=self)
+            return
+        pid = self._id_var.get().strip().lower()
+        if not pid:
+            messagebox.showinfo("Save Project", "Project ID is required.", parent=self)
             return
         try:
             warmup = self._parse_warmup()
-            groups = sorted(sync_enabled_groups_from_features(self._registry, self._selected_features))
-            svc.update_project(
-                self.chart_dir,
-                self._selected_id,
-                label=self._name_var.get().strip(),
-                description=self._desc.get("1.0", tk.END).strip(),
-                group_ids=groups,
-                feature_names=sorted(self._selected_features),
-                warmup_minutes=warmup,
-                default_sampling=self._sampling_var.get().strip(),
+            feature_names = sorted(self._selected_features)
+            map_out = backfill_feature_group_map(
+                feature_names,
+                project_groups=self._project_groups,
+                feature_group_map=self._feature_group_map,
             )
+            group_ids = sync_project_group_ids(feature_names, map_out)
+            kwargs = {
+                "label": label,
+                "description": self._desc.get("1.0", tk.END).strip(),
+                "group_ids": group_ids,
+                "feature_names": feature_names,
+                "project_groups": self._project_groups,
+                "feature_group_map": map_out,
+                "warmup_minutes": warmup,
+                "default_sampling": self._sampling_var.get().strip(),
+            }
+            if self._is_new_project:
+                svc.create_project(self.chart_dir, project_id=pid, **kwargs)
+                self._is_new_project = False
+                self._selected_id = pid
+                try:
+                    self._id_entry.configure(state="readonly")
+                except tk.TclError:
+                    pass
+            else:
+                if not self._selected_id:
+                    messagebox.showinfo("Save Project", "Select or create a project first.", parent=self)
+                    return
+                svc.update_project(self.chart_dir, self._selected_id, **kwargs)
         except Exception as exc:
-            messagebox.showerror("Project Manager", str(exc), parent=self)
+            messagebox.showerror("Save Project", str(exc), parent=self)
             return
         self._dirty = False
         self._dirty_var.set("")
         self._notify_changed()
+        set_active_feature_project_id(self.chart_dir, self._selected_id or RESERVED_ALL_PROJECT_ID)
         self.refresh()
-        messagebox.showinfo("Project Manager", "Project saved.", parent=self)
+        messagebox.showinfo("Save Project", "Project saved.", parent=self)
 
-    def _wizard_new(self) -> None:
+    def _new_project(self) -> None:
         if self._dirty and not self._confirm_discard():
             return
-        dlg = tk.Toplevel(self)
-        dlg.title("New Feature Project")
-        dlg.geometry("480x420")
-        dlg.transient(self.winfo_toplevel())
-        dlg.grab_set()
-
-        body = ttk.Frame(dlg, padding=12)
-        body.pack(fill="both", expand=True)
-        name_var = tk.StringVar()
-        id_var = tk.StringVar()
-        mode_var = tk.StringVar(value="empty")
-        clone_var = tk.StringVar(value="")
-
-        ttk.Label(body, text="Project Name").pack(anchor="w")
-        ttk.Entry(body, textvariable=name_var).pack(fill="x", pady=(0, 8))
-        ttk.Label(body, text="Project ID (snake_case)").pack(anchor="w")
-        ttk.Entry(body, textvariable=id_var).pack(fill="x", pady=(0, 8))
-        ttk.Label(body, text="Description").pack(anchor="w")
-        desc = scrolledtext.ScrolledText(body, height=3, font=("Segoe UI", 9))
-        desc.pack(fill="x", pady=(0, 8))
-
-        ttk.Label(body, text="Create From").pack(anchor="w")
-        ttk.Radiobutton(body, text="Empty Project", variable=mode_var, value="empty").pack(anchor="w")
-        ttk.Radiobutton(body, text="Clone Existing Project", variable=mode_var, value="clone").pack(anchor="w")
-        clone_vals = [f"{p.get('id')}|{p.get('label')}" for p in self._projects]
-        clone_combo = ttk.Combobox(body, textvariable=clone_var, values=clone_vals, state="readonly")
-        clone_combo.pack(fill="x", pady=(4, 12))
-
-        def create() -> None:
-            label = name_var.get().strip()
-            if not label:
-                messagebox.showerror("New Project", "Project Name is required.", parent=dlg)
-                return
-            pid = id_var.get().strip() or None
-            description = desc.get("1.0", tk.END).strip()
-            try:
-                if mode_var.get() == "clone":
-                    src = (clone_var.get() or "").split("|", 1)[0].strip()
-                    if not src:
-                        messagebox.showerror("New Project", "Select a project to clone.", parent=dlg)
-                        return
-                    result = svc.clone_project(
-                        self.chart_dir, src, label=label, project_id=pid,
-                    )
-                    # apply description override
-                    new_id = (result.get("project") or {}).get("id")
-                    if new_id and description:
-                        svc.update_project(self.chart_dir, new_id, description=description)
-                else:
-                    result = svc.create_project(
-                        self.chart_dir,
-                        label=label,
-                        project_id=pid,
-                        description=description,
-                        group_ids=[],
-                        feature_names=[],
-                    )
-                    new_id = (result.get("project") or {}).get("id")
-            except Exception as exc:
-                messagebox.showerror("New Project", str(exc), parent=dlg)
-                return
-            dlg.destroy()
-            self._notify_changed()
-            self.refresh()
-            if new_id:
-                self._load_project(str(new_id), force=True)
-
-        btns = ttk.Frame(body)
-        btns.pack(fill="x")
-        ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side="right", padx=4)
-        ttk.Button(btns, text="Create", command=create).pack(side="right")
+        self._loading = True
+        self._is_new_project = True
+        self._id_user_edited = False
+        self._selected_id = None
+        self._selected_features.clear()
+        self._project_groups = []
+        self._feature_group_map = {}
+        suggested = svc.suggest_project_id(self.chart_dir, "")
+        self._name_var.set("")
+        self._id_var.set(suggested)
+        try:
+            self._id_entry.configure(state="normal")
+        except tk.TclError:
+            pass
+        self._warmup_var.set("")
+        self._sampling_var.set("")
+        self._desc.delete("1.0", tk.END)
+        self._avail_search_var.set("")
+        self._reload_group_tree_rows()
+        self._render_group_tree()
+        self._avail.delete(0, tk.END)
+        self._refresh_group_combos()
+        self._update_summary()
+        self._populate_project_combo()
+        self._project_var.set(_NEW_PROJECT_LABEL)
+        self._dirty = False
+        self._dirty_var.set("")
+        self._loading = False
+        self._update_editing_state()
 
     def _clone_selected(self) -> None:
+        if self._is_new_project:
+            messagebox.showinfo("Clone Project", "Save or discard the new project first.", parent=self)
+            return
         if not self._selected_id:
             messagebox.showinfo("Clone Project", "Select a project first.", parent=self)
             return
@@ -614,8 +1037,18 @@ class FeatureProjectManagerPanel(ttk.Frame):
             self._load_project(str(new_id), force=True)
 
     def _delete_selected(self) -> None:
+        if self._is_new_project:
+            self._new_project()
+            return
         if not self._selected_id:
             messagebox.showinfo("Delete Project", "Select a project first.", parent=self)
+            return
+        if is_reserved_all_project_id(self._selected_id):
+            messagebox.showinfo(
+                "Delete Project",
+                "The reserved project 'all' cannot be deleted.",
+                parent=self,
+            )
             return
         proj = self._project_by_id(self._selected_id) or {}
         label = proj.get("label") or self._selected_id
@@ -632,12 +1065,16 @@ class FeatureProjectManagerPanel(ttk.Frame):
         except Exception as exc:
             messagebox.showerror("Delete Project", str(exc), parent=self)
             return
-        self._selected_id = None
+        self._selected_id = RESERVED_ALL_PROJECT_ID
         self._dirty = False
         self._notify_changed()
         self.refresh()
+        self._load_project(RESERVED_ALL_PROJECT_ID, force=True)
 
     def _rename_selected(self) -> None:
+        if self._is_new_project:
+            messagebox.showinfo("Rename Project", "Enter the name in Project Details and Save.", parent=self)
+            return
         if not self._selected_id:
             messagebox.showinfo("Rename Project", "Select a project first.", parent=self)
             return
@@ -650,18 +1087,12 @@ class FeatureProjectManagerPanel(ttk.Frame):
         )
         if not name or not name.strip():
             return
-        try:
-            svc.update_project(self.chart_dir, self._selected_id, label=name.strip())
-        except Exception as exc:
-            messagebox.showerror("Rename Project", str(exc), parent=self)
-            return
-        self._notify_changed()
-        self.refresh()
-        self._load_project(self._selected_id, force=True)
+        self._name_var.set(name.strip())
+        self._mark_dirty()
 
     def _export_selected(self) -> None:
-        if not self._selected_id:
-            messagebox.showinfo("Export Project", "Select a project first.", parent=self)
+        if self._is_new_project or not self._selected_id:
+            messagebox.showinfo("Export Project", "Save the project before exporting.", parent=self)
             return
         proj = self._project_by_id(self._selected_id)
         if not proj:
@@ -684,6 +1115,8 @@ class FeatureProjectManagerPanel(ttk.Frame):
                 "description": proj.get("description") or "",
                 "group_ids": list(proj.get("group_ids") or []),
                 "feature_names": list(proj.get("feature_names") or []),
+                "project_groups": list(proj.get("project_groups") or []),
+                "feature_group_map": dict(proj.get("feature_group_map") or {}),
                 "warmup_minutes": proj.get("warmup_minutes"),
                 "default_sampling": proj.get("default_sampling") or "",
                 "notes": proj.get("notes") or "",
@@ -726,6 +1159,8 @@ class FeatureProjectManagerPanel(ttk.Frame):
                 description=str(proj.get("description") or ""),
                 group_ids=list(proj.get("group_ids") or []),
                 feature_names=list(proj.get("feature_names") or proj.get("enabled_features") or []),
+                project_groups=list(proj.get("project_groups") or []),
+                feature_group_map=dict(proj.get("feature_group_map") or {}),
                 warmup_minutes=proj.get("warmup_minutes"),
                 default_sampling=str(proj.get("default_sampling") or ""),
                 notes=str(proj.get("notes") or ""),

@@ -318,3 +318,59 @@ def feature_config_from_project(
             enabled_features=feats,
         )
     return default_feature_config(registry)
+
+
+def registry_group_for_feature(registry: dict[str, Any], feature_name: str) -> str | None:
+    """Canonical primary domain for a registry feature (schema ``registry`` ignored)."""
+    from chain_replay_ml.dataset_builder.feature_project_organization import canonical_group_for_feature
+
+    name = str(feature_name or "").strip()
+    if not name:
+        return None
+    try:
+        return canonical_group_for_feature(name)
+    except Exception:
+        return None
+
+
+def project_group_label(
+    project_groups: list[dict[str, Any]],
+    registry: dict[str, Any],
+    group_id: str,
+) -> str:
+    from chain_replay_ml.dataset_builder.feature_project_organization import project_group_label as _label
+
+    return _label(project_groups, group_id)
+
+
+def backfill_feature_group_map(
+    registry: dict[str, Any],
+    feature_names: set[str] | list[str],
+    *,
+    project_groups: list[dict[str, Any]],
+    feature_group_map: dict[str, str] | None = None,
+) -> dict[str, str]:
+    from chain_replay_ml.dataset_builder.feature_project_organization import backfill_feature_group_map as _backfill
+
+    return _backfill(
+        feature_names,
+        project_groups=project_groups,
+        feature_group_map=feature_group_map,
+    )
+
+
+def project_group_options(
+    registry: dict[str, Any],
+    project_groups: list[dict[str, Any]],
+    feature_group_map: dict[str, str],
+    *,
+    data_dir: str | None = None,
+) -> list[dict[str, str]]:
+    from chain_replay_ml.dataset_builder.feature_project_organization import project_group_tree
+
+    rows = project_group_tree(
+        project_groups=project_groups,
+        feature_group_map=feature_group_map,
+        data_dir=data_dir,
+    )
+    return [{"id": str(r.get("id") or ""), "label": str(r.get("label") or r.get("id") or "")} for r in rows]

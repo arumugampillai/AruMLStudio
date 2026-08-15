@@ -556,6 +556,7 @@ def filter_laggable_features(
     registry_only: bool = True,
     exclude_names: set[str] | frozenset[str] | None = None,
     data_dir: str | None = None,
+    feature_project_id: str | None = None,
 ) -> list[str]:
     """Columns offered in Feature Transformation feature selection.
 
@@ -575,7 +576,12 @@ def filter_laggable_features(
                 get_active_feature_names,
             )
 
-            active = set(get_active_feature_names(data_dir))
+            active = set(
+                get_active_feature_names(
+                    data_dir,
+                    feature_project_id=feature_project_id,
+                )
+            )
             blocked = {str(n) for n in (exclude_names or ())}
             names = [n for n in names if n in active and n not in blocked]
         else:

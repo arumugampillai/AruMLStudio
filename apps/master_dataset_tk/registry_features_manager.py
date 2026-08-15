@@ -23,6 +23,7 @@ class RegistryFeaturesSelectionDialog(tk.Toplevel):
         master: tk.Misc,
         *,
         data_dir: str,
+        feature_project_id: str | None = None,
         on_changed: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(master)
@@ -35,7 +36,17 @@ class RegistryFeaturesSelectionDialog(tk.Toplevel):
         self._count_var = tk.StringVar(value="")
         self._feature_vars: dict[str, tk.BooleanVar] = {}
         self._group_frames: list[ttk.LabelFrame] = []
-        self._source = registry_feature_source(data_dir=data_dir)
+        if feature_project_id:
+            from chain_replay_ml.dataset_builder.feature_project_organization import (
+                project_registry_feature_source,
+            )
+
+            self._source = project_registry_feature_source(
+                data_dir=data_dir,
+                project_id=str(feature_project_id).strip().lower(),
+            )
+        else:
+            self._source = registry_feature_source(data_dir=data_dir)
 
         self._build_ui()
         self._load_selection()
@@ -202,9 +213,15 @@ def open_registry_features_selection(
     master: tk.Misc,
     *,
     data_dir: str,
+    feature_project_id: str | None = None,
     on_changed: Callable[[], None] | None = None,
 ) -> RegistryFeaturesSelectionDialog:
-    return RegistryFeaturesSelectionDialog(master, data_dir=data_dir, on_changed=on_changed)
+    return RegistryFeaturesSelectionDialog(
+        master,
+        data_dir=data_dir,
+        feature_project_id=feature_project_id,
+        on_changed=on_changed,
+    )
 
 
 __all__ = [

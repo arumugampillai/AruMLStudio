@@ -94,9 +94,12 @@ class AutoFeatureTransformPanel(ttk.Frame):
         self._prem_min_var = tk.StringVar(value="15")
         self._prem_max_var = tk.StringVar(value="40")
         self._target_pipeline_var = tk.StringVar(value="")
+        self._target_pipeline_mode = tk.StringVar(value="existing")
+        self._new_pipeline_preview_var = tk.StringVar(value="")
         self._build_pipeline_var = tk.StringVar(value="")
         self._pipeline_label_to_id: dict[str, str] = {}
         self._build_pipeline_label_to_id: dict[str, str] = {}
+        self._feature_project_display_var = tk.StringVar(value="—")
 
         from .auto_candidate_generation import (
             DEFAULT_HORIZONS_SEC,
@@ -191,6 +194,8 @@ class AutoFeatureTransformPanel(ttk.Frame):
             saved_pid = str(applied.get("target_pipeline_id") or "").strip().upper()
             if saved_pid:
                 self._target_pipeline_var.set(saved_pid)
+            mode = str(applied.get("target_pipeline_mode") or "existing").strip().lower()
+            self._target_pipeline_mode.set("create_new" if mode == "create_new" else "existing")
             saved_build_pid = str(applied.get("build_pipeline_id") or "").strip().upper()
             if saved_build_pid:
                 self._build_pipeline_var.set(saved_build_pid)
@@ -236,6 +241,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
             premium_min=str(self._prem_min_var.get() or "15"),
             premium_max=str(self._prem_max_var.get() or "40"),
             target_pipeline_id=str(self._target_pipeline_var.get() or "").strip().upper(),
+            target_pipeline_mode=str(self._target_pipeline_mode.get() or "existing"),
             build_pipeline_id=str(self._build_pipeline_var.get() or "").strip().upper(),
         )
         from .auto_candidate_generation import candidate_generation_prefs_snapshot
@@ -264,6 +270,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
             self._prem_min_var,
             self._prem_max_var,
             self._target_pipeline_var,
+            self._target_pipeline_mode,
             self._build_pipeline_var,
             self._candidate_source_mode,
         ):
@@ -284,15 +291,80 @@ class AutoFeatureTransformPanel(ttk.Frame):
     def refresh(self) -> None:
         try:
             data_dir = chart_data_dir(self.chart_dir)
-            self._catalog = feature_sources_catalog(data_dir=data_dir)
+            project_id = self._resolve_master_feature_project_id()
+            self._feature_project_display_var.set(project_id)
+            self._catalog = feature_sources_catalog(
+                data_dir=data_dir,
+                feature_project_id=project_id,
+            )
         except Exception as exc:
             self._catalog = None
+            self._feature_project_display_var.set("—")
             messagebox.showerror("Feature Sources", str(exc), parent=self)
             return
         self._render_status_cards()
         self._render_source_trees()
         self.refresh_target_pipelines()
         self.refresh_build_pipelines()
+        self._sync_target_pipeline_mode()
+
+    def _resolve_master_feature_project_id(self) -> str:
+        from chain_replay_ml.dataset_builder.master_feature_project import (
+            MasterFeatureProjectError,
+            resolve_master_feature_project_id_for_path,
+        )
+
+        path = self._master_db_path()
+        if not os.path.isfile(path):
+            raise MasterFeatureProjectError(
+                "Master database not found for the current Market / Interval."
+            )
+        return resolve_master_feature_project_id_for_path(
+            path,
+            chart_data_dir(self.chart_dir),
+        )
+
+    def _refresh_new_pipeline_preview(self) -> None:
+        if not self.chart_dir:
+            self._new_pipeline_preview_var.set("")
+            return
+        try:
+            from .pipeline_registry_service import peek_next_pipeline_identity
+
+            info = peek_next_pipeline_identity(self.chart_dir)
+            name = str(info.get("name") or "").strip()
+            pid = str(info.get("pipeline_id") or "").strip().upper()
+            if name and pid:
+                self._new_pipeline_preview_var.set(f"{name} ({pid})")
+            else:
+                self._new_pipeline_preview_var.set(name or pid or "")
+        except Exception:
+            self._new_pipeline_preview_var.set("")
+
+    def _sync_target_pipeline_mode(self) -> None:
+        if not hasattr(self, "_target_pipeline_cb"):
+            return
+        mode = str(self._target_pipeline_mode.get() or "existing").strip().lower()
+        if mode == "create_new":
+            self._refresh_new_pipeline_preview()
+            try:
+                self._target_pipeline_cb.configure(state="disabled")
+            except tk.TclError:
+                pass
+            if hasattr(self, "_new_pipeline_name_entry"):
+                try:
+                    self._new_pipeline_name_entry.configure(state="readonly")
+                except tk.TclError:
+                    pass
+        else:
+            try:
+                self._target_pipeline_cb.configure(state="readonly")
+            except tk.TclError:
+                pass
+
+    def _on_target_pipeline_mode_changed(self) -> None:
+        self._sync_target_pipeline_mode()
+        self._persist_build_prefs()
 
     def _experimental_pipeline_labels(
         self,
@@ -340,6 +412,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
         if labels:
             self._target_pipeline_cb.set(labels[0])
             self._target_pipeline_var.set(id_by_label[labels[0]])
+        self._refresh_new_pipeline_preview()
 
     def refresh_build_pipelines(self, *, select_pipeline_id: str | None = None) -> None:
         if not hasattr(self, "_build_pipeline_cb"):
@@ -456,6 +529,20 @@ class AutoFeatureTransformPanel(ttk.Frame):
                     except tk.TclError:
                         pass
     def _build_sources_panel(self, parent: tk.Misc) -> None:
+        tools = ttk.Frame(parent)
+        tools.pack(fill="x", pady=(0, 4))
+        ttk.Label(tools, text="Feature Project:").pack(side="left")
+        ttk.Label(
+            tools,
+            textvariable=self._feature_project_display_var,
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=(6, 0))
+        ttk.Label(
+            tools,
+            text="(from Master Dataset)",
+            foreground="#666",
+        ).pack(side="left", padx=(8, 0))
+
         nb = ttk.Notebook(parent)
         nb.pack(fill="both", expand=True)
 
@@ -726,19 +813,48 @@ class AutoFeatureTransformPanel(ttk.Frame):
             anchor="w", pady=(0, 8)
         )
 
-        tp_row = ttk.Frame(inner)
-        tp_row.pack(fill="x")
-        ttk.Label(tp_row, text="Target Pipeline").pack(side="left")
+        tp_box = ttk.LabelFrame(inner, text="Target Pipeline", padding=6)
+        tp_box.pack(fill="x", pady=(0, 10))
+
+        existing_row = ttk.Frame(tp_box)
+        existing_row.pack(fill="x")
+        ttk.Radiobutton(
+            existing_row,
+            text="Existing Pipeline",
+            variable=self._target_pipeline_mode,
+            value="existing",
+            command=self._on_target_pipeline_mode_changed,
+        ).pack(anchor="w")
         self._target_pipeline_cb = ttk.Combobox(
-            tp_row,
+            existing_row,
             width=32,
             state="readonly",
         )
-        self._target_pipeline_cb.pack(side="left", padx=(8, 0))
+        self._target_pipeline_cb.pack(anchor="w", padx=(20, 0), pady=(4, 0))
         self._target_pipeline_cb.bind(
             "<<ComboboxSelected>>",
             lambda _e: self._on_target_pipeline_selected(),
         )
+
+        create_row = ttk.Frame(tp_box)
+        create_row.pack(fill="x", pady=(8, 0))
+        ttk.Radiobutton(
+            create_row,
+            text="Create New Auto Pipeline",
+            variable=self._target_pipeline_mode,
+            value="create_new",
+            command=self._on_target_pipeline_mode_changed,
+        ).pack(anchor="w")
+        name_row = ttk.Frame(create_row)
+        name_row.pack(anchor="w", padx=(20, 0), pady=(4, 0))
+        ttk.Label(name_row, text="Name:").pack(side="left")
+        self._new_pipeline_name_entry = ttk.Entry(
+            name_row,
+            textvariable=self._new_pipeline_preview_var,
+            width=30,
+            state="readonly",
+        )
+        self._new_pipeline_name_entry.pack(side="left", padx=(8, 0))
 
         src_box = ttk.LabelFrame(inner, text="Source Features", padding=6)
         src_box.pack(fill="x", pady=(10, 0))
@@ -804,15 +920,60 @@ class AutoFeatureTransformPanel(ttk.Frame):
             ttk.Label(row, textvariable=var).pack(side="left", padx=(6, 0))
 
     def _generate_candidates(self) -> None:
-        pid = str(self._target_pipeline_var.get() or "").strip().upper()
-        if not pid:
-            messagebox.showwarning(
-                "Generate Candidates",
-                "Select a target pipeline first.",
-                parent=self,
+        from .pipeline_registry_service import (
+            add_pipeline_candidates,
+            create_pipeline,
+            get_pipeline,
+            peek_next_pipeline_identity,
+        )
+
+        created_pipeline: dict[str, Any] | None = None
+        mode = str(self._target_pipeline_mode.get() or "existing").strip().lower()
+        if mode == "create_new":
+            preview = peek_next_pipeline_identity(self.chart_dir)
+            try:
+                created_pipeline = create_pipeline(
+                    self.chart_dir,
+                    name=str(preview.get("name") or "").strip() or None,
+                    pipeline_type="auto",
+                )
+            except Exception as exc:
+                messagebox.showerror("Generate Candidates", str(exc), parent=self)
+                return
+            pid = str(created_pipeline.get("pipeline_id") or "").strip().upper()
+            if not pid:
+                messagebox.showerror(
+                    "Generate Candidates",
+                    "Failed to create a new Auto pipeline.",
+                    parent=self,
+                )
+                return
+            self._target_pipeline_var.set(pid)
+            self._target_pipeline_mode.set("existing")
+            self.refresh_target_pipelines(select_pipeline_id=pid)
+            self._sync_target_pipeline_mode()
+            if callable(self._on_pipelines_changed):
+                try:
+                    self._on_pipelines_changed(select_pipeline_id=pid)
+                except TypeError:
+                    try:
+                        self._on_pipelines_changed()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            self._append_log(
+                f"Created Auto pipeline: {created_pipeline.get('name') or pid} ({pid})"
             )
-            return
-        from .pipeline_registry_service import add_pipeline_candidates, get_pipeline
+        else:
+            pid = str(self._target_pipeline_var.get() or "").strip().upper()
+            if not pid:
+                messagebox.showwarning(
+                    "Generate Candidates",
+                    "Select a target pipeline first.",
+                    parent=self,
+                )
+                return
 
         row = get_pipeline(self.chart_dir, pid)
         if not row:
@@ -900,16 +1061,29 @@ class AutoFeatureTransformPanel(ttk.Frame):
             return
         n_new = len(new_names)
         total = int((updated or {}).get("candidate_count") or 0)
+        pipeline_label = str((updated or {}).get("name") or pid)
+        created_note = ""
+        if created_pipeline:
+            created_note = (
+                f"Created Auto pipeline {created_pipeline.get('name') or pid} ({pid}).\n"
+            )
         messagebox.showinfo(
             "Generate Candidates",
-            f"Added {n_new} candidate feature name(s) to {updated.get('name') or pid}.\n"
+            f"{created_note}"
+            f"Added {n_new} candidate feature name(s) to {pipeline_label}.\n"
             f"Skipped {len(skipped)} existing name(s).\n"
             f"Pipeline now has {total} candidate feature(s).",
             parent=self,
         )
+        self.refresh_target_pipelines(select_pipeline_id=pid)
         if callable(self._on_pipelines_changed):
             try:
-                self._on_pipelines_changed()
+                self._on_pipelines_changed(select_pipeline_id=pid)
+            except TypeError:
+                try:
+                    self._on_pipelines_changed()
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -1059,6 +1233,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
         open_registry_features_selection(
             self,
             data_dir=chart_data_dir(self.chart_dir),
+            feature_project_id=self._resolve_master_feature_project_id(),
             on_changed=self.refresh,
         )
 
@@ -1281,6 +1456,12 @@ class AutoFeatureTransformPanel(ttk.Frame):
         mgr = get_build_progress_manager()
         mgr.begin_job("analysis_dataset_build", title="Analysis Dataset", cancel_fn=self._runner.cancel)
 
+        try:
+            feature_project_id = self._resolve_master_feature_project_id()
+        except Exception as exc:
+            messagebox.showerror("Build", str(exc), parent=self)
+            return
+
         kwargs = {
             "market": str(self._market_var.get() or "NIFTY").upper(),
             "interval_sec": interval,
@@ -1293,6 +1474,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
             "premium_min": prem_lo,
             "premium_max": prem_hi,
             "master_db_path": path,
+            "feature_project_id": feature_project_id,
         }
         if self._include_pipeline.get():
             kwargs["pipeline_id"] = str(self._build_pipeline_var.get() or "").strip().upper()

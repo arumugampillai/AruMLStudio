@@ -18,6 +18,24 @@ def load_catalog(chart_dir: str) -> dict[str, Any]:
     return build_feature_registry_catalog(data_dir_for(chart_dir))
 
 
+def list_projects(chart_dir: str) -> list[dict[str, Any]]:
+    from chain_replay_ml.dataset_builder.feature_registry_store import (
+        ensure_all_project,
+        list_projects as _list_projects,
+        load_store,
+    )
+
+    data_dir = data_dir_for(chart_dir)
+    ensure_all_project(data_dir)
+    return _list_projects(load_store(data_dir))
+
+
+def ensure_all_project(chart_dir: str) -> dict[str, Any]:
+    from chain_replay_ml.dataset_builder.feature_registry_store import ensure_all_project as _ensure
+
+    return _ensure(data_dir_for(chart_dir))
+
+
 def save_planned_feature(chart_dir: str, entry: dict[str, Any]) -> dict[str, Any]:
     from chain_replay_ml.dataset_builder.feature_registry_catalog import save_planned_feature
 
@@ -200,6 +218,8 @@ def create_project(
     description: str = "",
     group_ids: list[str] | None = None,
     feature_names: list[str] | None = None,
+    project_groups: list[dict[str, str]] | list[Any] | None = None,
+    feature_group_map: dict[str, str] | None = None,
     warmup_minutes: int | None = None,
     default_sampling: str = "",
     notes: str = "",
@@ -214,12 +234,20 @@ def create_project(
         description=description,
         group_ids=group_ids or [],
         feature_names=feature_names or [],
+        project_groups=project_groups,
+        feature_group_map=feature_group_map,
         warmup_minutes=warmup_minutes,
         default_sampling=default_sampling,
         notes=notes,
         version=version,
     )
     return {"ok": True, "project": doc}
+
+
+def suggest_project_id(chart_dir: str, label: str = "") -> str:
+    from chain_replay_ml.dataset_builder.feature_registry_store import load_store, suggest_project_id as _suggest
+
+    return _suggest(load_store(data_dir_for(chart_dir)), label)
 
 
 def update_project(
@@ -230,6 +258,8 @@ def update_project(
     description: str | None = None,
     group_ids: list[str] | None = None,
     feature_names: list[str] | None = None,
+    project_groups: list[dict[str, str]] | list[Any] | None = None,
+    feature_group_map: dict[str, str] | None = None,
     warmup_minutes: int | None | object = ...,
     default_sampling: str | None = None,
     notes: str | None = None,
@@ -242,6 +272,8 @@ def update_project(
         "description": description,
         "group_ids": group_ids,
         "feature_names": feature_names,
+        "project_groups": project_groups,
+        "feature_group_map": feature_group_map,
         "default_sampling": default_sampling,
         "notes": notes,
         "version": version,

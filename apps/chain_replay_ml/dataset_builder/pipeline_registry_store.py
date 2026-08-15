@@ -161,11 +161,17 @@ def get_pipeline_summary(doc: dict[str, Any], pipeline_id: str) -> dict[str, Any
     return pipeline_summary(rec, pipeline_id=pid)
 
 
-def _next_ids(doc: dict[str, Any]) -> tuple[str, str, int]:
+def peek_next_pipeline_identity(doc: dict[str, Any]) -> tuple[str, str]:
+    """Return the next (pipeline_id, display_name) without advancing sequence counters."""
     seq = int(doc.get("next_pipeline_id_seq") or 1)
     display_seq = int(doc.get("next_display_seq") or 1)
-    pipeline_id = format_pipeline_id(seq)
-    name = format_display_name(display_seq)
+    return format_pipeline_id(seq), format_display_name(display_seq)
+
+
+def _next_ids(doc: dict[str, Any]) -> tuple[str, str, int]:
+    pipeline_id, name = peek_next_pipeline_identity(doc)
+    seq = int(doc.get("next_pipeline_id_seq") or 1)
+    display_seq = int(doc.get("next_display_seq") or 1)
     doc["next_pipeline_id_seq"] = seq + 1
     doc["next_display_seq"] = display_seq + 1
     return pipeline_id, name, display_seq
@@ -458,6 +464,7 @@ __all__ = [
     "list_pipelines",
     "load_store",
     "normalize_pipeline_type",
+    "peek_next_pipeline_identity",
     "pipeline_feature_names",
     "pipeline_summary",
     "resolve_pipeline_dataset_feature_names",

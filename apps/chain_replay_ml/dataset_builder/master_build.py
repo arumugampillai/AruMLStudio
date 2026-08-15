@@ -232,6 +232,32 @@ class MasterDatasetBuildOrchestrator:
 
         store = MasterStore(master_path)
         store.open()
+        from .master_feature_project import (
+            MasterFeatureProjectError,
+            normalize_feature_project_id,
+            read_master_feature_project_id,
+            set_master_feature_project_id,
+            validate_feature_project_id,
+        )
+
+        existing_pid = read_master_feature_project_id(store)
+        requested_pid = normalize_feature_project_id(
+            getattr(self.config, "feature_project_id", None)
+        )
+        meta = store.read_master_meta()
+        if int(meta.total_rows or 0) > 0 and existing_pid:
+            if requested_pid and requested_pid != existing_pid:
+                raise MasterFeatureProjectError(
+                    f"Master Dataset is bound to feature project '{existing_pid}'. "
+                    f"Cannot build with project '{requested_pid}'."
+                )
+            feature_project_id = existing_pid
+        else:
+            try:
+                feature_project_id = validate_feature_project_id(data_dir, requested_pid)
+            except MasterFeatureProjectError as exc:
+                raise RuntimeError(exc.detail) from exc
+            set_master_feature_project_id(store, data_dir, feature_project_id)
         from chain_replay_ml.feature_policy.performance_debug import PerformanceDebugConfig, PerformanceDebugLevel
         from .build_profiler import BuildProfiler, profile_block, set_profiler
         from .production_day_build import production_performance_debug
@@ -258,6 +284,7 @@ class MasterDatasetBuildOrchestrator:
                 "sliding_stride_sec": stride_sec,
                 "atm_band": atm_band,
                 "storage_backend": "master_sqlite",
+                "feature_project_id": feature_project_id,
             })
             store.start_build_job(job_id=job_id, days_total=n_sources)
 
@@ -629,6 +656,7 @@ class MasterDatasetBuildOrchestrator:
                 "strike_selection": strike_selection_metadata(strike_selection),
                 "gap_policy": normalize_gap_policy(self.config.gap_policy),
                 "prediction_targets": build_summary["prediction_targets"],
+                "feature_project_id": feature_project_id,
             })
             store.set_meta("build_schema", {
                 "feature_count": len(implemented),

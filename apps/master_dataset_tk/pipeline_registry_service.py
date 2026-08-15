@@ -90,6 +90,19 @@ def resolve_pipeline_dataset_feature_names(chart_dir: str, pipeline_id: str) -> 
     return _resolve(data_dir, doc, pipeline_id)
 
 
+def peek_next_pipeline_identity(chart_dir: str) -> dict[str, str]:
+    """Preview the permanent ID and display name for the next pipeline create."""
+    from chain_replay_ml.dataset_builder.pipeline_registry_store import (
+        ensure_default_existing_pipeline,
+        peek_next_pipeline_identity as _peek,
+    )
+
+    data_dir = data_dir_for(chart_dir)
+    doc = ensure_default_existing_pipeline(data_dir)
+    pipeline_id, name = _peek(doc)
+    return {"pipeline_id": pipeline_id, "name": name}
+
+
 def create_pipeline(
     chart_dir: str,
     *,

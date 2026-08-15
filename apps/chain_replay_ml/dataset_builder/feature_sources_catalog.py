@@ -67,8 +67,20 @@ def registry_feature_names(*, data_dir: str | None = None) -> list[str]:
     return names
 
 
-def get_active_feature_names(data_dir: str) -> list[str]:
+def get_active_feature_names(
+    data_dir: str,
+    *,
+    feature_project_id: str | None = None,
+) -> list[str]:
     """Authoritative active (non-retired) Feature Registry names for transformations."""
+    if feature_project_id:
+        from .feature_project_organization import project_registry_feature_source
+
+        src = project_registry_feature_source(
+            data_dir=data_dir,
+            project_id=str(feature_project_id).strip().lower(),
+        )
+        return list(src.get("features") or [])
     return registry_feature_names(data_dir=data_dir)
 
 
@@ -199,9 +211,18 @@ def feature_sources_catalog(
     *,
     data_dir: str | None = None,
     retired: frozenset[str] | None = None,
+    feature_project_id: str | None = None,
 ) -> dict[str, Any]:
     """Phase 1A catalogue payload for UI + analysis builds."""
-    registry = registry_feature_source(data_dir=data_dir)
+    if data_dir and feature_project_id:
+        from .feature_project_organization import project_registry_feature_source
+
+        registry = project_registry_feature_source(
+            data_dir=data_dir,
+            project_id=str(feature_project_id).strip().lower(),
+        )
+    else:
+        registry = registry_feature_source(data_dir=data_dir)
     pipeline = pipeline_feature_source(data_dir=data_dir, retired=retired)
     return {
         "version": 1,

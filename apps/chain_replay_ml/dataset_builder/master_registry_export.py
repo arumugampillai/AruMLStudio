@@ -483,6 +483,7 @@ def create_master_registry_dataset(
     registry_export_features: frozenset[str] | None = None,
     pipeline_provenance: dict[str, Any] | None = None,
     base_pipeline_export_features: frozenset[str] | None = None,
+    feature_project_id: str | None = None,
     on_progress: Callable[[str, int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Export filtered master rows to dataset registry as Parquet + metadata JSON.
@@ -583,6 +584,19 @@ def create_master_registry_dataset(
             or 0
         )
         master_day_rows = store.read_master_days()
+        from .master_feature_project import (
+            ensure_master_feature_project_id,
+            normalize_feature_project_id,
+            validate_feature_project_id,
+        )
+
+        if feature_project_id:
+            bound_feature_project_id = validate_feature_project_id(
+                data_dir,
+                normalize_feature_project_id(feature_project_id),
+            )
+        else:
+            bound_feature_project_id = ensure_master_feature_project_id(store, data_dir)
     finally:
         store.close()
 
@@ -1542,6 +1556,7 @@ def create_master_registry_dataset(
         "builder_version": BUILDER_VERSION,
         "export_source": "master_filter_export",
         "dataset_kind": str(dataset_kind or ("analysis" if keep_pipeline_owned else "registry")),
+        "feature_project_id": bound_feature_project_id,
         "keep_pipeline_owned": bool(keep_pipeline_owned),
         "storage_backend": "parquet",
         "master_db_path": path_relative_to_data_dir(path, data_dir),

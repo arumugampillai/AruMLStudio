@@ -283,6 +283,7 @@ class CreateDatasetPanel(ttk.Frame, LazyLoadMixin):
         self._persist_chain_source_selection()
         if hasattr(self, "config_panel"):
             self.config_panel.refresh_registry_exclusions()
+            self.config_panel.refresh_master_project(self._master_status)
         self._on_config_changed()
         meta = bundle.get("meta") or {}
         updated = str(meta.get("last_updated") or "unknown")
@@ -354,6 +355,8 @@ class CreateDatasetPanel(ttk.Frame, LazyLoadMixin):
         if not hasattr(self, "tree"):
             return
         self._refresh_master_status()
+        if hasattr(self, "config_panel"):
+            self.config_panel.refresh_master_project(self._master_status)
         self._update_preview()
         self._refresh_table()
 
@@ -640,6 +643,7 @@ class CreateDatasetPanel(ttk.Frame, LazyLoadMixin):
                 gap_policy=self.config_panel.gap_policy(),
                 low_memory=self.config_panel.low_memory(),
                 build_profiler=self.config_panel.build_profiler(),
+                feature_project_id=self.config_panel.feature_project_id(),
                 on_progress=on_progress,
                 on_done=on_done,
             )

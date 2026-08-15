@@ -50,6 +50,7 @@ class DatasetBuildConfig:
     preview_snapshot: dict[str, Any] | None = None
     gap_policy: dict[str, Any] | None = None
     build_profiler: bool = True
+    feature_project_id: str | None = None
 
     def resolved_data_dir(self) -> str:
         if self.data_dir:

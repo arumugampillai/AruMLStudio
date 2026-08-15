@@ -1115,12 +1115,13 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         project_row = ttk.Frame(self._feat_controls)
         project_row.pack(fill="x", pady=(0, 4))
         self._feat_project_enabled_var = tk.BooleanVar(value=bool(self.state.feature_project_enabled))
-        ttk.Checkbutton(
+        self._feat_project_enabled_cb = ttk.Checkbutton(
             project_row,
             text="Feature project",
             variable=self._feat_project_enabled_var,
             command=self._on_feature_project_enabled_toggled,
-        ).pack(side="left")
+        )
+        self._feat_project_enabled_cb.pack(side="left")
         self._feat_project_var = tk.StringVar(value="all")
         self._feat_project_cb = ttk.Combobox(
             project_row,
@@ -1826,6 +1827,14 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
                 fmt_rows(len(synced_feats) if synced_feats else row.get("feature_count"))
             )
             self._stat_targets.set(fmt_rows(row.get("target_count")))
+        bound_pid = self._dataset_feature_project_id()
+        if bound_pid:
+            self.state.feature_registry_project = bound_pid
+            self.state.feature_project_enabled = True
+            if hasattr(self, "_feat_project_enabled_var"):
+                self._feat_project_enabled_var.set(True)
+        if hasattr(self, "_feat_project_cb"):
+            self._populate_feature_project_combo()
         meta = (self._dataset_meta or {}).get("metadata") or {}
         pred = str(meta.get("prediction_type") or "").strip().lower()
         if pred in ("binary", "classification") and not getattr(self, "_pending_hit_confidence", None):
@@ -1886,6 +1895,35 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
             return names
         return [c for c in names if c in available]
 
+    def _dataset_feature_project_id(self) -> str | None:
+        meta = (self._dataset_meta or {}).get("metadata") or {}
+        raw = meta.get("feature_project_id")
+        if raw is None:
+            return None
+        text = str(raw).strip().lower()
+        return text or None
+
+    def _dataset_has_bound_feature_project(self) -> bool:
+        return self._dataset_feature_project_id() is not None
+
+    def _effective_feature_project_id(self) -> str:
+        bound = self._dataset_feature_project_id()
+        if bound:
+            return bound
+        return self._feature_project_key()
+
+    def _uses_feature_project_organization(self) -> bool:
+        return self._dataset_has_bound_feature_project() or self._feature_project_enabled()
+
+    def _bound_feature_project_display_label(self, project_id: str) -> str:
+        try:
+            from chain_replay_ml.dataset_builder.feature_project_organization import load_project_doc
+
+            doc = load_project_doc(self._data_dir, project_id)
+            return str(doc.get("label") or doc.get("id") or project_id)
+        except Exception:
+            return str(project_id)
+
     def _feature_project_enabled(self) -> bool:
         if hasattr(self, "_feat_project_enabled_var"):
             return bool(self._feat_project_enabled_var.get())
@@ -1894,6 +1932,32 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
     def _sync_feature_project_controls(self) -> None:
         if not hasattr(self, "_feat_project_cb"):
             return
+        bound = self._dataset_has_bound_feature_project()
+        if bound:
+            pid = self._dataset_feature_project_id() or "all"
+            self.state.feature_registry_project = pid
+            self.state.feature_project_enabled = True
+            if hasattr(self, "_feat_project_enabled_var"):
+                self._feat_project_enabled_var.set(True)
+            label = self._bound_feature_project_display_label(pid)
+            display = f"{pid}|{label}" if label and label != pid else pid
+            self._feat_project_var.set(display)
+            self._feat_project_cb["values"] = [display]
+            try:
+                self._feat_project_cb.configure(state="disabled")
+            except tk.TclError:
+                pass
+            if hasattr(self, "_feat_project_enabled_cb"):
+                try:
+                    self._feat_project_enabled_cb.configure(state="disabled")
+                except tk.TclError:
+                    pass
+            return
+        if hasattr(self, "_feat_project_enabled_cb"):
+            try:
+                self._feat_project_enabled_cb.configure(state="normal")
+            except tk.TclError:
+                pass
         enabled = self._feature_project_enabled()
         try:
             self._feat_project_cb.configure(state="readonly" if enabled else "disabled")
@@ -1912,59 +1976,39 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         return text.split("|", 1)[0]
 
     def _current_feature_project(self) -> dict[str, Any] | None:
-        if not self._feature_project_enabled():
+        if not self._uses_feature_project_organization():
             return None
-        key = self._feature_project_key()
-        if key in ("", "all"):
+        key = self._effective_feature_project_id()
+        from chain_replay_ml.dataset_builder.feature_project_organization import (
+            is_reserved_all_project_id,
+            load_project_doc,
+        )
+
+        if is_reserved_all_project_id(key):
             return None
-        for proj in self._fr_projects:
-            if str(proj.get("id") or "") == key:
-                return proj
-        return None
+        try:
+            return load_project_doc(self._data_dir, key)
+        except Exception:
+            return None
 
     def _project_allowed_feature_names(self) -> set[str] | None:
-        """Return allowlist when Feature project is enabled, else None (full dataset)."""
-        if not self._feature_project_enabled():
+        """Return allowlist when Feature project organization applies, else None (full dataset)."""
+        if not self._uses_feature_project_organization():
             return None
-        proj = self._current_feature_project()
-        if not proj:
-            # Enabled + "all" → registry ∩ dataset (no extra project allowlist).
-            return None
-        if "feature_names" in proj or "enabled_features" in proj:
-            return {
-                str(n)
-                for n in (proj.get("feature_names") or proj.get("enabled_features") or [])
-                if str(n).strip()
-            }
-        group_ids = {str(g) for g in (proj.get("group_ids") or []) if str(g).strip()}
-        if not group_ids:
-            return None
-        reg = (self._schema or {}).get("groups") or {}
-        names: set[str] = set()
-        for gid in group_ids:
-            for feat in (reg.get(gid) or {}).get("features") or []:
-                names.add(str(feat))
-        return names
+        from chain_replay_ml.dataset_builder.master_feature_project import active_project_feature_names
+
+        pid = self._effective_feature_project_id()
+        return set(active_project_feature_names(self._data_dir, pid))
 
     def _use_full_dataset_features(self) -> bool:
         """True when Feature project is off — expose every dataset column."""
-        return not self._feature_project_enabled()
+        return not self._uses_feature_project_organization()
 
     def _visible_dataset_feature_names(self) -> list[str]:
         dataset_names = self._dataset_feature_names()
         if self._use_full_dataset_features():
             return list(dataset_names)
-        allowed = self._project_allowed_feature_names()
-        if allowed is None:
-            # Enabled + "all": registry ∩ dataset
-            reg_names = {
-                str(f)
-                for g in ((self._schema or {}).get("groups") or {}).values()
-                for f in (g.get("features") or [])
-            }
-            if not reg_names:
-                return list(dataset_names)
-            return [n for n in dataset_names if n in reg_names]
+        allowed = self._project_allowed_feature_names() or frozenset()
         return [n for n in dataset_names if n in allowed]
 
     def _prune_features_to_project(self) -> None:
@@ -1975,6 +2019,10 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
 
     def _populate_feature_project_combo(self) -> None:
         if not hasattr(self, "_feat_project_cb"):
+            return
+        if self._dataset_has_bound_feature_project():
+            self._sync_feature_project_controls()
+            self._update_feature_project_hint()
             return
         values = ["all"] + [
             f"{p.get('id')}|{p.get('label') or p.get('id')}"
@@ -1997,6 +2045,23 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
     def _update_feature_project_hint(self) -> None:
         if not hasattr(self, "_feat_project_hint"):
             return
+        if self._dataset_has_bound_feature_project():
+            pid = self._dataset_feature_project_id() or "all"
+            from chain_replay_ml.dataset_builder.feature_project_organization import is_reserved_all_project_id
+
+            if is_reserved_all_project_id(pid):
+                n = len(self._visible_dataset_feature_names())
+                self._feat_project_hint.set(
+                    f"All registry features (project ∩ dataset) · {n} (from dataset)"
+                )
+                return
+            label = self._bound_feature_project_display_label(pid)
+            names = self._project_allowed_feature_names() or set()
+            in_ds = len(set(self._visible_dataset_feature_names()))
+            self._feat_project_hint.set(
+                f"{label}: {in_ds}/{len(names)} in dataset (from dataset)"
+            )
+            return
         if not self._feature_project_enabled():
             n = len(self._dataset_feature_names())
             self._feat_project_hint.set(f"Dataset features ({n})")
@@ -2004,7 +2069,7 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         proj = self._current_feature_project()
         if not proj:
             n = len(self._visible_dataset_feature_names())
-            self._feat_project_hint.set(f"All registry features (dataset ∩ schema) · {n}")
+            self._feat_project_hint.set(f"All registry features (project ∩ dataset) · {n}")
             return
         names = self._project_allowed_feature_names() or set()
         in_ds = len(set(self._visible_dataset_feature_names()))
@@ -2012,6 +2077,13 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         self._feat_project_hint.set(f"{label}: {in_ds}/{len(names)} in dataset")
 
     def _feature_project_summary_label(self) -> str:
+        if self._dataset_has_bound_feature_project():
+            pid = self._dataset_feature_project_id() or "all"
+            from chain_replay_ml.dataset_builder.feature_project_organization import is_reserved_all_project_id
+
+            if is_reserved_all_project_id(pid):
+                return "all (dataset)"
+            return f"{self._bound_feature_project_display_label(pid)} (dataset)"
         if not self._feature_project_enabled():
             return "off (dataset features)"
         proj = self._current_feature_project()
@@ -2029,6 +2101,10 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         return f"LTP {lo:g}–{hi:g}"
 
     def _on_feature_project_enabled_toggled(self) -> None:
+        if self._dataset_has_bound_feature_project():
+            self._sync_feature_project_controls()
+            self._update_feature_project_hint()
+            return
         self.state.feature_project_enabled = self._feature_project_enabled()
         self._sync_feature_project_controls()
         if self._lifecycle.features_ui_locked() and self._lifecycle.uses_feature_snapshot():
@@ -2047,6 +2123,10 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         self._on_change()
 
     def _on_feature_project_changed(self) -> None:
+        if self._dataset_has_bound_feature_project():
+            self._sync_feature_project_controls()
+            self._update_feature_project_hint()
+            return
         if self._lifecycle.features_ui_locked() and self._lifecycle.uses_feature_snapshot():
             # Keep combo in sync with locked snapshot context but do not rewrite features.
             self.state.feature_registry_project = self._feature_project_key()
@@ -2070,11 +2150,32 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         self._on_change()
 
     def _feature_groups(self) -> list[dict[str, Any]]:
+        dataset_names = self._dataset_feature_names()
+        if self._uses_feature_project_organization():
+            from chain_replay_ml.dataset_builder.manual_transform_feature_groups import (
+                project_groups_for_features,
+            )
+
+            pid = self._effective_feature_project_id()
+            raw_groups = project_groups_for_features(self._data_dir, pid, dataset_names)
+            out: list[dict[str, Any]] = []
+            for group in raw_groups:
+                feats = list(group.get("features") or [])
+                if not feats:
+                    continue
+                gid = str(group.get("id") or "")
+                out.append({
+                    "id": gid,
+                    "label": str(group.get("label") or gid),
+                    "features": feats,
+                    "registry_features": list(feats),
+                    "total_features": len(feats),
+                })
+            return out
+
         reg = (self._schema or {}).get("groups") or {}
         order = (self._schema or {}).get("groupOrder") or (self._dataset_meta or {}).get("metadata", {}).get("feature_groups") or []
-        dataset_names = self._dataset_feature_names()
         allowed = set(dataset_names) if dataset_names else None
-        project_names = self._project_allowed_feature_names()
         full_dataset = self._use_full_dataset_features()
         out: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -2089,12 +2190,7 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
             feats = list(registry_feats)
             if allowed is not None:
                 feats = [f for f in feats if f in allowed]
-            if project_names is not None:
-                feats = [f for f in feats if f in project_names]
-                if not feats:
-                    return
-            # Enabled + "all": only show registry features present in dataset.
-            if not full_dataset and project_names is None and not feats and not registry_feats:
+            if not full_dataset and not feats and not registry_feats:
                 return
             if registry_feats or (full_dataset and feats):
                 covered.update(feats)
@@ -3060,9 +3156,15 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
             except (TypeError, ValueError):
                 pass
         if hasattr(self, "_feat_project_var"):
-            if hasattr(self, "_feat_project_enabled_var"):
-                self.state.feature_project_enabled = bool(self._feat_project_enabled_var.get())
-            self.state.feature_registry_project = self._feature_project_key()
+            if self._dataset_has_bound_feature_project():
+                bound = self._dataset_feature_project_id()
+                if bound:
+                    self.state.feature_registry_project = bound
+                    self.state.feature_project_enabled = True
+            else:
+                if hasattr(self, "_feat_project_enabled_var"):
+                    self.state.feature_project_enabled = bool(self._feat_project_enabled_var.get())
+                self.state.feature_registry_project = self._feature_project_key()
             self._prune_features_to_project()
         if self.state.lifecycle:
             self.state.lifecycle_mode = self._lifecycle_mode_var.get() or self.state.lifecycle_mode

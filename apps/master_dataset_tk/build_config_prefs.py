@@ -152,6 +152,31 @@ def save_auto_feature_transform_prefs(
     return save_build_config_prefs(chart_dir, {"auto_feature_transform": patch})
 
 
+def load_feature_project_prefs(chart_dir: str) -> dict[str, Any]:
+    """Shared Feature Project selection for Project Manager + Feature Transformations."""
+    prefs = load_build_config_prefs(chart_dir) or {}
+    doc = prefs.get("feature_project")
+    return doc if isinstance(doc, dict) else {}
+
+
+def save_feature_project_prefs(chart_dir: str, patch: dict[str, Any]) -> dict[str, Any]:
+    return save_build_config_prefs(chart_dir, {"feature_project": patch})
+
+
+def active_feature_project_id(chart_dir: str) -> str:
+    from chain_replay_ml.dataset_builder.feature_project_organization import RESERVED_ALL_PROJECT_ID
+
+    doc = load_feature_project_prefs(chart_dir)
+    pid = str(doc.get("selected_project_id") or RESERVED_ALL_PROJECT_ID).strip().lower()
+    return pid or RESERVED_ALL_PROJECT_ID
+
+
+def set_active_feature_project_id(chart_dir: str, project_id: str) -> None:
+    pid = str(project_id or "").strip().lower()
+    if pid:
+        save_feature_project_prefs(chart_dir, {"selected_project_id": pid})
+
+
 def _normalize_day_scope(day_scope: Any, *, all_days: bool) -> str:
     scope = str(day_scope or "").strip().lower()
     if scope not in ("all", "selected"):
@@ -174,6 +199,7 @@ def auto_feature_transform_prefs_snapshot(
     premium_min: str | float,
     premium_max: str | float,
     target_pipeline_id: str | None = None,
+    target_pipeline_mode: str | None = None,
     build_pipeline_id: str | None = None,
 ) -> dict[str, Any]:
     try:
@@ -197,6 +223,11 @@ def auto_feature_transform_prefs_snapshot(
         "premium_min": str(premium_min if premium_min is not None else "15"),
         "premium_max": str(premium_max if premium_max is not None else "40"),
         "target_pipeline_id": str(target_pipeline_id or "").strip().upper(),
+        "target_pipeline_mode": (
+            "create_new"
+            if str(target_pipeline_mode or "").strip().lower() == "create_new"
+            else "existing"
+        ),
         "build_pipeline_id": str(build_pipeline_id or "").strip().upper(),
     }
 
@@ -234,6 +265,11 @@ def apply_auto_feature_transform_prefs(
         "premium_min": str(src.get("premium_min") if src.get("premium_min") is not None else "15"),
         "premium_max": str(src.get("premium_max") if src.get("premium_max") is not None else "40"),
         "target_pipeline_id": str(src.get("target_pipeline_id") or "").strip().upper(),
+        "target_pipeline_mode": (
+            "create_new"
+            if str(src.get("target_pipeline_mode") or "").strip().lower() == "create_new"
+            else "existing"
+        ),
         "build_pipeline_id": str(src.get("build_pipeline_id") or "").strip().upper(),
         "candidate_generation": normalize_candidate_generation_prefs(
             src.get("candidate_generation") if isinstance(src.get("candidate_generation"), dict) else None

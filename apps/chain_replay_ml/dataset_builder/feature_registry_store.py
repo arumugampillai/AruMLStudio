@@ -1117,6 +1117,70 @@ def _slug_project_id(label: str) -> str:
     return slug or "project"
 
 
+def _slug_project_group_id(label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", str(label or "").strip().lower()).strip("_")
+    return slug or "group"
+
+
+def _normalize_project_group_list(groups: list[Any] | None) -> list[dict[str, str]]:
+    from .feature_project_organization import normalize_custom_project_groups
+
+    return normalize_custom_project_groups(groups)
+
+
+def _normalize_feature_group_map(raw: dict[str, Any] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, val in dict(raw or {}).items():
+        name = str(key or "").strip()
+        gid = str(val or "").strip()
+        if name and gid:
+            out[name] = gid
+    return out
+
+
+def suggest_project_id(store: dict[str, Any] | None, label: str = "") -> str:
+    """Suggest a unique snake_case project id (does not reserve it)."""
+    projects = dict((store or {}).get("projects") or {})
+    base = _slug_project_id(label)
+    if not _PROJECT_ID_RE.match(base) or base == "all":
+        base = "project"
+    if base not in projects:
+        return base
+    n = 2
+    while f"{base}_{n}" in projects:
+        n += 1
+    candidate = f"{base}_{n}"
+    return candidate if _PROJECT_ID_RE.match(candidate) else f"project_{n}"
+
+
+def ensure_all_project(data_dir: str) -> dict[str, Any]:
+    """Ensure reserved ``all`` project exists with active registry membership."""
+    from .feature_project_organization import (
+        RESERVED_ALL_PROJECT_ID,
+        build_default_all_project_doc,
+        sync_all_project_membership,
+    )
+
+    store = load_store(data_dir)
+    projects = dict(store.get("projects") or {})
+    pid = RESERVED_ALL_PROJECT_ID
+    if pid not in projects:
+        doc = build_default_all_project_doc(data_dir=data_dir)
+        projects[pid] = doc
+        store["projects"] = projects
+        save_store(data_dir, store)
+        return {"id": pid, **doc}
+
+    raw = dict(projects[pid])
+    synced = sync_all_project_membership(raw, data_dir=data_dir)
+    if synced != raw:
+        synced["updated_at"] = datetime.now(timezone.utc).isoformat()
+        projects[pid] = synced
+        store["projects"] = projects
+        save_store(data_dir, store)
+    return {"id": pid, **synced}
+
+
 def list_projects(store: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     projects = dict((store or {}).get("projects") or {})
     rows = []
@@ -1134,6 +1198,8 @@ def list_projects(store: dict[str, Any] | None = None) -> list[dict[str, Any]]:
             "description": str(meta.get("description") or ""),
             "group_ids": list(meta.get("group_ids") or []),
             "feature_names": list(meta.get("feature_names") or meta.get("enabled_features") or []),
+            "project_groups": _normalize_project_group_list(meta.get("project_groups")),
+            "feature_group_map": _normalize_feature_group_map(meta.get("feature_group_map")),
             "warmup_minutes": warmup_minutes,
             "default_sampling": str(meta.get("default_sampling") or ""),
             "notes": str(meta.get("notes") or ""),
@@ -1152,6 +1218,8 @@ def create_project(
     description: str = "",
     group_ids: list[str] | None = None,
     feature_names: list[str] | None = None,
+    project_groups: list[dict[str, str]] | list[Any] | None = None,
+    feature_group_map: dict[str, str] | None = None,
     warmup_minutes: int | None = None,
     default_sampling: str = "",
     notes: str = "",
@@ -1165,6 +1233,10 @@ def create_project(
     pid = str(project_id or _slug_project_id(text)).strip().lower()
     if not _PROJECT_ID_RE.match(pid):
         raise ValueError("Project id must be snake_case (e.g. options_ml)")
+    from .feature_project_organization import is_reserved_all_project_id
+
+    if is_reserved_all_project_id(pid):
+        raise ValueError("Project id 'all' is reserved for the default registry project")
     if pid in projects:
         raise ValueError(f"Project already exists: {pid}")
     now = datetime.now(timezone.utc).isoformat()
@@ -1173,6 +1245,8 @@ def create_project(
         "description": str(description or "").strip(),
         "group_ids": list(dict.fromkeys(str(g).strip() for g in (group_ids or []) if str(g).strip())),
         "feature_names": list(dict.fromkeys(str(n).strip() for n in (feature_names or []) if str(n).strip())),
+        "project_groups": _normalize_project_group_list(project_groups),
+        "feature_group_map": _normalize_feature_group_map(feature_group_map),
         "warmup_minutes": int(warmup_minutes) if warmup_minutes is not None else None,
         "default_sampling": str(default_sampling or "").strip(),
         "notes": str(notes or "").strip(),
@@ -1180,6 +1254,9 @@ def create_project(
         "created_at": now,
         "updated_at": now,
     }
+    from .feature_project_organization import migrate_project_organization
+
+    doc = migrate_project_organization(doc, data_dir=data_dir)
     projects[pid] = doc
     store["projects"] = projects
     save_store(data_dir, store)
@@ -1194,6 +1271,8 @@ def update_project(
     description: str | None = None,
     group_ids: list[str] | None = None,
     feature_names: list[str] | None = None,
+    project_groups: list[dict[str, str]] | list[Any] | None = None,
+    feature_group_map: dict[str, str] | None = None,
     warmup_minutes: int | None | object = ...,
     default_sampling: str | None = None,
     notes: str | None = None,
@@ -1216,6 +1295,10 @@ def update_project(
         doc["group_ids"] = list(dict.fromkeys(str(g).strip() for g in group_ids if str(g).strip()))
     if feature_names is not None:
         doc["feature_names"] = list(dict.fromkeys(str(n).strip() for n in feature_names if str(n).strip()))
+    if project_groups is not None:
+        doc["project_groups"] = _normalize_project_group_list(project_groups)
+    if feature_group_map is not None:
+        doc["feature_group_map"] = _normalize_feature_group_map(feature_group_map)
     if warmup_minutes is not ...:
         if warmup_minutes is None or str(warmup_minutes).strip() == "":
             doc["warmup_minutes"] = None
@@ -1227,6 +1310,9 @@ def update_project(
         doc["notes"] = str(notes).strip()
     if version is not None:
         doc["version"] = str(version).strip() or "1"
+    from .feature_project_organization import migrate_project_organization
+
+    doc = migrate_project_organization(doc, data_dir=data_dir)
     doc["updated_at"] = datetime.now(timezone.utc).isoformat()
     projects[pid] = doc
     store["projects"] = projects
@@ -1259,6 +1345,8 @@ def clone_project(
         description=str(src.get("description") or ""),
         group_ids=list(src.get("group_ids") or []),
         feature_names=list(src.get("feature_names") or src.get("enabled_features") or []),
+        project_groups=list(src.get("project_groups") or []),
+        feature_group_map=dict(src.get("feature_group_map") or {}),
         warmup_minutes=warm,
         default_sampling=str(src.get("default_sampling") or ""),
         notes=str(src.get("notes") or ""),
@@ -1267,9 +1355,13 @@ def clone_project(
 
 
 def delete_project(data_dir: str, project_id: str) -> dict[str, Any]:
+    from .feature_project_organization import is_reserved_all_project_id
+
     store = load_store(data_dir)
     projects = dict(store.get("projects") or {})
     pid = str(project_id or "").strip().lower()
+    if is_reserved_all_project_id(pid):
+        raise ValueError("The reserved project 'all' cannot be deleted")
     if pid not in projects:
         raise ValueError(f"Project not found: {pid}")
     removed = projects.pop(pid)

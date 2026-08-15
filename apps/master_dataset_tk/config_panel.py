@@ -54,12 +54,18 @@ class BuildConfigPanel(ttk.LabelFrame):
       self._feature_tab: FeatureSelectionTab | None = None
       self._strike_tab: StrikeSelectionTab | None = None
       self._gap_tab: GapPolicyTab | None = None
+      self._master_status: dict[str, Any] | None = None
+      self._feature_project_locked = False
 
       self.interval_var = tk.IntVar(value=10)
       self.stride_var = tk.IntVar(value=10)
       self.stride_error_var = tk.StringVar(value="")
       self.low_memory_var = tk.BooleanVar(value=False)
       self.build_profiler_var = tk.BooleanVar(value=True)
+      from chain_replay_ml.dataset_builder.feature_project_organization import RESERVED_ALL_PROJECT_ID
+
+      self._feature_project_var = tk.StringVar(value=RESERVED_ALL_PROJECT_ID)
+      self._feature_project_label_to_id: dict[str, str] = {}
 
       self._build_ui()
       self._apply_saved_prefs()
@@ -146,6 +152,79 @@ class BuildConfigPanel(ttk.LabelFrame):
           gap_cfg = normalize_gap_policy(saved_gap)
       if self._gap_tab is not None:
           self._gap_tab.apply_config(gap_cfg)
+      saved_project = build.get("feature_project_id")
+      if isinstance(saved_project, str) and saved_project.strip() and not self._feature_project_locked:
+          self._set_feature_project_combo_value(saved_project.strip().lower())
+      self._populate_feature_project_combo()
+
+  def refresh_master_project(self, master_status: dict[str, Any] | None) -> None:
+      """Bind project dropdown to an existing master DB when present."""
+      self._master_status = master_status
+      locked_pid: str | None = None
+      if isinstance(master_status, dict) and master_status.get("exists"):
+          cfg = master_status.get("master_config")
+          if isinstance(cfg, dict):
+              raw = cfg.get("feature_project_id")
+              if raw is not None and str(raw).strip():
+                  locked_pid = str(raw).strip().lower()
+          if not locked_pid:
+              meta = master_status.get("master_meta")
+              if isinstance(meta, dict):
+                  raw = meta.get("feature_project_id")
+                  if raw is not None and str(raw).strip():
+                      locked_pid = str(raw).strip().lower()
+          if not locked_pid and int(master_status.get("row_count") or 0) > 0:
+              locked_pid = str(master_status.get("feature_project_id") or "").strip().lower() or None
+      self._feature_project_locked = bool(locked_pid)
+      self._populate_feature_project_combo()
+      if locked_pid:
+          self._set_feature_project_combo_value(locked_pid)
+      if hasattr(self, "_feature_project_cb"):
+          self._feature_project_cb.configure(
+              state="disabled" if self._feature_project_locked else "readonly",
+          )
+
+  def _set_feature_project_combo_value(self, project_id: str) -> None:
+      pid = str(project_id or "").strip().lower()
+      for label, mapped in self._feature_project_label_to_id.items():
+          if mapped == pid:
+              self._feature_project_var.set(label)
+              return
+      self._feature_project_var.set(pid)
+
+  def _populate_feature_project_combo(self) -> None:
+      from chain_replay_ml.dataset_builder.feature_project_organization import (
+          RESERVED_ALL_PROJECT_ID,
+          is_reserved_all_project_id,
+      )
+
+      labels: list[str] = [RESERVED_ALL_PROJECT_ID]
+      self._feature_project_label_to_id = {RESERVED_ALL_PROJECT_ID: RESERVED_ALL_PROJECT_ID}
+      if self._chart_dir:
+          from . import feature_registry_service as svc
+
+          for p in svc.list_projects(self._chart_dir):
+              pid = str(p.get("id") or "").strip()
+              if not pid or is_reserved_all_project_id(pid):
+                  continue
+              name = str(p.get("label") or pid)
+              label = f"{name} ({pid})"
+              labels.append(label)
+              self._feature_project_label_to_id[label] = pid
+      if hasattr(self, "_feature_project_cb"):
+          self._feature_project_cb["values"] = labels
+
+  def feature_project_id(self) -> str:
+      from chain_replay_ml.dataset_builder.feature_project_organization import RESERVED_ALL_PROJECT_ID
+
+      label = str(self._feature_project_var.get() or "").strip()
+      pid = self._feature_project_label_to_id.get(label, label).strip().lower()
+      return pid or RESERVED_ALL_PROJECT_ID
+
+  def _on_feature_project_selected(self) -> None:
+      if self._feature_project_locked:
+          return
+      self._notify()
 
   def _persist_prefs(self) -> None:
       if not self._chart_dir or self._feature_tab is None:
@@ -166,10 +245,28 @@ class BuildConfigPanel(ttk.LabelFrame):
               "enabled_features": feat.get("enabledFeatures") or [],
               "strike_selection": strike,
               "gap_policy": gap,
+              "feature_project_id": self.feature_project_id(),
           },
       })
 
   def _build_ui(self) -> None:
+      project_row = ttk.Frame(self)
+      project_row.pack(fill="x", pady=(0, 6))
+      ttk.Label(project_row, text="Feature Project").pack(side="left")
+      self._feature_project_cb = ttk.Combobox(
+          project_row,
+          textvariable=self._feature_project_var,
+          width=34,
+          state="readonly",
+      )
+      self._feature_project_cb.pack(side="left", padx=(6, 12))
+      self._feature_project_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_feature_project_selected())
+      ttk.Label(
+          project_row,
+          text="Project identity for this master dataset (locked after first build).",
+          foreground="#666",
+      ).pack(side="left")
+
       row0 = ttk.Frame(self)
       row0.pack(fill="x", pady=(0, 6))
       ttk.Label(row0, text="Sampling interval (s)").pack(side="left")

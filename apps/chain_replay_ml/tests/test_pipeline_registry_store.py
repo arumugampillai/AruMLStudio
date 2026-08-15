@@ -16,6 +16,7 @@ from chain_replay_ml.dataset_builder.pipeline_registry_store import (
     get_pipeline_summary,
     list_experimental_pipelines,
     load_store,
+    peek_next_pipeline_identity,
     save_store,
     set_registry_members,
 )
@@ -34,6 +35,16 @@ class PipelineRegistryStoreTests(unittest.TestCase):
         summary = get_pipeline_summary(doc2, rec["pipeline_id"])
         self.assertIsNotNone(summary)
         self.assertEqual(summary["feature_count"], 0)
+
+    def test_peek_next_pipeline_identity_does_not_advance_seq(self) -> None:
+        doc = load_store(self._tmpdir)
+        pid1, name1 = peek_next_pipeline_identity(doc)
+        pid2, name2 = peek_next_pipeline_identity(doc)
+        self.assertEqual(pid1, pid2)
+        self.assertEqual(name1, name2)
+        rec = create_pipeline(doc, pipeline_type="auto")
+        self.assertEqual(rec["pipeline_id"], pid1)
+        self.assertEqual(rec["name"], name1)
 
     def test_registry_members_and_candidates(self) -> None:
         doc = load_store(self._tmpdir)

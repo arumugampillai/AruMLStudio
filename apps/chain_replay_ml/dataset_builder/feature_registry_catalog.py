@@ -711,6 +711,10 @@ def build_feature_registry_catalog(data_dir: str) -> dict[str, Any]:
     backlog_doc = load_feature_backlog(data_dir)
     backlog_by_name = {str(r.get("name")): r for r in (backlog_doc.get("features") or []) if r.get("name")}
     store = load_store(data_dir)
+    from .feature_registry_store import ensure_all_project
+
+    ensure_all_project(data_dir)
+    store = load_store(data_dir)
     overrides = dict(store.get("overrides") or {})
     imported = dict(store.get("imported_features") or {})
     custom_groups = dict(store.get("custom_groups") or {})

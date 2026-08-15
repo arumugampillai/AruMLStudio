@@ -105,6 +105,7 @@ def create_analysis_dataset(
     delta_max: float | None = None,
     on_progress: ProgressFn | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    feature_project_id: str | None = None,
 ) -> dict[str, Any]:
     """Create an Analysis Dataset from selected feature sources.
 
@@ -124,6 +125,33 @@ def create_analysis_dataset(
     if not include_registry and not include_pipeline:
         raise MasterRegistryExportError("Select at least one feature source")
 
+    from .master_feature_project import (
+        MasterFeatureProjectError,
+        active_project_feature_names,
+        normalize_feature_project_id,
+        resolve_master_feature_project_id_for_path,
+        validate_feature_project_id,
+    )
+    from .master_naming import resolve_master_db_path
+
+    path = master_db_path or resolve_master_db_path(
+        data_dir,
+        market=str(market or "NIFTY").upper(),
+        sampling_interval_sec=int(interval_sec),
+    )
+    if not os.path.isfile(path):
+        raise MasterRegistryExportError("Master database file does not exist")
+    if feature_project_id:
+        bound_pid = validate_feature_project_id(
+            data_dir,
+            normalize_feature_project_id(feature_project_id),
+        )
+    else:
+        try:
+            bound_pid = resolve_master_feature_project_id_for_path(path, data_dir)
+        except MasterFeatureProjectError as exc:
+            raise MasterRegistryExportError(exc.detail) from exc
+
     from .pipeline_features_prefs import (
         load_pipeline_output_prune_features,
         load_retired_pipeline_features,
@@ -134,10 +162,17 @@ def create_analysis_dataset(
     output_exclude_for_pipeline = load_pipeline_output_prune_features(data_dir)
     forbidden = load_transformation_forbidden_features(data_dir)
     interaction_operand_skip = set(forbidden)
-    catalog = feature_sources_catalog(data_dir=data_dir, retired=retired)
+    catalog = feature_sources_catalog(
+        data_dir=data_dir,
+        retired=retired,
+        feature_project_id=bound_pid,
+    )
+    project_features = active_project_feature_names(data_dir, bound_pid)
     from .registry_features_prefs import resolve_registry_export_features
 
     reg_export = resolve_registry_export_features(data_dir) if include_registry else frozenset()
+    if include_registry and project_features:
+        reg_export = frozenset(reg_export & project_features)
     reg_names = sorted(reg_export) if include_registry else []
     if include_registry and not reg_names:
         raise MasterRegistryExportError(
@@ -325,11 +360,6 @@ def create_analysis_dataset(
             body.update(extra)
         return body
 
-    path = master_db_path or resolve_master_db_path(
-        data_dir,
-        market=market,
-        sampling_interval_sec=interval_sec,
-    )
     if not os.path.isfile(path):
         raise MasterRegistryExportError("Master database file does not exist")
 
@@ -511,6 +541,7 @@ def create_analysis_dataset(
             registry_export_features=reg_export if include_registry else None,
             pipeline_provenance=pipeline_provenance,
             base_pipeline_export_features=frozenset(base_pipe_names) if include_pipeline else None,
+            feature_project_id=bound_pid,
         )
     except MasterRegistryExportError:
         raise
