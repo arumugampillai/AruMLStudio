@@ -95,7 +95,8 @@ def main() -> None:
         rf"D:\data\ticks\{DAY}.db",
     ]
     # search nearby
-    for root in (r"D:\data", r"C:\Users\admin\PycharmProjects\v1\AruNeo"):
+    tick_dir = os.environ.get("ARUMLSTUDIO_TICK_DATA_DIR", r"D:\data\ticks")
+    for root in (r"D:\data", tick_dir):
         if not os.path.isdir(root):
             continue
         for dirpath, _, files in os.walk(root):

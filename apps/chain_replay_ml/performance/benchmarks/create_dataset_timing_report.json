@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-04T05:16:47.046510+00:00",
+  "generated_at": "2026-08-16T11:34:31.656416+00:00",
   "scope": "Create Dataset / master_build (raw ticks → features → master SQLite)",
   "notes": {
     "create_dataset_vs_prediction": "Create Dataset (master_build) builds feature rows + prediction target columns (horizons) in one day path. Exporting a train-ready parquet from an existing master DB is a separate 'Create Dataset from Master' flow.",
@@ -15,94 +15,85 @@
     "python_fallback_reason": null,
     "warmed": true,
     "compile_overhead_sec": {
-      "population_std": 2.0000006770715117e-06,
-      "ema_update": 1.4999968698248267e-06,
-      "ema_series": 7.399998139590025e-06,
-      "rolling_mean_std": 5.1000097300857306e-06,
-      "rolling_max_min": 3.40001133736223e-06,
-      "pct_returns": 2.900007530115545e-06,
-      "safe_ratio": 9.00006853044033e-07,
-      "distance_pct": 1.4999968698248267e-06,
-      "iv_zscore": 4.1000021155923605e-06
+      "population_std": 0.18378819999998086,
+      "ema_update": 0.004281300000002375,
+      "ema_series": 0.005698400000255788,
+      "rolling_mean_std": 0.006305700000666548,
+      "rolling_max_min": 0.006065099998522783,
+      "pct_returns": 0.0055644999993091915,
+      "safe_ratio": 0.0034660999990592245,
+      "distance_pct": 0.0034248000010848045,
+      "iv_zscore": 0.003699700002471218
     },
-    "compile_total_sec": 2.9e-05,
-    "kernel_hits": 962434,
+    "compile_total_sec": 0.222294,
+    "kernel_hits": 0,
     "python_fallback_hits": 0,
-    "cache_hits": 17,
+    "cache_hits": 8,
     "feature_dispatch_sec": 0.0,
-    "session_wall_sec": 385.16133,
-    "create_dataset_wall_sec": 385.161319,
-    "feature_computation_sec": 248.110203
+    "session_wall_sec": 0.315595,
+    "create_dataset_wall_sec": 0.315582,
+    "feature_computation_sec": 0.0
   },
   "phase_timings_sec": {
-    "loading_ticks_sec": 86.796487,
-    "feature_computation_sec": 248.110203,
+    "loading_ticks_sec": 0.0,
+    "feature_computation_sec": 0.0,
     "prediction_targets_sec": 0.0,
-    "sqlite_insert_sec": 14.796107,
+    "sqlite_insert_sec": 0.0,
     "polars_duckdb_sec": 0.0,
     "write_output_sec": 0.0,
-    "create_dataset_wall_sec": 385.161319
+    "create_dataset_wall_sec": 0.315582
   },
   "phase_share_pct": {
-    "loading_ticks_sec": 22.54,
-    "feature_computation_sec": 64.42,
+    "loading_ticks_sec": 0.0,
+    "feature_computation_sec": 0.0,
     "prediction_targets_sec": 0.0,
-    "sqlite_insert_sec": 3.84,
+    "sqlite_insert_sec": 0.0,
     "polars_duckdb_sec": 0.0,
     "write_output_sec": 0.0
   },
-  "feature_engine_bottleneck": true,
+  "feature_engine_bottleneck": false,
   "pipeline_stages": [
     {
       "id": 1,
       "name": "Load Database",
-      "status": "done",
-      "elapsed_sec": 101.31,
-      "elapsed_label": "1m 41.3s",
-      "progress_current": 0,
-      "progress_total": 1,
-      "progress_unit": "days",
-      "pct": 27
+      "status": "running",
+      "elapsed_sec": 0.01,
+      "elapsed_label": "0.01 s"
     },
     {
       "id": 2,
       "name": "Validate Sources",
-      "status": "skipped",
-      "elapsed_sec": 0.0,
-      "elapsed_label": "0.00 s"
+      "status": "waiting",
+      "elapsed_sec": null,
+      "elapsed_label": null
     },
     {
       "id": 3,
       "name": "Sampling Grid",
-      "status": "skipped",
-      "elapsed_sec": 0.0,
-      "elapsed_label": "0.00 s"
+      "status": "waiting",
+      "elapsed_sec": null,
+      "elapsed_label": null
     },
     {
       "id": 4,
       "name": "Strike Selection",
-      "status": "skipped",
-      "elapsed_sec": 0.0,
-      "elapsed_label": "0.00 s"
+      "status": "waiting",
+      "elapsed_sec": null,
+      "elapsed_label": null
     },
     {
       "id": 5,
       "name": "Prediction Targets",
-      "status": "skipped",
-      "elapsed_sec": 0.0,
-      "elapsed_label": "0.00 s"
+      "status": "waiting",
+      "elapsed_sec": null,
+      "elapsed_label": null
     },
     {
       "id": 6,
       "name": "Feature Generation",
-      "status": "done",
-      "elapsed_sec": 276.8,
-      "elapsed_label": "4m 36.8s",
-      "progress_current": 155022,
-      "progress_total": 155022,
-      "progress_unit": "rows",
-      "pct": 73,
-      "is_slowest": true
+      "status": "waiting",
+      "elapsed_sec": null,
+      "elapsed_label": null
     },
     {
       "id": 7,
@@ -121,11 +112,11 @@
   ],
   "build_profiler_top": [],
   "meta": {
-    "job_id": "1e34b081-7d6e-46d9-a9e7-2ae91144c696",
+    "job_id": "6a47cada-c687-44ef-a37e-f709bd072276",
     "market": "NIFTY",
-    "rows": 2584218,
+    "rows": 0,
     "feature_count": 206,
-    "target_count": 3,
-    "sources": 1
+    "target_count": 4,
+    "sources": 0
   }
 }

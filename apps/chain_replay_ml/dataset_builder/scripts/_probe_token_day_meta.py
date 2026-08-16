@@ -1,7 +1,13 @@
 import os
 import sqlite3
+import sys
 
-root = r"c:/Users/admin/PycharmProjects/v1/AruNeo/angelone/chart/data"
+_apps_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _apps_dir not in sys.path:
+    sys.path.insert(0, _apps_dir)
+from tick_data_paths import resolve_tick_data_dir
+
+root = os.environ.get("ARUMLSTUDIO_TICK_DATA_DIR") or resolve_tick_data_dir()
 for day in ["2026-07-24", "2026-07-23", "2026-05-26", "2026-06-25", "2026-07-13"]:
     path = os.path.join(root, f"angel_market_{day}.db")
     if not os.path.isfile(path):

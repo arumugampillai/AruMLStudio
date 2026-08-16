@@ -5,12 +5,16 @@ import os
 import sqlite3
 import sys
 
-sys.path.insert(0, r"c:/Users/admin/PycharmProjects/v1/AruNeo/angelone/chart")
+_apps_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _apps_dir not in sys.path:
+    sys.path.insert(0, _apps_dir)
+from path_config import ensure_ml_studio_paths, CHART_DATA_ROOT
+ensure_ml_studio_paths()
 
 from chain_replay_ml.export_atm_pipeline import replay_db_path
 from chain_replay_ml.dataset_builder.session_ohlc import load_session_ohlc_by_token
 
-CHART = r"c:/Users/admin/PycharmProjects/v1/AruNeo/angelone/chart"
+CHART = os.environ.get("ARUMLSTUDIO_CHART_DIR") or CHART_DATA_ROOT
 DAY = "2026-07-23"
 MDB = r"D:/data/master_dataset/master_dataset_nifty_3s.db"
 

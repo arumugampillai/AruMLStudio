@@ -152,15 +152,20 @@ def _parse_candle_rows(rows: list, interval_sec: int) -> list[dict[str, Any]]:
 
 
 def _ensure_client(client: Any | None = None) -> tuple[Any | None, str | None]:
+    if client is not None:
+        return client, None
     try:
-        if client is not None:
-            from angelone.smart_api_client import ensure_angel_ready
-            return ensure_angel_ready(client), None
-        from angelone.smart_api_client import ensure_angel_session, smartApi
+        from SmartApi import SmartConnect  # type: ignore
+        # If client was not passed and SmartApi is directly importable, caller should supply initialized instance
+        return None, "SmartConnect client instance must be provided"
+    except ImportError:
+        pass
+    try:
+        from angelone.smart_api_client import ensure_angel_session, smartApi  # type: ignore
         ensure_angel_session()
         return smartApi, None
     except Exception as exc:
-        return None, str(exc)
+        return None, f"Broker client unavailable: {exc}"
 
 
 def fetch_candles_chunk(

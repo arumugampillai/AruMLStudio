@@ -21,7 +21,8 @@ from typing import Any
 from .time_shift import LagConfigError
 
 _DEFAULT_POLICY_PATH = Path(__file__).with_name("horizon_policy.json")
-_ENV_POLICY_PATH = "ARUNEO_HORIZON_POLICY"
+_PRIMARY_ENV_POLICY_PATH = "ARUMLSTUDIO_HORIZON_POLICY"
+_FALLBACK_ENV_POLICY_PATH = "ARUNEO_HORIZON_POLICY"
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,10 @@ class HorizonIntervalPolicy:
 
 
 def _policy_path() -> Path:
-    override = os.environ.get(_ENV_POLICY_PATH, "").strip()
+    override = (
+        os.environ.get(_PRIMARY_ENV_POLICY_PATH, "").strip()
+        or os.environ.get(_FALLBACK_ENV_POLICY_PATH, "").strip()
+    )
     if override:
         return Path(override)
     return _DEFAULT_POLICY_PATH

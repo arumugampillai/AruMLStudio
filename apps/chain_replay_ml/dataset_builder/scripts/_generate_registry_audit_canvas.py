@@ -5,10 +5,9 @@ import json
 from pathlib import Path
 
 AUDIT = Path(r"D:\data\master_dataset\registry_null_audit_2026-07-24.json")
-OUT = Path(
-    r"C:\Users\admin\.cursor\projects\c-Users-admin-PycharmProjects-v1-AruNeo"
-    r"\canvases\registry-no-null-attribution.canvas.tsx"
-)
+_canvas_dir = Path(__file__).resolve().parents[4] / "canvases"
+_canvas_dir.mkdir(parents=True, exist_ok=True)
+OUT = _canvas_dir / "registry-no-null-attribution.canvas.tsx"
 
 d = json.loads(AUDIT.read_text(encoding="utf-8"))
 s = d["summary"]

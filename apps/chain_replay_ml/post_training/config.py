@@ -31,8 +31,12 @@ def _as_bool(value: Any, default: bool) -> bool:
 
 
 def env_master_enabled() -> bool:
-    """Hard kill switch. Default on. ``ARUNEO_POST_TRAINING=off`` skips all stages."""
-    raw = str(os.getenv("ARUNEO_POST_TRAINING", "on") or "on").strip().lower()
+    """Hard kill switch. Default on. ``ARUMLSTUDIO_POST_TRAINING=off`` (or ``ARUNEO_POST_TRAINING=off``) skips all stages."""
+    raw = str(
+        os.getenv("ARUMLSTUDIO_POST_TRAINING")
+        or os.getenv("ARUNEO_POST_TRAINING")
+        or "on"
+    ).strip().lower()
     return raw not in ("off", "0", "false", "no", "disabled")
 
 

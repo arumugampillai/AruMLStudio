@@ -13,7 +13,18 @@ DEFAULT_MODEL_RESEARCH_DIR = r"D:\data\model_research"
 
 def _ml_research_studio_config_path() -> str:
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    return os.path.join(base, "AruNeo", "ml_research_studio.json")
+    folder = os.path.join(base, "AruMLStudio") if os.environ.get("APPDATA") else os.path.join(base, ".arumlstudio")
+    target_path = os.path.join(folder, "ml_research_studio.json")
+    if not os.path.isfile(target_path):
+        legacy_path = os.path.join(base, "AruNeo", "ml_research_studio.json")
+        if os.path.isfile(legacy_path):
+            try:
+                import shutil
+                os.makedirs(folder, exist_ok=True)
+                shutil.copy2(legacy_path, target_path)
+            except Exception:
+                return legacy_path
+    return target_path
 
 
 def _load_config_model_research_dir() -> str:
@@ -31,8 +42,12 @@ def _load_config_model_research_dir() -> str:
 
 
 def resolve_model_research_dir() -> str:
-    """Priority: ARUNEO_MODEL_RESEARCH_DIR → ml_research_studio.json → D:\\data\\model_research."""
-    env = str(os.environ.get("ARUNEO_MODEL_RESEARCH_DIR") or "").strip()
+    """Priority: ARUMLSTUDIO_MODEL_RESEARCH_DIR → ARUNEO_MODEL_RESEARCH_DIR → ml_research_studio.json → D:\\data\\model_research."""
+    env = str(
+        os.environ.get("ARUMLSTUDIO_MODEL_RESEARCH_DIR")
+        or os.environ.get("ARUNEO_MODEL_RESEARCH_DIR")
+        or ""
+    ).strip()
     if env:
         research_dir = os.path.abspath(os.path.normpath(env))
     else:

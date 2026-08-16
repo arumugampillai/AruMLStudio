@@ -335,10 +335,14 @@ _ORDER_COLS = ("trading_day", "timestamp", "token")
 
 
 def _train_frame_bridge_via_polars() -> bool:
-    """Training default: direct Arrow→pandas. Set ARUNEO_TRAIN_FRAME_BRIDGE=polars to restore."""
+    """Training default: direct Arrow→pandas. Set ARUMLSTUDIO_TRAIN_FRAME_BRIDGE=polars to restore."""
     import os
 
-    raw = str(os.getenv("ARUNEO_TRAIN_FRAME_BRIDGE", "arrow") or "arrow").strip().lower()
+    raw = str(
+        os.getenv("ARUMLSTUDIO_TRAIN_FRAME_BRIDGE")
+        or os.getenv("ARUNEO_TRAIN_FRAME_BRIDGE")
+        or "arrow"
+    ).strip().lower()
     return raw in ("polars", "arrow_polars", "via_polars")
 
 

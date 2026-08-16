@@ -12,7 +12,7 @@ LoadBackend = Literal["pandas", "dataset_engine", "auto"]
 def resolve_training_load_backend(explicit: str | None = None) -> Literal["pandas", "dataset_engine"]:
     """Resolve which load path to try first.
 
-    Env ``ARUNEO_DATASET_ENGINE`` (Phase 1 default: ``auto``):
+    Env ``ARUMLSTUDIO_DATASET_ENGINE`` (fallback: ``ARUNEO_DATASET_ENGINE``, default: ``auto``):
       - ``off`` / ``0`` / ``pandas`` → pandas only
       - ``on`` / ``1`` / ``engine`` → prefer dataset_engine
       - ``auto`` / unset → dataset_engine when ``duckdb`` importable, else pandas
@@ -20,7 +20,15 @@ def resolve_training_load_backend(explicit: str | None = None) -> Literal["panda
     Runtime Engine failures always fall back to pandas in
     ``dataset_loader.load_training_xy`` (``engine_fallback=True`` in telemetry).
     """
-    raw = (explicit if explicit is not None else os.getenv("ARUNEO_DATASET_ENGINE", "auto")).strip().lower()
+    raw = (
+        explicit
+        if explicit is not None
+        else (
+            os.getenv("ARUMLSTUDIO_DATASET_ENGINE")
+            or os.getenv("ARUNEO_DATASET_ENGINE")
+            or "auto"
+        )
+    ).strip().lower()
     if raw in ("off", "0", "false", "pandas", "pd"):
         return "pandas"
     if raw in ("on", "1", "true", "engine", "dataset_engine"):

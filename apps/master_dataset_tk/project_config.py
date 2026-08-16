@@ -17,9 +17,19 @@ def bundled_chart_dir() -> str:
 
 def config_path() -> str:
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    folder = os.path.join(base, "AruNeo")
+    folder = os.path.join(base, "AruMLStudio") if os.environ.get("APPDATA") else os.path.join(base, ".arumlstudio")
     os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, _CONFIG_FILE)
+    target_path = os.path.join(folder, _CONFIG_FILE)
+    if not os.path.isfile(target_path):
+        legacy_folder = os.path.join(base, "AruNeo") if os.environ.get("APPDATA") else os.path.join(base, ".aruneo")
+        legacy_path = os.path.join(legacy_folder, _CONFIG_FILE)
+        if os.path.isfile(legacy_path):
+            try:
+                import shutil
+                shutil.copy2(legacy_path, target_path)
+            except Exception:
+                pass
+    return target_path
 
 
 def normalize_chart_dir(path: str) -> str:
@@ -98,11 +108,15 @@ def resolve_master_data_dir(chart_dir: str | None = None) -> str:
     """Directory that holds master_dataset_*.db and related master JSON/prefs.
 
     Preference order:
-    1. ``ARUNEO_MASTER_DATA_DIR`` env
+    1. ``ARUMLSTUDIO_MASTER_DATA_DIR`` env (fallback: ``ARUNEO_MASTER_DATA_DIR``)
     2. ``master_data_dir`` in ml_research_studio.json
     3. ``{chart_dir}/data/datasets`` (legacy default)
     """
-    env = str(os.environ.get("ARUNEO_MASTER_DATA_DIR") or "").strip()
+    env = str(
+        os.environ.get("ARUMLSTUDIO_MASTER_DATA_DIR")
+        or os.environ.get("ARUNEO_MASTER_DATA_DIR")
+        or ""
+    ).strip()
     if env:
         path = normalize_chart_dir(env)
         os.makedirs(path, exist_ok=True)

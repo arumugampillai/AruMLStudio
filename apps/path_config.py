@@ -16,6 +16,7 @@ def ensure_ml_studio_paths() -> None:
     """Insert ``apps/`` and repo root on ``sys.path`` when needed."""
     import sys
 
-    for path in (APPS_DIR, REPO_ROOT):
-        if path not in sys.path:
-            sys.path.insert(0, path)
+    for path in (REPO_ROOT, APPS_DIR):
+        while path in sys.path:
+            sys.path.remove(path)
+        sys.path.insert(0, path)

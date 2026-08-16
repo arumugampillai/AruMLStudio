@@ -22,7 +22,8 @@ from typing import Any
 from .time_shift import LagConfigError
 
 _DEFAULT_PROFILE_PATH = Path(__file__).with_name("ohlc_history_profiles.json")
-_ENV_PROFILE_PATH = "ARUNEO_OHLC_HISTORY_PROFILES"
+_PRIMARY_ENV_PROFILE_PATH = "ARUMLSTUDIO_OHLC_HISTORY_PROFILES"
+_FALLBACK_ENV_PROFILE_PATH = "ARUNEO_OHLC_HISTORY_PROFILES"
 
 
 @dataclass(frozen=True)
@@ -102,7 +103,10 @@ class OhlcIntervalProfile:
 
 
 def _profile_path() -> Path:
-    override = os.environ.get(_ENV_PROFILE_PATH, "").strip()
+    override = (
+        os.environ.get(_PRIMARY_ENV_PROFILE_PATH, "").strip()
+        or os.environ.get(_FALLBACK_ENV_PROFILE_PATH, "").strip()
+    )
     if override:
         return Path(override)
     return _DEFAULT_PROFILE_PATH

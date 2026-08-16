@@ -35,7 +35,7 @@ def gil_monitor_disabled(chart_dir: str | None) -> bool:
 
 
 def gil_monitor_enabled(chart_dir: str | None = None) -> bool:
-    env = os.environ.get("ARUNEO_GIL_MONITOR")
+    env = os.environ.get("ARUMLSTUDIO_GIL_MONITOR") or os.environ.get("ARUNEO_GIL_MONITOR")
     if env is not None:
         return env.strip().lower() not in ("0", "false", "no", "off")
     if chart_dir and gil_monitor_disabled(chart_dir):

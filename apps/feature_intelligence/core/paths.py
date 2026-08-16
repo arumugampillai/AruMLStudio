@@ -16,8 +16,20 @@ def default_data_dir() -> Path:
     """Return the default on-disk data directory for FIC artifacts."""
     appdata = os.environ.get("APPDATA")
     if appdata:
-        return Path(appdata) / "AruNeo" / "feature_intelligence"
-    return Path.home() / ".aruneo" / "feature_intelligence"
+        target_dir = Path(appdata) / "AruMLStudio" / "feature_intelligence"
+        legacy_dir = Path(appdata) / "AruNeo" / "feature_intelligence"
+    else:
+        target_dir = Path.home() / ".arumlstudio" / "feature_intelligence"
+        legacy_dir = Path.home() / ".aruneo" / "feature_intelligence"
+
+    if not target_dir.exists() and legacy_dir.exists():
+        try:
+            import shutil
+            shutil.copytree(legacy_dir, target_dir, dirs_exist_ok=True)
+        except Exception:
+            pass
+    target_dir.mkdir(parents=True, exist_ok=True)
+    return target_dir
 
 
 def default_db_path() -> Path:

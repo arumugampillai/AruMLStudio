@@ -303,13 +303,13 @@ class TrainingMonitor:
         import sys
         import xgboost
 
-        app_version = None
+        app_version = "1.0.0"
         try:
-            import angelone
+            import master_dataset_tk
 
-            app_version = getattr(angelone, "__version__", None)
+            app_version = getattr(master_dataset_tk, "__version__", "1.0.0")
         except Exception:
-            app_version = None
+            app_version = "1.0.0"
 
         return {
             "python_version": sys.version.split()[0],

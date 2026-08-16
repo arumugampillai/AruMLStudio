@@ -70,15 +70,30 @@ _SENTINEL = object()
 def default_settings_path() -> str:
     """Stable, per-user, project-independent path for the UI state file.
 
-    Override with ``ARUNEO_UI_STATE_PATH`` (primarily for tests / isolated
-    environments — never set in normal app usage).
+    Override with ``ARUMLSTUDIO_UI_STATE_PATH`` or ``ARUNEO_UI_STATE_PATH``
+    (primarily for tests / isolated environments — never set in normal app usage).
     """
-    override = str(os.environ.get("ARUNEO_UI_STATE_PATH") or "").strip()
+    override = str(
+        os.environ.get("ARUMLSTUDIO_UI_STATE_PATH")
+        or os.environ.get("ARUNEO_UI_STATE_PATH")
+        or ""
+    ).strip()
     if override:
         return override
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    folder = os.path.join(base, "AruNeo") if os.environ.get("APPDATA") else os.path.join(base, ".aruneo")
-    return os.path.join(folder, DEFAULT_STORAGE_FILE)
+    folder = os.path.join(base, "AruMLStudio") if os.environ.get("APPDATA") else os.path.join(base, ".arumlstudio")
+    os.makedirs(folder, exist_ok=True)
+    target_path = os.path.join(folder, DEFAULT_STORAGE_FILE)
+    if not os.path.isfile(target_path):
+        legacy_folder = os.path.join(base, "AruNeo") if os.environ.get("APPDATA") else os.path.join(base, ".aruneo")
+        legacy_path = os.path.join(legacy_folder, DEFAULT_STORAGE_FILE)
+        if os.path.isfile(legacy_path):
+            try:
+                import shutil
+                shutil.copy2(legacy_path, target_path)
+            except Exception:
+                pass
+    return target_path
 
 
 class UIStateManager:

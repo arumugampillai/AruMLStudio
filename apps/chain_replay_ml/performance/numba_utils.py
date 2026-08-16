@@ -43,8 +43,12 @@ def numba_import_error() -> str | None:
 
 
 def env_numba_flag() -> bool | None:
-    """Return True/False if ``ARUNEO_FEATURE_NUMBA`` is set, else None (use default)."""
-    raw = (os.environ.get("ARUNEO_FEATURE_NUMBA") or "").strip().lower()
+    """Return True/False if ``ARUMLSTUDIO_FEATURE_NUMBA`` (or ``ARUNEO_FEATURE_NUMBA``) is set, else None (use default)."""
+    raw = (
+        os.environ.get("ARUMLSTUDIO_FEATURE_NUMBA")
+        or os.environ.get("ARUNEO_FEATURE_NUMBA")
+        or ""
+    ).strip().lower()
     if not raw:
         return None
     if raw in {"1", "true", "on", "yes"}:

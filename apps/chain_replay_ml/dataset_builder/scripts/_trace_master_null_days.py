@@ -5,10 +5,16 @@ import json
 import sqlite3
 from pathlib import Path
 
-META = Path(
-    r"c:/Users/admin/PycharmProjects/v1/AruNeo/angelone/chart/data/datasets/"
-    r"analysis_206r_193p_3s_20260730_094409.json"
-)
+import sys
+import os
+
+_apps_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _apps_dir not in sys.path:
+    sys.path.insert(0, _apps_dir)
+from master_dataset_tk.project_config import resolve_master_data_dir
+
+_DATASETS_DIR = Path(resolve_master_data_dir())
+META = _DATASETS_DIR / "analysis_206r_193p_3s_20260730_094409.json"
 OUT = META.with_name("_master_null_days.json")
 MASTER_DB = r"D:/data/master_dataset/master_dataset_nifty_3s.db"
 

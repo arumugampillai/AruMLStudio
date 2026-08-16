@@ -14,7 +14,18 @@ def tick_db_filename(day: str) -> str:
 
 def _ml_research_studio_config_path() -> str:
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    return os.path.join(base, "AruNeo", "ml_research_studio.json")
+    folder = os.path.join(base, "AruMLStudio") if os.environ.get("APPDATA") else os.path.join(base, ".arumlstudio")
+    target_path = os.path.join(folder, "ml_research_studio.json")
+    if not os.path.isfile(target_path):
+        legacy_path = os.path.join(base, "AruNeo", "ml_research_studio.json")
+        if os.path.isfile(legacy_path):
+            try:
+                import shutil
+                os.makedirs(folder, exist_ok=True)
+                shutil.copy2(legacy_path, target_path)
+            except Exception:
+                return legacy_path
+    return target_path
 
 
 def _load_config_tick_data_dir() -> str:
@@ -34,7 +45,11 @@ def _load_config_tick_data_dir() -> str:
 def resolve_tick_data_dir(chart_dir: str | None = None) -> str:
     """Resolve the primary tick DB directory (env → config → default)."""
     del chart_dir  # reserved for future chart-relative overrides
-    env = str(os.environ.get("ARUNEO_TICK_DATA_DIR") or "").strip()
+    env = str(
+        os.environ.get("ARUMLSTUDIO_TICK_DATA_DIR")
+        or os.environ.get("ARUNEO_TICK_DATA_DIR")
+        or ""
+    ).strip()
     if env:
         tick_dir = os.path.abspath(os.path.normpath(env))
     else:

@@ -1,0 +1,4 @@
+# AruMLStudio Development, Testing & Packaging Dependencies
+-r requirements.txt
+
+pyinstaller>=6.10.0

@@ -730,9 +730,12 @@ def main(*, chart_dir: str | None = None) -> None:
     import multiprocessing
 
     multiprocessing.freeze_support()
+    from path_config import ensure_ml_studio_paths
+
+    ensure_ml_studio_paths()
     resolved = resolve_chart_dir(cli_chart_dir=chart_dir)
-    if resolved not in sys.path:
-        sys.path.insert(0, resolved)
+    if resolved and resolved not in sys.path:
+        sys.path.append(resolved)
     app = MLResearchStudioApp(chart_dir=chart_dir)
     app.mainloop()
 

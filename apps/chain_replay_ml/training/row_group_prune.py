@@ -47,8 +47,12 @@ class TailRowGroupPlan:
 
 
 def row_group_prune_mode() -> str:
-    """``auto`` (default) | ``on`` | ``off`` via ``ARUNEO_TRAIN_ROW_GROUP_PRUNE``."""
-    raw = str(os.getenv("ARUNEO_TRAIN_ROW_GROUP_PRUNE", "auto") or "auto").strip().lower()
+    """``auto`` (default) | ``on`` | ``off`` via ``ARUMLSTUDIO_TRAIN_ROW_GROUP_PRUNE`` (fallback: ``ARUNEO_TRAIN_ROW_GROUP_PRUNE``)."""
+    raw = str(
+        os.getenv("ARUMLSTUDIO_TRAIN_ROW_GROUP_PRUNE")
+        or os.getenv("ARUNEO_TRAIN_ROW_GROUP_PRUNE")
+        or "auto"
+    ).strip().lower()
     if raw in ("0", "false", "no", "off", "disable", "disabled"):
         return "off"
     if raw in ("1", "true", "yes", "on", "force"):
@@ -58,7 +62,11 @@ def row_group_prune_mode() -> str:
 
 def premium_overread_factor() -> float:
     """When premium filter will drop rows, over-read this many times the cap."""
-    raw = str(os.getenv("ARUNEO_TRAIN_ROW_GROUP_OVERREAD", "2") or "2").strip()
+    raw = str(
+        os.getenv("ARUMLSTUDIO_TRAIN_ROW_GROUP_OVERREAD")
+        or os.getenv("ARUNEO_TRAIN_ROW_GROUP_OVERREAD")
+        or "2"
+    ).strip()
     try:
         val = float(raw)
     except ValueError:
