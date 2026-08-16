@@ -1,6 +1,6 @@
 # Create Dataset Timing Report
 
-Generated: `2026-08-16T11:34:31.656416+00:00`
+Generated: `2026-08-16T14:29:48.167782+00:00`
 
 **Scope:** Create Dataset / master_build (raw ticks → features → master SQLite)
 
@@ -9,7 +9,7 @@ Generated: `2026-08-16T11:34:31.656416+00:00`
 - Numba enabled: **YES**
 - `ARUNEO_FEATURE_NUMBA` env: `unset`
 - Numba available: `True`
-- Numba kernel calls: `0`
+- Numba kernel calls: `21,511`
 - Python fallback calls: `0`
 - Python fallback active: `False`
 
@@ -17,15 +17,15 @@ Generated: `2026-08-16T11:34:31.656416+00:00`
 
 | Phase | Seconds | Share |
 |-------|--------:|------:|
-| Loading ticks | 0.000 | 0.0% |
-| Feature computation | 0.000 | 0.0% |
+| Loading ticks | 52.481 | 52.6% |
+| Feature computation | 40.790 | 40.9% |
 | Prediction targets | 0.000 | 0.0% |
-| DuckDB/SQLite insert | 0.000 | 0.0% |
+| DuckDB/SQLite insert | 0.343 | 0.3% |
 | Polars / DuckDB frame IO | 0.000 | 0.0% |
 | Writing output | 0.000 | 0.0% |
-| Create Dataset wall | 0.316 | — |
+| Create Dataset wall | 99.830 | — |
 
-**Feature engine likely bottleneck:** `False`
+**Feature engine likely bottleneck:** `True`
 
 ## Notes
 
@@ -37,11 +37,11 @@ Generated: `2026-08-16T11:34:31.656416+00:00`
 
 ```json
 {
-  "job_id": "6a47cada-c687-44ef-a37e-f709bd072276",
+  "job_id": "f4b3f239-a99b-42f8-b31f-c5a03005e33e",
   "market": "NIFTY",
-  "rows": 0,
-  "feature_count": 206,
-  "target_count": 4,
-  "sources": 0
+  "rows": 65370,
+  "feature_count": 203,
+  "target_count": 2,
+  "sources": 1
 }
 ```

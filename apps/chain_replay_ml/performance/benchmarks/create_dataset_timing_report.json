@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-16T11:34:31.656416+00:00",
+  "generated_at": "2026-08-16T14:29:48.167782+00:00",
   "scope": "Create Dataset / master_build (raw ticks → features → master SQLite)",
   "notes": {
     "create_dataset_vs_prediction": "Create Dataset (master_build) builds feature rows + prediction target columns (horizons) in one day path. Exporting a train-ready parquet from an existing master DB is a separate 'Create Dataset from Master' flow.",
@@ -15,85 +15,94 @@
     "python_fallback_reason": null,
     "warmed": true,
     "compile_overhead_sec": {
-      "population_std": 0.18378819999998086,
-      "ema_update": 0.004281300000002375,
-      "ema_series": 0.005698400000255788,
-      "rolling_mean_std": 0.006305700000666548,
-      "rolling_max_min": 0.006065099998522783,
-      "pct_returns": 0.0055644999993091915,
-      "safe_ratio": 0.0034660999990592245,
-      "distance_pct": 0.0034248000010848045,
-      "iv_zscore": 0.003699700002471218
+      "population_std": 6.70000008540228e-06,
+      "ema_update": 1.8999999156221747e-06,
+      "ema_series": 1.049999991664663e-05,
+      "rolling_mean_std": 5.900001269765198e-06,
+      "rolling_max_min": 4.599998646881431e-06,
+      "pct_returns": 3.6999990697950125e-06,
+      "safe_ratio": 8.999995770864189e-07,
+      "distance_pct": 1.500004145782441e-06,
+      "iv_zscore": 5.399997462518513e-06
     },
-    "compile_total_sec": 0.222294,
-    "kernel_hits": 0,
+    "compile_total_sec": 4.1e-05,
+    "kernel_hits": 21511,
     "python_fallback_hits": 0,
-    "cache_hits": 8,
+    "cache_hits": 17,
     "feature_dispatch_sec": 0.0,
-    "session_wall_sec": 0.315595,
-    "create_dataset_wall_sec": 0.315582,
-    "feature_computation_sec": 0.0
+    "session_wall_sec": 99.830151,
+    "create_dataset_wall_sec": 99.830139,
+    "feature_computation_sec": 40.790197
   },
   "phase_timings_sec": {
-    "loading_ticks_sec": 0.0,
-    "feature_computation_sec": 0.0,
+    "loading_ticks_sec": 52.481283,
+    "feature_computation_sec": 40.790197,
     "prediction_targets_sec": 0.0,
-    "sqlite_insert_sec": 0.0,
+    "sqlite_insert_sec": 0.342981,
     "polars_duckdb_sec": 0.0,
     "write_output_sec": 0.0,
-    "create_dataset_wall_sec": 0.315582
+    "create_dataset_wall_sec": 99.830139
   },
   "phase_share_pct": {
-    "loading_ticks_sec": 0.0,
-    "feature_computation_sec": 0.0,
+    "loading_ticks_sec": 52.57,
+    "feature_computation_sec": 40.86,
     "prediction_targets_sec": 0.0,
-    "sqlite_insert_sec": 0.0,
+    "sqlite_insert_sec": 0.34,
     "polars_duckdb_sec": 0.0,
     "write_output_sec": 0.0
   },
-  "feature_engine_bottleneck": false,
+  "feature_engine_bottleneck": true,
   "pipeline_stages": [
     {
       "id": 1,
       "name": "Load Database",
-      "status": "running",
-      "elapsed_sec": 0.01,
-      "elapsed_label": "0.01 s"
+      "status": "done",
+      "elapsed_sec": 52.83,
+      "elapsed_label": "52.83 s",
+      "progress_current": 0,
+      "progress_total": 1,
+      "progress_unit": "days",
+      "pct": 56,
+      "is_slowest": true
     },
     {
       "id": 2,
       "name": "Validate Sources",
-      "status": "waiting",
-      "elapsed_sec": null,
-      "elapsed_label": null
+      "status": "skipped",
+      "elapsed_sec": 0.0,
+      "elapsed_label": "0.00 s"
     },
     {
       "id": 3,
       "name": "Sampling Grid",
-      "status": "waiting",
-      "elapsed_sec": null,
-      "elapsed_label": null
+      "status": "skipped",
+      "elapsed_sec": 0.0,
+      "elapsed_label": "0.00 s"
     },
     {
       "id": 4,
       "name": "Strike Selection",
-      "status": "waiting",
-      "elapsed_sec": null,
-      "elapsed_label": null
+      "status": "skipped",
+      "elapsed_sec": 0.0,
+      "elapsed_label": "0.00 s"
     },
     {
       "id": 5,
       "name": "Prediction Targets",
-      "status": "waiting",
-      "elapsed_sec": null,
-      "elapsed_label": null
+      "status": "skipped",
+      "elapsed_sec": 0.0,
+      "elapsed_label": "0.00 s"
     },
     {
       "id": 6,
       "name": "Feature Generation",
-      "status": "waiting",
-      "elapsed_sec": null,
-      "elapsed_label": null
+      "status": "done",
+      "elapsed_sec": 41.53,
+      "elapsed_label": "41.53 s",
+      "progress_current": 4540,
+      "progress_total": 4540,
+      "progress_unit": "rows",
+      "pct": 44
     },
     {
       "id": 7,
@@ -112,11 +121,11 @@
   ],
   "build_profiler_top": [],
   "meta": {
-    "job_id": "6a47cada-c687-44ef-a37e-f709bd072276",
+    "job_id": "f4b3f239-a99b-42f8-b31f-c5a03005e33e",
     "market": "NIFTY",
-    "rows": 0,
-    "feature_count": 206,
-    "target_count": 4,
-    "sources": 0
+    "rows": 65370,
+    "feature_count": 203,
+    "target_count": 2,
+    "sources": 1
   }
 }

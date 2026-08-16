@@ -45,7 +45,7 @@ class BuildConfigPanel(ttk.LabelFrame):
       on_build: Callable[[], None] | None = None,
       **kwargs: Any,
   ) -> None:
-      super().__init__(master, text="Build configuration", padding=6, **kwargs)
+      super().__init__(master, text="Master Dataset Build Configuration", padding=6, **kwargs)
       self._chart_dir = chart_dir
       self._on_change = on_change
       self._on_build = on_build
@@ -345,7 +345,7 @@ class BuildConfigPanel(ttk.LabelFrame):
 
       btn_row = ttk.Frame(self)
       btn_row.pack(fill="x", pady=4)
-      self._build_btn = ttk.Button(btn_row, text="Build", command=self._on_build_click)
+      self._build_btn = ttk.Button(btn_row, text="Build Master Dataset", command=self._on_build_click)
       self._build_btn.pack(side="left", padx=2)
       ttk.Button(btn_row, text="Build Summary", command=self._open_build_summary).pack(side="right", padx=2)
       ttk.Button(btn_row, text="Feature Policy…", command=self._open_feature_policy).pack(side="right", padx=2)
