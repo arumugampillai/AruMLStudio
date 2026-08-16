@@ -1214,14 +1214,46 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         search_row = ttk.Frame(self._feat_details)
         search_row.pack(fill="x", pady=4)
         ttk.Entry(search_row, textvariable=self._feat_search_var).pack(side="left", fill="x", expand=True)
-        self._feat_groups_host = ttk.Frame(self._feat_details)
-        self._feat_groups_host.pack(fill="both", expand=True)
-        self._feature_tree = FeatureSelectionTree(
-            self._feat_groups_host,
+        self._feat_notebook = ttk.Notebook(self._feat_details)
+        self._feat_notebook.pack(fill="both", expand=True, pady=4)
+
+        self._tab_registry = ttk.Frame(self._feat_notebook)
+        self._tab_base_pipeline = ttk.Frame(self._feat_notebook)
+        self._tab_experimental = ttk.Frame(self._feat_notebook)
+
+        self._feat_notebook.add(self._tab_registry, text="Feature Registry")
+        self._feat_notebook.add(self._tab_base_pipeline, text="Base Pipeline")
+        self._feat_notebook.add(self._tab_experimental, text="Selected Experimental")
+
+        self._host_registry = ttk.Frame(self._tab_registry)
+        self._host_registry.pack(fill="both", expand=True)
+        self._tree_registry = FeatureSelectionTree(
+            self._host_registry,
             on_structure_change=self._on_feature_tree_structure_change,
             on_selection_change=self._on_feature_tree_selection_change,
             on_preview=self._show_feature_policy,
         )
+
+        self._host_base_pipeline = ttk.Frame(self._tab_base_pipeline)
+        self._host_base_pipeline.pack(fill="both", expand=True)
+        self._tree_base_pipeline = FeatureSelectionTree(
+            self._host_base_pipeline,
+            on_structure_change=self._on_feature_tree_structure_change,
+            on_selection_change=self._on_feature_tree_selection_change,
+            on_preview=self._show_feature_policy,
+        )
+
+        self._host_experimental = ttk.Frame(self._tab_experimental)
+        self._host_experimental.pack(fill="both", expand=True)
+        self._tree_experimental = FeatureSelectionTree(
+            self._host_experimental,
+            on_structure_change=self._on_feature_tree_structure_change,
+            on_selection_change=self._on_feature_tree_selection_change,
+            on_preview=self._show_feature_policy,
+        )
+
+        self._feat_groups_host = self._host_registry
+        self._feature_tree = self._tree_registry
 
         self._build_premium_selection_tab(premium_tab)
 
@@ -1850,13 +1882,10 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
             self.state.features = set(self._lifecycle.lifecycle_feature_snapshot)
         elif pending_preset:
             pass
-        elif not self.state.features:
-            self.state.features = set(self._visible_dataset_feature_names())
         else:
-            self._prune_features_to_project()
-        # Always drop ghost columns absent from parquet (e.g. 100% NULL VWAPs).
-        if self.state.features and not preserve:
-            self._prune_features_to_project()
+            visible = set(self._visible_dataset_feature_names())
+            kept = {f for f in self.state.features if f in visible}
+            self.state.features = kept if kept else visible
         self._update_feature_project_hint()
         self._render_feature_groups(notify=False)
         self._lifecycle.refresh_retrain_compatibility(ds)
@@ -1895,25 +1924,31 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
             return names
         return [c for c in names if c in available]
 
-    def _dataset_feature_project_id(self) -> str | None:
+    def _dataset_feature_project_id(self) -> str:
         meta = (self._dataset_meta or {}).get("metadata") or {}
-        raw = meta.get("feature_project_id")
-        if raw is None:
-            return None
-        text = str(raw).strip().lower()
-        return text or None
+        ds_row = next(
+            (d for d in self._datasets if d.get("dataset_name") == self._selected_dataset_name()),
+            {},
+        )
+        raw = (
+            meta.get("feature_project_id")
+            or meta.get("dataset_configuration", {}).get("feature_project_id")
+            or meta.get("config", {}).get("feature_project_id")
+            or (self._dataset_meta or {}).get("feature_project_id")
+            or ds_row.get("feature_project_id")
+        )
+        if raw is not None and str(raw).strip():
+            return str(raw).strip()
+        return "all"
 
     def _dataset_has_bound_feature_project(self) -> bool:
-        return self._dataset_feature_project_id() is not None
+        return True
 
     def _effective_feature_project_id(self) -> str:
-        bound = self._dataset_feature_project_id()
-        if bound:
-            return bound
-        return self._feature_project_key()
+        return self._dataset_feature_project_id()
 
     def _uses_feature_project_organization(self) -> bool:
-        return self._dataset_has_bound_feature_project() or self._feature_project_enabled()
+        return True
 
     def _bound_feature_project_display_label(self, project_id: str) -> str:
         try:
@@ -1925,44 +1960,29 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
             return str(project_id)
 
     def _feature_project_enabled(self) -> bool:
-        if hasattr(self, "_feat_project_enabled_var"):
-            return bool(self._feat_project_enabled_var.get())
-        return bool(self.state.feature_project_enabled)
+        return True
 
     def _sync_feature_project_controls(self) -> None:
         if not hasattr(self, "_feat_project_cb"):
             return
-        bound = self._dataset_has_bound_feature_project()
-        if bound:
-            pid = self._dataset_feature_project_id() or "all"
-            self.state.feature_registry_project = pid
-            self.state.feature_project_enabled = True
-            if hasattr(self, "_feat_project_enabled_var"):
-                self._feat_project_enabled_var.set(True)
-            label = self._bound_feature_project_display_label(pid)
-            display = f"{pid}|{label}" if label and label != pid else pid
-            self._feat_project_var.set(display)
-            self._feat_project_cb["values"] = [display]
-            try:
-                self._feat_project_cb.configure(state="disabled")
-            except tk.TclError:
-                pass
-            if hasattr(self, "_feat_project_enabled_cb"):
-                try:
-                    self._feat_project_enabled_cb.configure(state="disabled")
-                except tk.TclError:
-                    pass
-            return
-        if hasattr(self, "_feat_project_enabled_cb"):
-            try:
-                self._feat_project_enabled_cb.configure(state="normal")
-            except tk.TclError:
-                pass
-        enabled = self._feature_project_enabled()
+        pid = self._dataset_feature_project_id() or "all"
+        self.state.feature_registry_project = pid
+        self.state.feature_project_enabled = True
+        if hasattr(self, "_feat_project_enabled_var"):
+            self._feat_project_enabled_var.set(True)
+        label = self._bound_feature_project_display_label(pid)
+        display = f"{pid}|{label}" if label and label != pid else pid
+        self._feat_project_var.set(display)
+        self._feat_project_cb["values"] = [display]
         try:
-            self._feat_project_cb.configure(state="readonly" if enabled else "disabled")
+            self._feat_project_cb.configure(state="disabled")
         except tk.TclError:
             pass
+        if hasattr(self, "_feat_project_enabled_cb"):
+            try:
+                self._feat_project_enabled_cb.configure(state="disabled")
+            except tk.TclError:
+                pass
 
     def _feature_project_key(self, combo_val: str | None = None) -> str:
         raw = combo_val if combo_val is not None else (
@@ -1976,40 +1996,26 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         return text.split("|", 1)[0]
 
     def _current_feature_project(self) -> dict[str, Any] | None:
-        if not self._uses_feature_project_organization():
-            return None
         key = self._effective_feature_project_id()
-        from chain_replay_ml.dataset_builder.feature_project_organization import (
-            is_reserved_all_project_id,
-            load_project_doc,
-        )
+        from chain_replay_ml.dataset_builder.feature_project_organization import load_project_doc
 
-        if is_reserved_all_project_id(key):
-            return None
         try:
             return load_project_doc(self._data_dir, key)
         except Exception:
             return None
 
-    def _project_allowed_feature_names(self) -> set[str] | None:
-        """Return allowlist when Feature project organization applies, else None (full dataset)."""
-        if not self._uses_feature_project_organization():
-            return None
+    def _project_allowed_feature_names(self) -> set[str]:
+        """Return allowlist from dataset's bound Feature project."""
         from chain_replay_ml.dataset_builder.master_feature_project import active_project_feature_names
 
         pid = self._effective_feature_project_id()
-        return set(active_project_feature_names(self._data_dir, pid))
+        try:
+            return set(active_project_feature_names(self._data_dir, pid))
+        except Exception:
+            return set(active_project_feature_names(self._data_dir, "all"))
 
     def _use_full_dataset_features(self) -> bool:
-        """True when Feature project is off — expose every dataset column."""
-        return not self._uses_feature_project_organization()
-
-    def _visible_dataset_feature_names(self) -> list[str]:
-        dataset_names = self._dataset_feature_names()
-        if self._use_full_dataset_features():
-            return list(dataset_names)
-        allowed = self._project_allowed_feature_names() or frozenset()
-        return [n for n in dataset_names if n in allowed]
+        return False
 
     def _prune_features_to_project(self) -> None:
         visible = set(self._visible_dataset_feature_names())
@@ -2020,76 +2026,32 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
     def _populate_feature_project_combo(self) -> None:
         if not hasattr(self, "_feat_project_cb"):
             return
-        if self._dataset_has_bound_feature_project():
-            self._sync_feature_project_controls()
-            self._update_feature_project_hint()
-            return
-        values = ["all"] + [
-            f"{p.get('id')}|{p.get('label') or p.get('id')}"
-            for p in self._fr_projects
-        ]
-        self._feat_project_cb["values"] = values
-        saved_key = self._feature_project_key(self.state.feature_registry_project)
-        pick = "all"
-        for val in values:
-            if self._feature_project_key(val) == saved_key:
-                pick = val
-                break
-        self._feat_project_var.set(pick)
-        self.state.feature_registry_project = self._feature_project_key(pick)
-        if hasattr(self, "_feat_project_enabled_var"):
-            self._feat_project_enabled_var.set(bool(self.state.feature_project_enabled))
         self._sync_feature_project_controls()
         self._update_feature_project_hint()
 
     def _update_feature_project_hint(self) -> None:
         if not hasattr(self, "_feat_project_hint"):
             return
-        if self._dataset_has_bound_feature_project():
-            pid = self._dataset_feature_project_id() or "all"
-            from chain_replay_ml.dataset_builder.feature_project_organization import is_reserved_all_project_id
+        pid = self._dataset_feature_project_id() or "all"
+        from chain_replay_ml.dataset_builder.feature_project_organization import is_reserved_all_project_id
 
-            if is_reserved_all_project_id(pid):
-                n = len(self._visible_dataset_feature_names())
-                self._feat_project_hint.set(
-                    f"All registry features (project ∩ dataset) · {n} (from dataset)"
-                )
-                return
-            label = self._bound_feature_project_display_label(pid)
-            names = self._project_allowed_feature_names() or set()
-            in_ds = len(set(self._visible_dataset_feature_names()))
+        if is_reserved_all_project_id(pid):
+            n = len(self._visible_dataset_feature_names())
             self._feat_project_hint.set(
-                f"{label}: {in_ds}/{len(names)} in dataset (from dataset)"
+                f"All registry features (project ∩ dataset) · {n} (from dataset)"
             )
             return
-        if not self._feature_project_enabled():
-            n = len(self._dataset_feature_names())
-            self._feat_project_hint.set(f"Dataset features ({n})")
-            return
-        proj = self._current_feature_project()
-        if not proj:
-            n = len(self._visible_dataset_feature_names())
-            self._feat_project_hint.set(f"All registry features (project ∩ dataset) · {n}")
-            return
-        names = self._project_allowed_feature_names() or set()
+        label = self._bound_feature_project_display_label(pid)
+        names = self._project_allowed_feature_names()
         in_ds = len(set(self._visible_dataset_feature_names()))
-        label = str(proj.get("label") or proj.get("id") or "")
-        self._feat_project_hint.set(f"{label}: {in_ds}/{len(names)} in dataset")
+        self._feat_project_hint.set(
+            f"{label}: {in_ds}/{len(names)} in dataset (from dataset)"
+        )
 
     def _feature_project_summary_label(self) -> str:
-        if self._dataset_has_bound_feature_project():
-            pid = self._dataset_feature_project_id() or "all"
-            from chain_replay_ml.dataset_builder.feature_project_organization import is_reserved_all_project_id
-
-            if is_reserved_all_project_id(pid):
-                return "all (dataset)"
-            return f"{self._bound_feature_project_display_label(pid)} (dataset)"
-        if not self._feature_project_enabled():
-            return "off (dataset features)"
-        proj = self._current_feature_project()
-        if not proj:
-            return "all"
-        return str(proj.get("label") or proj.get("id") or "all")
+        pid = self._effective_feature_project_id()
+        label = self._bound_feature_project_display_label(pid)
+        return label or pid or "all"
 
     def _premium_selection_summary_label(self) -> str:
         if not self.state.premium_selection_enabled:
@@ -2101,123 +2063,173 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         return f"LTP {lo:g}–{hi:g}"
 
     def _on_feature_project_enabled_toggled(self) -> None:
-        if self._dataset_has_bound_feature_project():
-            self._sync_feature_project_controls()
-            self._update_feature_project_hint()
-            return
-        self.state.feature_project_enabled = self._feature_project_enabled()
         self._sync_feature_project_controls()
-        if self._lifecycle.features_ui_locked() and self._lifecycle.uses_feature_snapshot():
-            self._update_feature_project_hint()
-            self._render_feature_groups(notify=False)
-            self._on_change()
-            return
+        self._update_feature_project_hint()
         visible = self._visible_dataset_feature_names()
         self.state.features = set(visible)
-        self._update_feature_project_hint()
-        if not self._show_feat_var.get() and visible:
-            self._show_feat_var.set(True)
-            self._toggle_feature_details()
-        else:
-            self._render_feature_groups()
+        self._render_feature_groups()
         self._on_change()
 
     def _on_feature_project_changed(self) -> None:
-        if self._dataset_has_bound_feature_project():
-            self._sync_feature_project_controls()
-            self._update_feature_project_hint()
-            return
-        if self._lifecycle.features_ui_locked() and self._lifecycle.uses_feature_snapshot():
-            # Keep combo in sync with locked snapshot context but do not rewrite features.
-            self.state.feature_registry_project = self._feature_project_key()
-            self._update_feature_project_hint()
-            self._render_feature_groups(notify=False)
-            return
-        if not self._feature_project_enabled():
-            self.state.feature_registry_project = self._feature_project_key()
-            self._update_feature_project_hint()
-            return
-        key = self._feature_project_key()
-        self.state.feature_registry_project = key
+        self._sync_feature_project_controls()
+        self._update_feature_project_hint()
         visible = self._visible_dataset_feature_names()
         self.state.features = set(visible)
-        self._update_feature_project_hint()
-        if not self._show_feat_var.get():
-            self._show_feat_var.set(True)
-            self._toggle_feature_details()
-        else:
-            self._render_feature_groups()
+        self._render_feature_groups()
         self._on_change()
 
-    def _feature_groups(self) -> list[dict[str, Any]]:
-        dataset_names = self._dataset_feature_names()
-        if self._uses_feature_project_organization():
-            from chain_replay_ml.dataset_builder.manual_transform_feature_groups import (
-                project_groups_for_features,
-            )
+    def _visible_dataset_feature_names(self) -> list[str]:
+        reg_feats = [f for g in self._registry_feature_groups() for f in g.get("features", [])]
+        base_feats = [f for g in self._base_pipeline_feature_groups() for f in g.get("features", [])]
+        exp_feats = [f for g in self._experimental_pipeline_feature_groups() for f in g.get("features", [])]
+        return list(dict.fromkeys(reg_feats + base_feats + exp_feats))
 
-            pid = self._effective_feature_project_id()
-            raw_groups = project_groups_for_features(self._data_dir, pid, dataset_names)
-            out: list[dict[str, Any]] = []
-            for group in raw_groups:
-                feats = list(group.get("features") or [])
-                if not feats:
-                    continue
-                gid = str(group.get("id") or "")
-                out.append({
-                    "id": gid,
-                    "label": str(group.get("label") or gid),
-                    "features": feats,
-                    "registry_features": list(feats),
-                    "total_features": len(feats),
-                })
-            return out
+    def _registry_feature_groups(self) -> list[dict[str, Any]]:
+        dataset_names = set(self._dataset_feature_names())
+        pid = self._effective_feature_project_id()
+        meta = (self._dataset_meta or {}).get("metadata") or {}
+        reg_export = meta.get("registry_export_features")
+        if isinstance(reg_export, list) and reg_export:
+            reg_allowed: set[str] | None = {str(f).strip() for f in reg_export if str(f).strip()}
+        else:
+            reg_allowed = None
 
-        reg = (self._schema or {}).get("groups") or {}
-        order = (self._schema or {}).get("groupOrder") or (self._dataset_meta or {}).get("metadata", {}).get("feature_groups") or []
-        allowed = set(dataset_names) if dataset_names else None
-        full_dataset = self._use_full_dataset_features()
+        from chain_replay_ml.dataset_builder.feature_project_organization import (
+            load_project_doc,
+            project_registry_groups,
+        )
+
+        try:
+            doc = load_project_doc(self._data_dir, pid)
+        except Exception:
+            try:
+                doc = load_project_doc(self._data_dir, "all")
+            except Exception:
+                return []
+
+        raw_groups = project_registry_groups(doc, data_dir=self._data_dir)
         out: list[dict[str, Any]] = []
-        seen: set[str] = set()
+        for group in raw_groups:
+            group_feats = list(group.get("features") or [])
+            if reg_allowed is not None:
+                group_feats = [f for f in group_feats if f in reg_allowed]
+            if dataset_names:
+                feats = [f for f in group_feats if f in dataset_names]
+            else:
+                feats = list(group_feats)
+            if not feats:
+                continue
+            gid = str(group.get("id") or "")
+            out.append({
+                "id": gid,
+                "label": str(group.get("label") or gid),
+                "features": feats,
+                "registry_features": list(feats),
+                "total_features": len(feats),
+            })
+        return out
+
+    def _base_pipeline_feature_groups(self) -> list[dict[str, Any]]:
+        meta = (self._dataset_meta or {}).get("metadata") or {}
+        dataset_names = set(self._dataset_feature_names())
+
+        from chain_replay_ml.dataset_builder.feature_sources_catalog import (
+            GENERATOR_FAMILY_LABELS,
+            GENERATOR_FAMILY_ORDER,
+            dataset_base_pipeline_export_feature_names,
+            pipeline_features_by_family,
+            pipeline_family_of,
+        )
+
+        base_names = dataset_base_pipeline_export_feature_names(meta, data_dir=self._data_dir)
+        by_fam = pipeline_features_by_family(data_dir=self._data_dir)
+        present_base = [f for f in dataset_names if f in base_names] if dataset_names else list(base_names)
+
+        out: list[dict[str, Any]] = []
         covered: set[str] = set()
-
-        def add(gid: str) -> None:
-            if gid in seen:
-                return
-            seen.add(gid)
-            block = reg.get(gid) or {}
-            registry_feats = list(block.get("features") or [])
-            feats = list(registry_feats)
-            if allowed is not None:
-                feats = [f for f in feats if f in allowed]
-            if not full_dataset and not feats and not registry_feats:
-                return
-            if registry_feats or (full_dataset and feats):
-                covered.update(feats)
+        for fam in GENERATOR_FAMILY_ORDER:
+            fam_feats = by_fam.get(fam) or []
+            if dataset_names:
+                feats = sorted(f for f in fam_feats if f in dataset_names and f in base_names)
+            else:
+                feats = sorted(f for f in fam_feats if f in base_names)
+            if not feats:
+                continue
+            covered.update(feats)
+            out.append({
+                "id": f"base_{fam}",
+                "label": GENERATOR_FAMILY_LABELS.get(fam, fam.title()),
+                "features": feats,
+                "registry_features": list(feats),
+                "total_features": len(feats),
+            })
+        extras = sorted(f for f in present_base if f not in covered)
+        if extras:
+            extra_by_fam: dict[str, list[str]] = {}
+            for f in extras:
+                fam = pipeline_family_of(f)
+                extra_by_fam.setdefault(fam, []).append(f)
+            for fam, f_list in extra_by_fam.items():
                 out.append({
-                    "id": gid,
-                    "label": block.get("label") or gid,
-                    "features": feats,
-                    "registry_features": registry_feats or list(feats),
-                    "total_features": len(registry_feats) if registry_feats else len(feats),
-                })
-
-        for gid in order:
-            add(str(gid))
-        for gid in reg:
-            add(str(gid))
-
-        if full_dataset and allowed is not None:
-            extras = sorted(n for n in allowed if n not in covered)
-            if extras:
-                out.append({
-                    "id": "__dataset_extras",
-                    "label": "Dataset (not in registry)",
-                    "features": extras,
-                    "registry_features": extras,
-                    "total_features": len(extras),
+                    "id": f"base_{fam}_extra",
+                    "label": GENERATOR_FAMILY_LABELS.get(fam, fam.title()),
+                    "features": sorted(f_list),
+                    "registry_features": sorted(f_list),
+                    "total_features": len(f_list),
                 })
         return out
+
+    def _experimental_pipeline_feature_groups(self) -> list[dict[str, Any]]:
+        meta = (self._dataset_meta or {}).get("metadata") or {}
+        dataset_names = set(self._dataset_feature_names())
+
+        from chain_replay_ml.dataset_builder.feature_sources_catalog import (
+            GENERATOR_FAMILY_LABELS,
+            other_pipeline_feature_names_from_metadata,
+            pipeline_family_of,
+        )
+
+        candidate_names = other_pipeline_feature_names_from_metadata(meta)
+        if not candidate_names:
+            return []
+
+        if dataset_names:
+            present_exp = sorted(f for f in candidate_names if f in dataset_names)
+        else:
+            present_exp = sorted(candidate_names)
+
+        if not present_exp:
+            return []
+
+        pipeline_name = str(
+            meta.get("pipeline_name")
+            or meta.get("pipeline_id")
+            or "Experimental Candidates"
+        ).strip()
+
+        fam_map: dict[str, list[str]] = {}
+        for f in present_exp:
+            fam = pipeline_family_of(f)
+            fam_map.setdefault(fam, []).append(f)
+
+        out: list[dict[str, Any]] = []
+        for fam, feats in fam_map.items():
+            fam_label = GENERATOR_FAMILY_LABELS.get(fam, fam.title())
+            out.append({
+                "id": f"exp_{fam}",
+                "label": f"{pipeline_name} — {fam_label}" if len(fam_map) > 1 else pipeline_name,
+                "features": sorted(feats),
+                "registry_features": sorted(feats),
+                "total_features": len(feats),
+            })
+        return out
+
+    def _feature_groups(self) -> list[dict[str, Any]]:
+        return (
+            self._registry_feature_groups()
+            + self._base_pipeline_feature_groups()
+            + self._experimental_pipeline_feature_groups()
+        )
 
     def _sampling_interval_sec(self) -> float:
         meta = (self._dataset_meta or {}).get("metadata") or {}
@@ -2276,26 +2288,66 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
                         self._policy_features_by_name[fname] = feat
                 except Exception:
                     pass
-            text = pol_fmt.format_feature_policy_detail(
-                feat,
-                sampling_interval_sec=self._sampling_interval_sec(),
-                gap_max_sec=DEFAULT_GAP_MAX_SEC,
-                features_by_name=self._policy_features_by_name,
-                used_by_index=pol_fmt.build_used_by_index(
-                    list(self._policy_features_by_name.keys()),
-                    self._policy_features_by_name,
-                ),
-            )
+
+            if not feat.get("feature_category") and not feat.get("policy"):
+                from chain_replay_ml.dataset_builder.feature_sources_catalog import (
+                    pipeline_family_of,
+                    GENERATOR_FAMILY_LABELS,
+                    classify_dataset_feature_source,
+                    DATASET_SOURCE_BASE_PIPELINE,
+                )
+                source_type = classify_dataset_feature_source(fname, data_dir=self._data_dir)
+                fam = pipeline_family_of(fname)
+                fam_label = GENERATOR_FAMILY_LABELS.get(fam, fam.title())
+                meta = (self._dataset_meta or {}).get("metadata") or {}
+                pipe_name = meta.get("pipeline_name") or meta.get("pipeline_id") or "Base Pipeline"
+                source_label = "Base Pipeline" if source_type == DATASET_SOURCE_BASE_PIPELINE else f"Experimental Pipeline ({pipe_name})"
+
+                text = (
+                    f"Feature: {fname}\n"
+                    f"Source: {source_label}\n"
+                    f"Generator Family: {fam_label} ({fam})\n"
+                    f"Pipeline Origin: {pipe_name}\n"
+                    f"Lifecycle: Pipeline-Generated Feature\n"
+                    f"Policy: Standard Pipeline Transformation\n"
+                )
+            else:
+                text = pol_fmt.format_feature_policy_detail(
+                    feat,
+                    sampling_interval_sec=self._sampling_interval_sec(),
+                    gap_max_sec=DEFAULT_GAP_MAX_SEC,
+                    features_by_name=self._policy_features_by_name,
+                    used_by_index=pol_fmt.build_used_by_index(
+                        list(self._policy_features_by_name.keys()),
+                        self._policy_features_by_name,
+                    ),
+                )
         self._policy_preview_text.configure(state="normal")
         self._policy_preview_text.delete("1.0", "end")
         self._policy_preview_text.insert("end", text)
         self._policy_preview_text.configure(state="disabled")
 
     def _show_feature_policy(self, fname: str) -> None:
-        for group in self._feature_groups():
+        for group in self._registry_feature_groups():
             if fname in group.get("features", []):
-                if self._feature_tree is not None:
-                    self._feature_tree.ensure_expanded(str(group["id"]))
+                if hasattr(self, "_tree_registry") and self._tree_registry is not None:
+                    self._tree_registry.ensure_expanded(str(group["id"]))
+                if hasattr(self, "_feat_notebook"):
+                    self._feat_notebook.select(self._tab_registry)
+                break
+        for group in self._base_pipeline_feature_groups():
+            if fname in group.get("features", []):
+                if hasattr(self, "_tree_base_pipeline") and self._tree_base_pipeline is not None:
+                    self._tree_base_pipeline.ensure_expanded(str(group["id"]))
+                if hasattr(self, "_feat_notebook"):
+                    self._feat_notebook.select(self._tab_base_pipeline)
+                break
+        for group in self._experimental_pipeline_feature_groups():
+            if fname in group.get("features", []):
+                if hasattr(self, "_tree_experimental") and self._tree_experimental is not None:
+                    self._tree_experimental.ensure_expanded(str(group["id"]))
+                if hasattr(self, "_feat_notebook"):
+                    self._feat_notebook.select(self._tab_experimental)
                 break
         self._set_policy_preview(fname)
         if self._show_feat_var.get():
@@ -3054,17 +3106,25 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         self._on_change()
 
     def _features_expand_all(self) -> None:
-        if self._feature_tree is not None:
-            self._feature_tree.expand_all([str(g["id"]) for g in self._feature_groups()])
+        if hasattr(self, "_tree_registry") and self._tree_registry is not None:
+            self._tree_registry.expand_all([str(g["id"]) for g in self._registry_feature_groups()])
+        if hasattr(self, "_tree_base_pipeline") and self._tree_base_pipeline is not None:
+            self._tree_base_pipeline.expand_all([str(g["id"]) for g in self._base_pipeline_feature_groups()])
+        if hasattr(self, "_tree_experimental") and self._tree_experimental is not None:
+            self._tree_experimental.expand_all([str(g["id"]) for g in self._experimental_pipeline_feature_groups()])
         self._render_feature_groups(notify=False)
 
     def _features_collapse_all(self) -> None:
-        if self._feature_tree is not None:
-            self._feature_tree.collapse_all()
+        if hasattr(self, "_tree_registry") and self._tree_registry is not None:
+            self._tree_registry.collapse_all()
+        if hasattr(self, "_tree_base_pipeline") and self._tree_base_pipeline is not None:
+            self._tree_base_pipeline.collapse_all()
+        if hasattr(self, "_tree_experimental") and self._tree_experimental is not None:
+            self._tree_experimental.collapse_all()
         self._render_feature_groups(notify=False)
 
     def _render_feature_groups(self, *, notify: bool = True) -> None:
-        if self._building_features or self._feature_tree is None:
+        if self._building_features:
             return
         if self._lifecycle.features_ui_locked() and not self._lifecycle.features_inspect_expanded:
             self._feat_count_var.set(f"{self._training_feature_count()} features selected")
@@ -3077,15 +3137,65 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
         self._building_features = True
         read_only = self._lifecycle.features_ui_locked()
         inspect_only = read_only and self._lifecycle.features_inspect_expanded
-        self._feature_tree.render(
-            groups=self._feature_groups(),
-            selected=set(self.state.features),
-            columns=(self._schema or {}).get("columns") or {},
-            query=self._feat_search_var.get(),
-            preview_feature=self._preview_feature,
-            read_only=read_only and not inspect_only,
-            inspect_only=inspect_only,
-        )
+        cols = (self._schema or {}).get("columns") or {}
+        query = self._feat_search_var.get()
+        selected = set(self.state.features)
+
+        # 1. Render Feature Registry Tree
+        reg_groups = self._registry_feature_groups()
+        if hasattr(self, "_tree_registry") and self._tree_registry is not None:
+            self._tree_registry.render(
+                groups=reg_groups,
+                selected=selected,
+                columns=cols,
+                query=query,
+                preview_feature=self._preview_feature,
+                read_only=read_only and not inspect_only,
+                inspect_only=inspect_only,
+            )
+
+        # 2. Render Base Pipeline Tree
+        base_groups = self._base_pipeline_feature_groups()
+        if hasattr(self, "_tree_base_pipeline") and self._tree_base_pipeline is not None:
+            self._tree_base_pipeline.render(
+                groups=base_groups,
+                selected=selected,
+                columns=cols,
+                query=query,
+                preview_feature=self._preview_feature,
+                read_only=read_only and not inspect_only,
+                inspect_only=inspect_only,
+            )
+
+        # 3. Render Selected Experimental Tree
+        exp_groups = self._experimental_pipeline_feature_groups()
+        if hasattr(self, "_tree_experimental") and self._tree_experimental is not None:
+            self._tree_experimental.render(
+                groups=exp_groups,
+                selected=selected,
+                columns=cols,
+                query=query,
+                preview_feature=self._preview_feature,
+                read_only=read_only and not inspect_only,
+                inspect_only=inspect_only,
+            )
+
+        # Update tab counts
+        reg_all = [f for g in reg_groups for f in g.get("features", [])]
+        reg_sel = [f for f in reg_all if f in selected]
+        base_all = [f for g in base_groups for f in g.get("features", [])]
+        base_sel = [f for f in base_all if f in selected]
+        exp_all = [f for g in exp_groups for f in g.get("features", [])]
+        exp_sel = [f for f in exp_all if f in selected]
+
+        if hasattr(self, "_feat_notebook"):
+            try:
+                self._feat_notebook.tab(0, text=f"Feature Registry ({len(reg_sel)}/{len(reg_all)})")
+                self._feat_notebook.tab(1, text=f"Base Pipeline ({len(base_sel)}/{len(base_all)})")
+                self._feat_notebook.tab(2, text=f"Selected Experimental ({len(exp_sel)}/{len(exp_all)})")
+            except Exception:
+                pass
+
         self._feat_count_var.set(f"{self._training_feature_count()} features selected")
         self._building_features = False
         if notify:
