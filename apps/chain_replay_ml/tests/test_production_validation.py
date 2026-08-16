@@ -337,6 +337,273 @@ class ProductionValidationResolveTests(unittest.TestCase):
             self.assertTrue(str(result.dataset_name or "").startswith("unseen_"))
             self.assertEqual(result.unseen_days, ["2026-07-10"])
 
+    def test_realistic_pl0005_lineage_resolve(self) -> None:
+        """Test realistic lineage propagation for PL_0005 parent dataset."""
+        from chain_replay_ml.dataset_builder.writer import datasets_dir
+        from chain_replay_ml.production_validation import resolve_unseen_dataset_for_model
+
+        with tempfile.TemporaryDirectory() as tmp:
+            master_path = os.path.join(tmp, "nifty_master_3s.db")
+            with open(master_path, "wb") as fh:
+                fh.write(b"")
+            seen = ["2026-07-01", "2026-07-31"]
+            master_days = ["2026-07-01", "2026-07-31", "2026-08-01"]
+            parent_name = "analysis_PL0005_198r_447p_6s_20260814_221827"
+            model_name = "Future_LTP_5m_WF_1168f_XGB_2243_14"
+
+            # 1. Create parent dataset metadata
+            ds_dir = datasets_dir(tmp)
+            os.makedirs(ds_dir, exist_ok=True)
+            parent_json = os.path.join(ds_dir, f"{parent_name}.json")
+            with open(parent_json, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "dataset_name": parent_name,
+                        "pipeline_id": "PL_0005",
+                        "pipeline_name": "Pipeline_005",
+                        "pipeline_type": "auto",
+                        "pipeline_snapshot_id": "ca5945f58f87e96e",
+                        "feature_project_id": "all",
+                        "include_pipeline": True,
+                        "include_registry": True,
+                        "registry_export_features": ["spot", "ltp"],
+                        "base_pipeline_export_features": ["fwd_ret_5m"],
+                        "pipeline_provenance": {
+                            "pipeline_id": "PL_0005",
+                            "candidate_features": ["custom_exp_1", "custom_exp_2"],
+                        },
+                        "days": [{"trading_day": "2026-07-01"}, {"trading_day": "2026-07-31"}],
+                    },
+                    fh,
+                )
+
+            # 2. Create model package
+            safe = self._write_pkg(
+                tmp,
+                model_name=model_name,
+                seen_days=seen,
+                master_rel=os.path.basename(master_path),
+                parent=parent_name,
+            )
+
+            created_kwargs: dict = {}
+
+            def fake_create_analysis(data_dir: str, **kwargs):
+                created_kwargs.update(kwargs)
+                out_pq = os.path.join(ds_dir, f"{kwargs['dataset_name']}.parquet")
+                out_js = os.path.join(ds_dir, f"{kwargs['dataset_name']}.json")
+                with open(out_pq, "wb") as f:
+                    f.write(b"pq")
+                with open(out_js, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {
+                            "dataset_name": kwargs["dataset_name"],
+                            "dataset_kind": "unseen",
+                            "feature_project_id": kwargs.get("feature_project_id"),
+                            "pipeline_id": kwargs.get("pipeline_id"),
+                            "include_pipeline": kwargs.get("include_pipeline"),
+                            "include_registry": kwargs.get("include_registry"),
+                            "days": [{"trading_day": "2026-08-01"}],
+                        },
+                        f,
+                    )
+                return {
+                    "dataset_name": kwargs["dataset_name"],
+                    "json_path": out_js,
+                    "parquet_path": out_pq,
+                    "feature_count": 1186,
+                    "pipeline_present": 447,
+                }
+
+            fake_store = mock.MagicMock()
+            fake_store.get_meta.return_value = {"market": "NIFTY", "sampling_interval_sec": 3}
+
+            with mock.patch(
+                "chain_replay_ml.model_lab.prediction_dataset_type.load_master_day_row_counts",
+                return_value={d: 100 for d in master_days},
+            ), mock.patch(
+                "chain_replay_ml.model_lab.prediction_dataset_type.resolve_master_db_path_for_lab",
+                return_value=os.path.abspath(master_path),
+            ), mock.patch(
+                "chain_replay_ml.dataset_builder.master_store.MasterStore",
+                return_value=fake_store,
+            ), mock.patch(
+                "chain_replay_ml.dataset_builder.analysis_dataset_export.create_analysis_dataset",
+                side_effect=fake_create_analysis,
+            ):
+                res = resolve_unseen_dataset_for_model(
+                    data_dir=tmp,
+                    model_name=safe,
+                    create_if_missing=True,
+                )
+
+            self.assertTrue(res.ok, msg=res.error)
+            self.assertEqual(res.status, "ready")
+            self.assertTrue(res.created)
+            self.assertFalse(res.reused)
+
+            # Verify arguments forwarded to create_analysis_dataset
+            self.assertEqual(created_kwargs.get("pipeline_id"), "PL_0005")
+            self.assertEqual(created_kwargs.get("feature_project_id"), "all")
+            self.assertTrue(created_kwargs.get("include_pipeline"))
+            self.assertTrue(created_kwargs.get("include_registry"))
+
+    def test_reuse_and_stale_rejection_rules(self) -> None:
+        """Test reuse on matching lineage, and rejection on snapshot, pipeline_id, or project divergence."""
+        from chain_replay_ml.production_validation.unseen_dataset import (
+            _existing_unseen_valid,
+            _has_pipeline_features,
+            unseen_dataset_identity_hash,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ds_dir = os.path.join(tmp, "datasets")
+            os.makedirs(ds_dir, exist_ok=True)
+            ds_name = "unseen_test_ds"
+            js_path = os.path.join(ds_dir, f"{ds_name}.json")
+            pq_path = os.path.join(ds_dir, f"{ds_name}.parquet")
+            with open(pq_path, "wb") as f:
+                f.write(b"pq")
+
+            ident = unseen_dataset_identity_hash(
+                master_db_path=os.path.join(tmp, "master.db"),
+                unseen_days=["2026-08-01"],
+                parent_dataset="Parent_PL0005",
+                feature_project_id="all",
+                pipeline_id="PL_0005",
+                pipeline_snapshot_id="ca5945f58f87e96e",
+            )
+
+            base_meta = {
+                "dataset_name": ds_name,
+                "dataset_kind": "unseen",
+                "days": [{"trading_day": "2026-08-01"}],
+                "feature_project_id": "all",
+                "pipeline_id": "PL_0005",
+                "pipeline_snapshot_id": "ca5945f58f87e96e",
+                "production_validation": {
+                    "role": "unseen",
+                    "identity_hash": ident,
+                    "feature_project_id": "all",
+                    "pipeline_id": "PL_0005",
+                    "pipeline_snapshot_id": "ca5945f58f87e96e",
+                },
+            }
+
+            with open(js_path, "w", encoding="utf-8") as f:
+                json.dump(base_meta, f)
+
+            with mock.patch(
+                "chain_replay_ml.production_validation.unseen_dataset._has_pipeline_features",
+                return_value=True,
+            ):
+                # A. Same pipeline_id + same snapshot -> reuse allowed
+                ok = _existing_unseen_valid(
+                    data_dir=tmp,
+                    dataset_name=ds_name,
+                    expected_days=["2026-08-01"],
+                    identity_hash=ident,
+                    expected_feature_project_id="all",
+                    expected_pipeline_id="PL_0005",
+                    expected_pipeline_snapshot_id="ca5945f58f87e96e",
+                )
+                self.assertIsNotNone(ok)
+
+                # B. Same pipeline_id + different snapshot -> reject reuse
+                rej_snap = _existing_unseen_valid(
+                    data_dir=tmp,
+                    dataset_name=ds_name,
+                    expected_days=["2026-08-01"],
+                    identity_hash=ident,
+                    expected_feature_project_id="all",
+                    expected_pipeline_id="PL_0005",
+                    expected_pipeline_snapshot_id="diff_snapshot_9999",
+                )
+                self.assertIsNone(rej_snap)
+
+                # C. Different pipeline_id -> reject reuse
+                rej_pid = _existing_unseen_valid(
+                    data_dir=tmp,
+                    dataset_name=ds_name,
+                    expected_days=["2026-08-01"],
+                    identity_hash=ident,
+                    expected_feature_project_id="all",
+                    expected_pipeline_id="PL_0002",
+                    expected_pipeline_snapshot_id="ca5945f58f87e96e",
+                )
+                self.assertIsNone(rej_pid)
+
+                # D. Different feature_project_id -> reject reuse
+                rej_fpid = _existing_unseen_valid(
+                    data_dir=tmp,
+                    dataset_name=ds_name,
+                    expected_days=["2026-08-01"],
+                    identity_hash=ident,
+                    expected_feature_project_id="nifty_classification",
+                    expected_pipeline_id="PL_0005",
+                    expected_pipeline_snapshot_id="ca5945f58f87e96e",
+                )
+                self.assertIsNone(rej_fpid)
+
+    def test_pipeline_enabled_but_pipeline_id_missing_error(self) -> None:
+        """E. When pipeline is enabled on parent dataset but pipeline_id is missing, returns clear error."""
+        from chain_replay_ml.dataset_builder.writer import datasets_dir
+        from chain_replay_ml.production_validation import resolve_unseen_dataset_for_model
+
+        with tempfile.TemporaryDirectory() as tmp:
+            master_path = os.path.join(tmp, "nifty_master_3s.db")
+            with open(master_path, "wb") as fh:
+                fh.write(b"")
+            seen = ["2026-07-01"]
+            master_days = ["2026-07-01", "2026-07-02"]
+            parent_name = "parent_missing_pipe_id"
+            model_name = "Model_Pipe_Missing"
+
+            ds_dir = datasets_dir(tmp)
+            os.makedirs(ds_dir, exist_ok=True)
+            with open(os.path.join(ds_dir, f"{parent_name}.json"), "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "dataset_name": parent_name,
+                        "feature_project_id": "all",
+                        "include_pipeline": True,
+                        "pipeline_id": "",
+                        "days": [{"trading_day": "2026-07-01"}],
+                    },
+                    fh,
+                )
+
+            safe = self._write_pkg(
+                tmp,
+                model_name=model_name,
+                seen_days=seen,
+                master_rel=os.path.basename(master_path),
+                parent=parent_name,
+            )
+
+            fake_store = mock.MagicMock()
+            fake_store.get_meta.return_value = {"market": "NIFTY", "sampling_interval_sec": 3}
+
+            with mock.patch(
+                "chain_replay_ml.model_lab.prediction_dataset_type.load_master_day_row_counts",
+                return_value={d: 100 for d in master_days},
+            ), mock.patch(
+                "chain_replay_ml.model_lab.prediction_dataset_type.resolve_master_db_path_for_lab",
+                return_value=os.path.abspath(master_path),
+            ), mock.patch(
+                "chain_replay_ml.dataset_builder.master_store.MasterStore",
+                return_value=fake_store,
+            ):
+                res = resolve_unseen_dataset_for_model(
+                    data_dir=tmp,
+                    model_name=safe,
+                    create_if_missing=True,
+                )
+
+            self.assertFalse(res.ok)
+            self.assertEqual(res.status, "error")
+            self.assertIn("Pipeline Features is enabled", res.error)
+
 
 class ProductionValidationRulesTests(unittest.TestCase):
     def test_rank_by_abs_importance(self) -> None:

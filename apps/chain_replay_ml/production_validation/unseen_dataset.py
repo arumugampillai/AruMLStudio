@@ -40,16 +40,28 @@ def unseen_dataset_identity_hash(
     unseen_days: list[str] | tuple[str, ...] | set[str],
     master_filter: Mapping[str, Any] | None = None,
     parent_dataset: str | None = None,
+    feature_project_id: str | None = None,
+    pipeline_id: str | None = None,
+    pipeline_snapshot_id: str | None = None,
+    include_pipeline: bool = True,
+    include_registry: bool = True,
 ) -> str:
     """Stable short hash for ``unseen_<slug>_<hash>`` naming / reuse."""
+    norm_fpid = str(feature_project_id or "all").strip().lower() if feature_project_id is not None else None
+    norm_pid = str(pipeline_id or "").strip().upper() if pipeline_id is not None else None
+    norm_snap = str(pipeline_snapshot_id or "").strip() if pipeline_snapshot_id is not None else None
     payload = {
         "master_db_path": os.path.normpath(str(master_db_path or "")).replace("\\", "/").lower(),
         "unseen_days": sorted({str(d).strip() for d in unseen_days if str(d).strip()}),
         "master_filter": _stable_filter(master_filter),
         "parent_dataset": str(parent_dataset or "").strip() or None,
+        "feature_project_id": norm_fpid,
+        "pipeline_id": norm_pid,
+        "pipeline_snapshot_id": norm_snap,
         "keep_pipeline_owned": True,
-        "include_pipeline": True,
-        "feature_sources": "registry+pipeline",
+        "include_pipeline": bool(include_pipeline),
+        "include_registry": bool(include_registry),
+        "feature_sources": "registry+pipeline" if (include_pipeline and include_registry) else ("pipeline" if include_pipeline else "registry"),
         "dataset_kind": "unseen",
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
@@ -327,6 +339,11 @@ def _existing_unseen_valid(
     dataset_name: str,
     expected_days: list[str],
     identity_hash: str,
+    expected_feature_project_id: str | None = None,
+    expected_pipeline_id: str | None = None,
+    expected_pipeline_snapshot_id: str | None = None,
+    expected_include_pipeline: bool = True,
+    expected_include_registry: bool = True,
 ) -> dict[str, Any] | None:
     from chain_replay_ml.dataset_builder.writer import _safe_filename, datasets_dir
 
@@ -351,8 +368,33 @@ def _existing_unseen_valid(
     want = set(expected_days)
     if have != want:
         return None
-    if not _has_pipeline_features(meta, data_dir=data_dir, parquet_path=parquet_path):
-        return None
+
+    # Lineage parity checks:
+    # 1. Feature project
+    if expected_feature_project_id is not None:
+        stored_fpid = str(meta.get("feature_project_id") or pv.get("feature_project_id") or "all").strip().lower()
+        target_fpid = str(expected_feature_project_id or "all").strip().lower()
+        if stored_fpid != target_fpid:
+            return None
+
+    # 2. Pipeline ID
+    if expected_pipeline_id is not None:
+        stored_pid = str(meta.get("pipeline_id") or pv.get("pipeline_id") or "").strip().upper()
+        target_pid = str(expected_pipeline_id or "").strip().upper()
+        if stored_pid != target_pid:
+            return None
+
+    # 3. Pipeline Snapshot ID
+    if expected_pipeline_snapshot_id is not None:
+        stored_snap = str(meta.get("pipeline_snapshot_id") or pv.get("pipeline_snapshot_id") or "").strip()
+        target_snap = str(expected_pipeline_snapshot_id or "").strip()
+        if target_snap and stored_snap and stored_snap != target_snap:
+            return None
+
+    if expected_include_pipeline:
+        if not _has_pipeline_features(meta, data_dir=data_dir, parquet_path=parquet_path):
+            return None
+
     return {
         "dataset_name": str(meta.get("dataset_name") or safe),
         "json_path": json_path,
@@ -369,6 +411,11 @@ def _stamp_unseen_metadata(
     seen_days: list[str],
     unseen_days: list[str],
     parent_dataset: str | None,
+    feature_project_id: str | None = None,
+    pipeline_id: str | None = None,
+    pipeline_snapshot_id: str | None = None,
+    include_pipeline: bool = True,
+    include_registry: bool = True,
 ) -> None:
     meta = _load_json(json_path)
     if not meta:
@@ -381,12 +428,16 @@ def _stamp_unseen_metadata(
         "model_name": model_name,
         "parent_dataset": parent_dataset,
         "identity_hash": identity_hash,
+        "feature_project_id": feature_project_id,
+        "pipeline_id": pipeline_id,
+        "pipeline_snapshot_id": pipeline_snapshot_id,
         "seen_days": list(seen_days),
         "unseen_days": list(unseen_days),
         "seen_day_count": len(seen_days),
         "unseen_day_count": len(unseen_days),
-        "include_pipeline": True,
-        "feature_sources": "registry+pipeline",
+        "include_pipeline": include_pipeline,
+        "include_registry": include_registry,
+        "feature_sources": "registry+pipeline" if (include_pipeline and include_registry) else ("pipeline" if include_pipeline else "registry"),
         "compute_note": "compute coming",
     }
     _write_json(json_path, meta)
@@ -484,6 +535,30 @@ def resolve_unseen_dataset(
         _persist_package_status(data_dir, name, result)
         return result
 
+    # Extract lineage with precedence: parent_meta -> train_cfg
+    pipeline_id = parent_meta.get("pipeline_id") or train_cfg.get("pipeline_id")
+    feature_project_id = (
+        parent_meta.get("feature_project_id")
+        or train_cfg.get("feature_project_id")
+    )
+    pipeline_snapshot_id = (
+        parent_meta.get("pipeline_snapshot_id")
+        or train_cfg.get("pipeline_snapshot_id")
+    )
+    if "include_pipeline" in parent_meta:
+        include_pipeline = bool(parent_meta.get("include_pipeline"))
+    elif "include_pipeline" in train_cfg:
+        include_pipeline = bool(train_cfg.get("include_pipeline"))
+    else:
+        include_pipeline = True
+
+    if "include_registry" in parent_meta:
+        include_registry = bool(parent_meta.get("include_registry"))
+    elif "include_registry" in train_cfg:
+        include_registry = bool(train_cfg.get("include_registry"))
+    else:
+        include_registry = True
+
     unseen_days = sorted(d for d in master_days if d not in seen)
     master_filter = resolve_model_master_filter(lab_like, parent_meta=parent_meta or None)
     identity = unseen_dataset_identity_hash(
@@ -491,6 +566,11 @@ def resolve_unseen_dataset(
         unseen_days=unseen_days,
         master_filter=master_filter,
         parent_dataset=parent_dataset,
+        feature_project_id=feature_project_id,
+        pipeline_id=pipeline_id,
+        pipeline_snapshot_id=pipeline_snapshot_id,
+        include_pipeline=include_pipeline,
+        include_registry=include_registry,
     )
     dataset_name = build_unseen_dataset_name(
         model_name=safe,
@@ -522,6 +602,11 @@ def resolve_unseen_dataset(
         dataset_name=dataset_name,
         expected_days=unseen_days,
         identity_hash=identity,
+        expected_feature_project_id=feature_project_id,
+        expected_pipeline_id=pipeline_id,
+        expected_pipeline_snapshot_id=pipeline_snapshot_id,
+        expected_include_pipeline=include_pipeline,
+        expected_include_registry=include_registry,
     )
     if existing:
         result = UnseenDatasetResolveResult(
@@ -669,8 +754,10 @@ def resolve_unseen_dataset(
             data_dir,
             market=market,
             interval_sec=interval_sec,
-            include_registry=True,
-            include_pipeline=True,
+            include_registry=include_registry,
+            include_pipeline=include_pipeline,
+            pipeline_id=pipeline_id,
+            feature_project_id=feature_project_id,
             all_days=False,
             selected_days=unseen_days,
             master_db_path=master_path,
@@ -723,6 +810,11 @@ def resolve_unseen_dataset(
             seen_days=seen_days,
             unseen_days=unseen_days,
             parent_dataset=parent_dataset,
+            feature_project_id=feature_project_id,
+            pipeline_id=pipeline_id,
+            pipeline_snapshot_id=pipeline_snapshot_id,
+            include_pipeline=include_pipeline,
+            include_registry=include_registry,
         )
 
     # Best-effort Analysis Lab registration (Dataset Registry UI also scans JSON).
