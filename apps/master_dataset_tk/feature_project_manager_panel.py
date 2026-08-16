@@ -534,15 +534,21 @@ class FeatureProjectManagerPanel(ttk.Frame):
             if str(g.get("id") or "").strip()
         ]
 
-    def _group_tree_options(self) -> list[dict[str, str]]:
+    def _render_group_tree(self) -> None:
         tree = self._group_tree
         tree.delete(*tree.get_children())
+        pid = self._selected_id or RESERVED_ALL_PROJECT_ID
+        data_dir = self._data_dir()
+        is_all = is_reserved_all_project_id(pid)
+
         doc = {
             "feature_names": sorted(self._selected_features),
             "project_groups": self._project_groups,
             "feature_group_map": self._feature_group_map,
         }
-        for g in project_registry_groups(doc, data_dir=self._data_dir()):
+        groups = project_registry_groups(doc, data_dir=data_dir)
+        inserted_groups = 0
+        for g in groups:
             gid = str(g.get("id") or "").strip()
             if not gid:
                 continue
@@ -556,8 +562,18 @@ class FeatureProjectManagerPanel(ttk.Frame):
                 values=(len(feats),),
                 open=False,
             )
+            inserted_groups += 1
             for feat in feats:
                 tree.insert(parent_iid, "end", iid=f"feat:{feat}", text=feat, values=("",))
+
+        # Diagnostic logging for Feature Project Manager
+        import logging
+        logger = logging.getLogger("AruMLStudio.FeatureProjectManager")
+        logger.info(
+            f"[FeatureProjectManager] project_id='{pid}', is_all={is_all}, "
+            f"data_dir='{data_dir}', registry_features_loaded={len(self._selected_features)}, "
+            f"canonical_groups_loaded={len(groups)}, tree_root_nodes_inserted={inserted_groups}"
+        )
 
     def _tree_feature_name(self, iid: str) -> str | None:
         if str(iid).startswith("feat:"):
@@ -581,7 +597,7 @@ class FeatureProjectManagerPanel(ttk.Frame):
         menu = tk.Menu(self, tearoff=0)
         if feature_name:
             self._build_feature_context_menu(menu, feature_name)
-        elif group_id and self._is_project_active():
+        elif group_id and self._is_project_active() and not is_reserved_all_project_id(self._selected_id or ""):
             self._build_group_context_menu(menu, group_id)
         else:
             return
@@ -601,7 +617,8 @@ class FeatureProjectManagerPanel(ttk.Frame):
             command=lambda name=feature_name: self._show_feature_details(name),
         )
 
-        if self._is_project_active() and any(n in self._selected_features for n in picked):
+        reserved = is_reserved_all_project_id(self._selected_id or "")
+        if not reserved and self._is_project_active() and any(n in self._selected_features for n in picked):
             menu.add_separator()
             move_sub = tk.Menu(menu, tearoff=0)
             self._populate_move_to_group_menu(move_sub, picked)
