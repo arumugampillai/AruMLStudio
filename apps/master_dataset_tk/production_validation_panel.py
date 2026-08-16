@@ -79,6 +79,10 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
         self._model_names: list[str] = []
         self._busy = False
         self._rows: list[dict[str, Any]] = []
+        self._rows_reg: list[dict[str, Any]] = []
+        self._rows_base: list[dict[str, Any]] = []
+        self._rows_exp: list[dict[str, Any]] = []
+        self._feat_source_var = tk.StringVar(value="experimental")
         self._filter_var = filter_var if filter_var is not None else tk.StringVar()
         self._top_n_var = top_n_var if top_n_var is not None else tk.StringVar(value="20")
         self._top_n_only = (
@@ -112,6 +116,7 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
         self._filter_var.trace_add("write", lambda *_: self._render_table())
         self._top_n_only.trace_add("write", lambda *_: self._render_table())
         self._top_n_var.trace_add("write", lambda *_: self._render_table())
+        self._feat_source_var.trace_add("write", lambda *_: self._render_table())
         self._lazy_init()
 
     def _data_dir(self) -> str:
@@ -151,6 +156,14 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
         self._device_var.set("—")
         self._feat_summary_var.set("—")
         self._rows = []
+        self._rows_reg = []
+        self._rows_base = []
+        self._rows_exp = []
+        self._feat_source_var.set("experimental")
+        if hasattr(self, "_rb_reg"):
+            self._rb_reg.configure(text="Feature Registry (0)")
+            self._rb_base.configure(text="Base Pipeline (0)")
+            self._rb_exp.configure(text="Selected Experimental (0)")
         self._clear_table()
         self._status_var.set(message)
         if not self._busy:
@@ -294,7 +307,7 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
         # Tab 3 — Feature Validation (KEEP / WATCH / REMOVE subtabs)
         table_tab = ttk.Frame(self._notebook, padding=4)
         table_tab.columnconfigure(0, weight=1)
-        table_tab.rowconfigure(1, weight=1)
+        table_tab.rowconfigure(2, weight=1)
         ttk.Label(
             table_tab,
             textvariable=self._feat_summary_var,
@@ -302,8 +315,36 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
             padding=(4, 2, 4, 4),
         ).grid(row=0, column=0, sticky="ew")
 
+        # Feature source radio selector (Feature Registry / Base Pipeline / Selected Experimental)
+        source_bar = ttk.Frame(table_tab, padding=(4, 2, 4, 4))
+        source_bar.grid(row=1, column=0, sticky="ew")
+
+        self._rb_reg = ttk.Radiobutton(
+            source_bar,
+            text="Feature Registry (0)",
+            variable=self._feat_source_var,
+            value="registry",
+        )
+        self._rb_reg.pack(side="left", padx=(0, 16))
+
+        self._rb_base = ttk.Radiobutton(
+            source_bar,
+            text="Base Pipeline (0)",
+            variable=self._feat_source_var,
+            value="base_pipeline",
+        )
+        self._rb_base.pack(side="left", padx=(0, 16))
+
+        self._rb_exp = ttk.Radiobutton(
+            source_bar,
+            text="Selected Experimental (0)",
+            variable=self._feat_source_var,
+            value="experimental",
+        )
+        self._rb_exp.pack(side="left", padx=(0, 16))
+
         self._feat_rec_nb = ttk.Notebook(table_tab)
-        self._feat_rec_nb.grid(row=1, column=0, sticky="nsew")
+        self._feat_rec_nb.grid(row=2, column=0, sticky="nsew")
         self._feat_trees: dict[str, ttk.Treeview] = {}
         cols = tuple(c[0] for c in _TABLE_COLS)
 
@@ -822,9 +863,55 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
         ):
             compute_note += " · ranks derived from cached importances"
         self._summary_vars["compute"].set(compute_note)
+
+        # Partition rows into 3 populations (Registry / Base Pipeline / Selected Experimental)
+        from chain_replay_ml.diagnostics_studio.feature_partition import partition_diagnostic_rows
+        from chain_replay_ml.dataset_builder.writer import _safe_filename, datasets_dir
+        from chain_replay_ml.training.paths import model_package_dir
+
+        ds_name = self._summary_vars["dataset"].get()
+        if not ds_name or ds_name == "—":
+            cfg_path = os.path.join(model_package_dir(self._data_dir(), model_name), "config.json")
+            if os.path.isfile(cfg_path):
+                try:
+                    import json
+                    with open(cfg_path, "r", encoding="utf-8") as fh:
+                        cfg_raw = json.load(fh)
+                    ds_name = cfg_raw.get("dataset")
+                except Exception:
+                    pass
+
+        ds_meta: dict[str, Any] = {}
+        if ds_name and ds_name != "—":
+            meta_path = os.path.join(datasets_dir(self._data_dir()), f"{_safe_filename(ds_name)}.json")
+            if os.path.isfile(meta_path):
+                try:
+                    import json
+                    with open(meta_path, "r", encoding="utf-8") as fh:
+                        loaded_doc = json.load(fh)
+                    if isinstance(loaded_doc, dict):
+                        ds_meta = loaded_doc
+                except Exception:
+                    ds_meta = {}
+
+        self._partition = partition_diagnostic_rows(
+            self._rows,
+            data_dir=self._data_dir(),
+            dataset_metadata=ds_meta,
+        )
+        self._rows_reg = self._partition.registry_rows
+        self._rows_base = self._partition.base_pipeline_rows
+        self._rows_exp = self._partition.experimental_rows
+
+        if hasattr(self, "_rb_reg"):
+            self._rb_reg.configure(text=f"Feature Registry ({self._partition.registry_count})")
+            self._rb_base.configure(text=f"Base Pipeline ({self._partition.base_pipeline_count})")
+            self._rb_exp.configure(text=f"Selected Experimental ({self._partition.experimental_count})")
+
         self._render_table()
         self._status_var.set(
-            f"Loaded {len(rows)} feature validation rows · model selected features"
+            f"Loaded {len(rows)} feature validation rows (Reg: {self._partition.registry_count}, "
+            f"Base: {self._partition.base_pipeline_count}, Exp: {self._partition.experimental_count}) · model selected features"
             + (f" · {device}" if device else "")
             + (
                 " · ranks derived from importances (no recompute)"
@@ -846,14 +933,24 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
         trees = getattr(self, "_feat_trees", None)
         if not isinstance(trees, dict) or not trees:
             return
+
+        # Select active population from radio buttons
+        source_mode = str(self._feat_source_var.get() or "experimental").strip().lower()
+        if source_mode == "registry":
+            source_rows = getattr(self, "_rows_reg", [])
+        elif source_mode == "base_pipeline":
+            source_rows = getattr(self, "_rows_base", [])
+        else:
+            source_rows = getattr(self, "_rows_exp", [])
+
         needle = str(self._filter_var.get() or "").strip().lower()
-        rows = list(self._rows)
+        rows = list(source_rows)
         if needle:
             rows = [r for r in rows if needle in str(r.get("feature") or "").lower()]
         if self._top_n_only.get():
             # Top N by worst rank drop (most negative Rank Change first).
             ranked = sorted(
-                self._rows,
+                source_rows,
                 key=lambda r: (
                     int(r["rank_change"]) if r.get("rank_change") is not None else 10**9,
                     float(r["importance_difference"])

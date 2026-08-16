@@ -1139,5 +1139,128 @@ class ProductionValidationComputeTests(unittest.TestCase):
             self.assertIn("f_missing_critical", str(ctx.exception))
 
 
+    def test_feature_validation_three_source_partition_invariants(self) -> None:
+        """Test Feature Validation partition into 3 mutually exclusive populations that sum to total."""
+        from chain_replay_ml.diagnostics_studio.feature_partition import partition_diagnostic_rows
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = tmp
+            reg_names = [f"reg_{i}" for i in range(110)]
+            base_names = [f"fwd_ret_{i}m" for i in range(89)]
+            exp_names = [f"exp_{i}" for i in range(384)]
+            all_selected = reg_names + base_names + exp_names
+
+            dataset_meta = {
+                "dataset_name": "analysis_PL0005_198r_447p_6s_20260814_221827",
+                "registry_export_features": reg_names,
+                "base_pipeline_export_features": base_names,
+                "pipeline_provenance": {
+                    "pipeline_id": "PL_0005",
+                    "candidate_features": exp_names,
+                },
+            }
+
+            pv_rows = [
+                {
+                    "feature": f,
+                    "holdout_rank": idx + 1,
+                    "unseen_rank": idx + 2,
+                    "rank_change": 1,
+                    "holdout_importance": 0.05,
+                    "unseen_importance": 0.04,
+                    "importance_difference": -0.01,
+                    "recommendation": "KEEP" if idx % 2 == 0 else "WATCH",
+                }
+                for idx, f in enumerate(all_selected)
+            ]
+
+            partition = partition_diagnostic_rows(
+                pv_rows,
+                data_dir=data_dir,
+                dataset_metadata=dataset_meta,
+            )
+
+            self.assertTrue(partition.is_valid, msg=partition.error_message)
+            self.assertEqual(partition.registry_count, 110)
+            self.assertEqual(partition.base_pipeline_count, 89)
+            self.assertEqual(partition.experimental_count, 384)
+            self.assertEqual(partition.total_count, 583)
+            self.assertEqual(
+                partition.registry_count + partition.base_pipeline_count + partition.experimental_count,
+                583,
+            )
+
+            # Mutually exclusive
+            set_r = {r["feature"] for r in partition.registry_rows}
+            set_b = {r["feature"] for r in partition.base_pipeline_rows}
+            set_e = {r["feature"] for r in partition.experimental_rows}
+            self.assertEqual(len(set_r & set_b), 0)
+            self.assertEqual(len(set_r & set_e), 0)
+            self.assertEqual(len(set_b & set_e), 0)
+
+    def test_production_validation_panel_radio_buttons_ui(self) -> None:
+        """Test ProductionValidationPanel initialization with default experimental radio and rendering."""
+        import tkinter as tk
+        from master_dataset_tk.production_validation_panel import ProductionValidationPanel
+
+        try:
+            root = tk.Tk()
+            root.withdraw()
+        except Exception:
+            return
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                panel = ProductionValidationPanel(root, chart_dir=tmp)
+                # Default selection is experimental
+                self.assertEqual(panel._feat_source_var.get(), "experimental")
+
+                # Test applying payload
+                loaded = {
+                    "unseen_status": {
+                        "dataset_name": "test_ds",
+                        "status": "ready",
+                    },
+                    "rows": [
+                        {
+                            "feature": "spot",
+                            "holdout_rank": 1,
+                            "unseen_rank": 1,
+                            "rank_change": 0,
+                            "holdout_importance": 0.1,
+                            "unseen_importance": 0.1,
+                            "importance_difference": 0.0,
+                            "recommendation": "KEEP",
+                        },
+                        {
+                            "feature": "fwd_ret_5m",
+                            "holdout_rank": 2,
+                            "unseen_rank": 2,
+                            "rank_change": 0,
+                            "holdout_importance": 0.05,
+                            "unseen_importance": 0.05,
+                            "importance_difference": 0.0,
+                            "recommendation": "WATCH",
+                        },
+                    ],
+                    "summary": {
+                        "feature_validation": {
+                            "keep_count": 1,
+                            "watch_count": 1,
+                            "remove_count": 0,
+                            "average_rank_change": 0.0,
+                            "median_rank_change": 0.0,
+                            "stable_features_pct": 100.0,
+                        },
+                    },
+                    "meta": {},
+                }
+                panel.apply_artifacts(loaded, "TestModel")
+                self.assertEqual(len(panel._rows), 2)
+        finally:
+            root.destroy()
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -142,30 +142,43 @@ class DiagnosticsStudioPanel(ttk.Frame, LazyLoadMixin):
         self._narr_text.grid(row=0, column=0, sticky="ew")
         self._narr_text.configure(state="disabled")
 
-        table_wrap = ttk.LabelFrame(self, text="Feature Diagnostic Table", padding=4)
-        table_wrap.grid(row=3, column=0, sticky="nsew", padx=8, pady=(0, 4))
-        table_wrap.columnconfigure(0, weight=1)
-        table_wrap.rowconfigure(0, weight=1)
+        self._notebook = ttk.Notebook(self)
+        self._notebook.grid(row=3, column=0, sticky="nsew", padx=8, pady=(0, 4))
+        self._notebook.columnconfigure(0, weight=1)
+        self._notebook.rowconfigure(0, weight=1)
 
         cols = tuple(c[0] for c in _TABLE_COLS)
-        self._tree = ttk.Treeview(
-            table_wrap, columns=cols, show="headings", selectmode="browse"
-        )
-        for key, title, width in _TABLE_COLS:
-            self._tree.heading(
-                key, text=title, command=lambda k=key: self._on_sort_header(k)
-            )
-            anchor = "w" if key in ("feature", "diagnostic_flag", "risk") else "e"
-            self._tree.column(key, width=width, anchor=anchor, stretch=(key == "feature"))
-        vsb = ttk.Scrollbar(table_wrap, orient="vertical", command=self._tree.yview)
-        hsb = ttk.Scrollbar(table_wrap, orient="horizontal", command=self._tree.xview)
-        self._tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        self._tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-        self._tree.tag_configure("high_risk", background="#ffe8e8")
-        self._tree.tag_configure("high_null", background="#fff6e0")
-        self._tree.tag_configure("rank_drift_conflict", foreground=COL_WARN)
+
+        def _create_tree_tab(parent_nb: ttk.Notebook, tab_name: str) -> tuple[ttk.Frame, ttk.Treeview]:
+            tab_frame = ttk.Frame(parent_nb, padding=4)
+            tab_frame.columnconfigure(0, weight=1)
+            tab_frame.rowconfigure(0, weight=1)
+            parent_nb.add(tab_frame, text=tab_name)
+
+            tree = ttk.Treeview(tab_frame, columns=cols, show="headings", selectmode="browse")
+            for key, title, width in _TABLE_COLS:
+                tree.heading(key, text=title, command=lambda k=key: self._on_sort_header(k))
+                anchor = "w" if key in ("feature", "diagnostic_flag", "risk") else "e"
+                tree.column(key, width=width, anchor=anchor, stretch=(key == "feature"))
+
+            vsb = ttk.Scrollbar(tab_frame, orient="vertical", command=tree.yview)
+            hsb = ttk.Scrollbar(tab_frame, orient="horizontal", command=tree.xview)
+            tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+            tree.grid(row=0, column=0, sticky="nsew")
+            vsb.grid(row=0, column=1, sticky="ns")
+            hsb.grid(row=1, column=0, sticky="ew")
+
+            tree.tag_configure("high_risk", background="#ffe8e8")
+            tree.tag_configure("high_null", background="#fff6e0")
+            tree.tag_configure("rank_drift_conflict", foreground=COL_WARN)
+            return tab_frame, tree
+
+        self._tab_reg, self._tree_reg = _create_tree_tab(self._notebook, "Feature Registry")
+        self._tab_base, self._tree_base = _create_tree_tab(self._notebook, "Base Pipeline")
+        self._tab_exp, self._tree_exp = _create_tree_tab(self._notebook, "Selected Experimental")
+
+        # Keep legacy _tree pointing to active tab tree for backward compatibility
+        self._tree = self._tree_reg
 
         ttk.Label(
             self,
@@ -194,6 +207,12 @@ class DiagnosticsStudioPanel(ttk.Frame, LazyLoadMixin):
 
     def mark_unavailable(self, message: str) -> None:
         self._rows = []
+        self._rows_reg = []
+        self._rows_base = []
+        self._rows_exp = []
+        self._display_rows_reg = []
+        self._display_rows_base = []
+        self._display_rows_exp = []
         self._display_rows = []
         self._summary = {}
         self._narrative = []
@@ -204,6 +223,10 @@ class DiagnosticsStudioPanel(ttk.Frame, LazyLoadMixin):
             self._narr_text.configure(state="normal")
             self._narr_text.delete("1.0", "end")
             self._narr_text.configure(state="disabled")
+        if hasattr(self, "_notebook"):
+            self._notebook.tab(0, text="Feature Registry")
+            self._notebook.tab(1, text="Base Pipeline")
+            self._notebook.tab(2, text="Selected Experimental")
         self._apply_filter_sort()
         self._status_var.set(message)
 
@@ -279,10 +302,58 @@ class DiagnosticsStudioPanel(ttk.Frame, LazyLoadMixin):
         self._narr_text.insert("1.0", "\n".join(f"• {b}" for b in self._narrative))
         self._narr_text.configure(state="disabled")
 
-        self._apply_filter_sort()
-        self._status_var.set(
-            f"Loaded {len(self._rows)} features · cause={self._summary.get('primary_cause')}"
+        # Partition rows into 3 tabs with ownership invariant enforcement
+        from chain_replay_ml.diagnostics_studio.feature_partition import partition_diagnostic_rows
+        from chain_replay_ml.dataset_builder.writer import _safe_filename, datasets_dir
+        from chain_replay_ml.training.paths import model_package_dir
+
+        ds_name = self._summary.get("dataset") or self._meta.get("dataset")
+        if not ds_name:
+            cfg_path = os.path.join(model_package_dir(self._data_dir(), model_name), "config.json")
+            if os.path.isfile(cfg_path):
+                try:
+                    import json
+                    with open(cfg_path, "r", encoding="utf-8") as fh:
+                        cfg_raw = json.load(fh)
+                    ds_name = cfg_raw.get("dataset")
+                except Exception:
+                    pass
+
+        ds_meta: dict[str, Any] = {}
+        if ds_name:
+            meta_path = os.path.join(datasets_dir(self._data_dir()), f"{_safe_filename(ds_name)}.json")
+            if os.path.isfile(meta_path):
+                try:
+                    import json
+                    with open(meta_path, "r", encoding="utf-8") as fh:
+                        loaded_doc = json.load(fh)
+                    if isinstance(loaded_doc, dict):
+                        ds_meta = loaded_doc
+                except Exception:
+                    ds_meta = {}
+
+        self._partition = partition_diagnostic_rows(
+            self._rows,
+            data_dir=self._data_dir(),
+            dataset_metadata=ds_meta,
         )
+
+        self._rows_reg = self._partition.registry_rows
+        self._rows_base = self._partition.base_pipeline_rows
+        self._rows_exp = self._partition.experimental_rows
+
+        self._apply_filter_sort()
+
+        if not self._partition.is_valid:
+            self._status_var.set(
+                f"Invariant Warning: {self._partition.error_message}"
+            )
+        else:
+            self._status_var.set(
+                f"Loaded {len(self._rows)} features (Reg: {self._partition.registry_count}, "
+                f"Base: {self._partition.base_pipeline_count}, Exp: {self._partition.experimental_count}) · "
+                f"cause={self._summary.get('primary_cause')}"
+            )
 
     def _on_sort_header(self, col: str) -> None:
         if self._sort_col == col:
@@ -303,9 +374,9 @@ class DiagnosticsStudioPanel(ttk.Frame, LazyLoadMixin):
         except ValueError:
             return 30
 
-    def _apply_filter_sort(self) -> None:
+    def _filter_and_sort_subset(self, source_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         needle = str(self._filter_var.get() or "").strip().lower()
-        rows = list(self._rows)
+        rows = list(source_rows)
         if needle:
             rows = [
                 r
@@ -329,20 +400,38 @@ class DiagnosticsStudioPanel(ttk.Frame, LazyLoadMixin):
 
         if self._top_n_only.get():
             by_risk = sorted(
-                self._rows,
+                source_rows,
                 key=lambda r: float(r.get("risk_score") or 0),
                 reverse=True,
             )[: self._top_n()]
             keep = {str(r.get("feature")) for r in by_risk}
             rows = [r for r in rows if str(r.get("feature")) in keep]
 
-        self._display_rows = rows
-        self._render_table()
+        return rows
 
-    def _render_table(self) -> None:
-        tree = self._tree
+    def _apply_filter_sort(self) -> None:
+        self._display_rows_reg = self._filter_and_sort_subset(getattr(self, "_rows_reg", []))
+        self._display_rows_base = self._filter_and_sort_subset(getattr(self, "_rows_base", []))
+        self._display_rows_exp = self._filter_and_sort_subset(getattr(self, "_rows_exp", []))
+        self._display_rows = self._display_rows_reg + self._display_rows_base + self._display_rows_exp
+
+        # Update tab counts
+        reg_tot = len(getattr(self, "_rows_reg", []))
+        base_tot = len(getattr(self, "_rows_base", []))
+        exp_tot = len(getattr(self, "_rows_exp", []))
+
+        if hasattr(self, "_notebook"):
+            self._notebook.tab(0, text=f"Feature Registry ({len(self._display_rows_reg)}/{reg_tot})")
+            self._notebook.tab(1, text=f"Base Pipeline ({len(self._display_rows_base)}/{base_tot})")
+            self._notebook.tab(2, text=f"Selected Experimental ({len(self._display_rows_exp)}/{exp_tot})")
+
+        self._render_tree(self._tree_reg, self._display_rows_reg)
+        self._render_tree(self._tree_base, self._display_rows_base)
+        self._render_tree(self._tree_exp, self._display_rows_exp)
+
+    def _render_tree(self, tree: ttk.Treeview, rows: list[dict[str, Any]]) -> None:
         tree.delete(*tree.get_children())
-        for row in self._display_rows:
+        for row in rows:
             flag = str(row.get("diagnostic_flag") or "ok")
             tags = [flag] if flag != "ok" else []
             values = (
@@ -359,28 +448,40 @@ class DiagnosticsStudioPanel(ttk.Frame, LazyLoadMixin):
             tree.insert("", "end", values=values, tags=tuple(tags))
 
     def _on_export(self) -> None:
-        if not self._display_rows:
-            messagebox.showinfo("Export", "Nothing to export.", parent=self)
+        active_idx = self._notebook.index(self._notebook.select()) if hasattr(self, "_notebook") else 0
+        tab_names = ("registry", "base_pipeline", "experimental")
+        active_name = tab_names[active_idx] if active_idx < len(tab_names) else "diagnostics"
+
+        if active_idx == 0:
+            export_rows = self._display_rows_reg
+        elif active_idx == 1:
+            export_rows = self._display_rows_base
+        else:
+            export_rows = self._display_rows_exp
+
+        if not export_rows:
+            messagebox.showinfo("Export", "Nothing to export in the current tab.", parent=self)
             return
+
         path = filedialog.asksaveasfilename(
             parent=self,
             title="Export diagnostics CSV",
             defaultextension=".csv",
             filetypes=[("CSV", "*.csv")],
-            initialfile=f"{self._selected_model() or 'diagnostics'}_features.csv",
+            initialfile=f"{self._selected_model() or 'diagnostics'}_{active_name}_features.csv",
         )
         if not path:
             return
-        fields = [c[0] for c in _TABLE_COLS]
+        fields = [c[0] for c in _TABLE_COLS] + ["feature_source"]
         try:
             with open(path, "w", encoding="utf-8", newline="") as fh:
                 writer = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
                 writer.writeheader()
-                for row in self._display_rows:
+                for row in export_rows:
                     writer.writerow({k: row.get(k) for k in fields})
         except OSError as exc:
             messagebox.showerror("Export", str(exc), parent=self)
             return
         self._status_var.set(
-            f"Exported {len(self._display_rows)} rows → {os.path.basename(path)}"
+            f"Exported {len(export_rows)} {active_name} rows → {os.path.basename(path)}"
         )
