@@ -3,6 +3,8 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/AruMLStudio.iml" filepath="$PROJECT_DIR$/AruMLStudio.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../AruStrategyApp/.idea/AruStrategyApp.iml" filepath="$PROJECT_DIR$/../AruStrategyApp/.idea/AruStrategyApp.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../Kotak-AruNeo/.idea/Kotak-AruNeo.iml" filepath="$PROJECT_DIR$/../Kotak-AruNeo/.idea/Kotak-AruNeo.iml" />
     </modules>
   </component>
 </project>
