@@ -38,10 +38,14 @@ class FeatureSelectionPicker:
         *,
         profile_var: tk.StringVar | None = None,
         on_change: Callable[[], None] | None = None,
+        chart_dir: str | None = None,
+        feature_project_id: str | None = None,
     ) -> None:
         self._registry = registry
         self._profile_var = profile_var
         self._on_change = on_change
+        self._chart_dir = chart_dir
+        self._feature_project_id = str(feature_project_id or "all").strip().lower()
         self._schema_columns = (load_schema_registry() or {}).get("columns") or {}
         self._enabled_groups: set[str] = set()
         self._enabled_features: set[str] = set()
@@ -54,6 +58,25 @@ class FeatureSelectionPicker:
         self._unlocked_groups: set[str] = set()
         self._exclude_features: set[str] = set()
 
+    def set_feature_project(
+        self,
+        project_id: str | None,
+        chart_dir: str | None = None,
+    ) -> None:
+        if chart_dir is not None:
+            self._chart_dir = chart_dir
+        self._feature_project_id = str(project_id or "all").strip().lower()
+        active_names = set(self.active_project_features())
+        # Reconcile enabled features to new project
+        matching = self._enabled_features & active_names
+        if matching:
+            self._enabled_features = matching
+        else:
+            self._enabled_features = set(active_names)
+        self._unlocked_groups.clear()
+        self._rebuild_groups()
+        self._update_stats()
+
     def set_excluded_features(self, names: set[str] | list[str] | None) -> None:
         self._exclude_features = {str(n) for n in (names or [])}
         if self._enabled_features:
@@ -64,10 +87,33 @@ class FeatureSelectionPicker:
     def excluded_features(self) -> frozenset[str]:
         return frozenset(self._exclude_features)
 
+    def _project_source(self) -> dict[str, Any]:
+        if self._chart_dir:
+            from .build_service import chart_data_dir
+            from chain_replay_ml.dataset_builder.feature_project_organization import (
+                project_registry_feature_source,
+            )
+
+            data_dir = chart_data_dir(self._chart_dir)
+            pid = str(self._feature_project_id or "all").strip().lower()
+            return project_registry_feature_source(data_dir=data_dir, project_id=pid)
+        from chain_replay_ml.dataset_builder.feature_project_organization import canonical_registry_groups
+        from chain_replay_ml.dataset_builder.feature_ownership import canonical_registry_features
+
+        return {
+            "groups": canonical_registry_groups(),
+            "features": sorted(canonical_registry_features()),
+            "project_id": "all",
+        }
+
+    def active_project_features(self) -> list[str]:
+        source = self._project_source()
+        all_feats = source.get("features") or []
+        retired = self._exclude_features
+        return [f for f in all_feats if f not in retired]
+
     def active_feature_total(self) -> int:
-        return total_active_registry_features(
-            self._registry, exclude=self._exclude_features,
-        )
+        return len(self.active_project_features())
 
     def apply_config(self, cfg: dict[str, Any]) -> None:
         self._enabled_groups = normalize_enabled_groups(
@@ -83,6 +129,9 @@ class FeatureSelectionPicker:
             )
         if self._exclude_features:
             self._enabled_features -= self._exclude_features
+        active_set = set(self.active_project_features())
+        if active_set:
+            self._enabled_features &= active_set
         if self._profile_var is not None:
             profile = str(cfg.get("profile") or "default")
             if profile != "custom" and not is_default_feature_selection(
@@ -113,25 +162,15 @@ class FeatureSelectionPicker:
         )
 
     def stats_text(self) -> str:
-        from chain_replay_ml.dataset_builder.feature_domains import DOMAIN_ORDER, features_by_domain
-
-        active_names = active_registry_feature_names(
-            self._registry, exclude=self._exclude_features,
-        )
-        active_set = set(active_names)
-        by_domain = features_by_domain()
-        domain_ids = [
-            d for d in DOMAIN_ORDER
-            if any(f in active_set for f in by_domain.get(d, []))
-        ]
-        selected_domains = 0
-        for d in domain_ids:
-            feats = [f for f in by_domain.get(d, []) if f in active_set]
+        groups = self._domain_rows()
+        active_names = self.active_project_features()
+        selected_groups = 0
+        for gid, _, feats in groups:
             if feats and all(f in self._enabled_features for f in feats):
-                selected_domains += 1
+                selected_groups += 1
         selected_features = len([f for f in active_names if f in self._enabled_features])
         return (
-            f"Domains {selected_domains} / {len(domain_ids)}"
+            f"Groups {selected_groups} / {len(groups)}"
             f"   ·   Features {selected_features} / {len(active_names)}"
         )
 
@@ -268,25 +307,18 @@ class FeatureSelectionPicker:
         return None
 
     def _domain_rows(self) -> list[tuple[str, str, list[str]]]:
-        """Ordered (domain_id, label, active feature names) for the picker."""
-        from chain_replay_ml.dataset_builder.feature_domains import (
-            DOMAIN_LABELS,
-            DOMAIN_ORDER,
-            features_by_domain,
-        )
-
-        active = set(
-            active_registry_feature_names(
-                self._registry, exclude=self._exclude_features,
-            ),
-        )
-        by_domain = features_by_domain()
+        """Ordered (group_id, label, active feature names) for the picker."""
+        source = self._project_source()
+        groups = source.get("groups") or []
+        retired = self._exclude_features
         rows: list[tuple[str, str, list[str]]] = []
-        for domain_id in DOMAIN_ORDER:
-            feats = [f for f in by_domain.get(domain_id, []) if f in active]
+        for g in groups:
+            gid = str(g.get("id") or "")
+            label = str(g.get("label") or gid)
+            feats = [str(f) for f in (g.get("features") or []) if str(f) not in retired]
             if not feats:
                 continue
-            rows.append((domain_id, DOMAIN_LABELS[domain_id], feats))
+            rows.append((gid, label, feats))
         return rows
 
     def _domain_lock_state(self, feats: list[str]) -> dict[str, Any]:

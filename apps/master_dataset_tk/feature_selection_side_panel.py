@@ -18,6 +18,8 @@ def open_feature_selection_panel(
     initial_config: dict[str, Any],
     on_apply: Callable[[dict[str, Any]], None],
     excluded_features: set[str] | frozenset[str] | None = None,
+    chart_dir: str | None = None,
+    feature_project_id: str | None = None,
 ) -> tk.Toplevel:
     """Open picker beside main window; Apply commits config and closes."""
     win = tk.Toplevel(master)
@@ -31,6 +33,8 @@ def open_feature_selection_panel(
         registry,
         profile_var=profile_var,
         on_change=None,
+        chart_dir=chart_dir,
+        feature_project_id=feature_project_id,
     )
     if excluded_features:
         picker.set_excluded_features(excluded_features)

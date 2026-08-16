@@ -644,6 +644,9 @@ class MasterDatasetBuildOrchestrator:
                 feature_count=len(implemented),
                 target_count=len(target_columns),
             )
+            build_summary["feature_project_id"] = feature_project_id
+            build_summary["registry_export_features"] = list(implemented)
+            build_summary["registry_export_count"] = len(implemented)
             store.set_meta("build_summary", build_summary)
             store.set_meta("master_config", {
                 "market": market,
@@ -657,6 +660,8 @@ class MasterDatasetBuildOrchestrator:
                 "gap_policy": normalize_gap_policy(self.config.gap_policy),
                 "prediction_targets": build_summary["prediction_targets"],
                 "feature_project_id": feature_project_id,
+                "registry_export_features": list(implemented),
+                "registry_export_count": len(implemented),
             })
             store.set_meta("build_schema", {
                 "feature_count": len(implemented),

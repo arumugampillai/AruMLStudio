@@ -22,11 +22,13 @@ class FeatureSelectionTab:
         registry: dict[str, Any],
         *,
         chart_dir: str | None = None,
+        feature_project_id: str | None = None,
         on_change: Callable[[], None] | None = None,
         get_sampling_interval_sec: Callable[[], float] | None = None,
     ) -> None:
         self._registry = registry
         self._chart_dir = chart_dir
+        self._feature_project_id = str(feature_project_id or "all").strip().lower()
         self._on_change = on_change
         self._get_sampling_interval_sec = get_sampling_interval_sec
         self._host = parent
@@ -38,6 +40,8 @@ class FeatureSelectionTab:
             registry,
             profile_var=self._profile_var,
             on_change=self._notify,
+            chart_dir=chart_dir,
+            feature_project_id=self._feature_project_id,
         )
         self._panel_win: tk.Toplevel | None = None
         self._build(parent)
@@ -46,7 +50,15 @@ class FeatureSelectionTab:
 
     def set_chart_dir(self, chart_dir: str | None) -> None:
         self._chart_dir = chart_dir
+        self._picker.set_feature_project(self._feature_project_id, chart_dir)
         self.sync_registry_exclusions()
+
+    def set_feature_project_id(self, pid: str) -> None:
+        self._feature_project_id = str(pid or "all").strip().lower()
+        self._picker.set_feature_project(self._feature_project_id, self._chart_dir)
+        self._refresh_profile_labels()
+        self._update_stats()
+        self.refresh_warmup()
 
     def sync_registry_exclusions(self) -> None:
         if not self._chart_dir:
@@ -195,6 +207,8 @@ class FeatureSelectionTab:
             profile_var=self._profile_var,
             initial_config=self.get_config(),
             excluded_features=self._picker.excluded_features(),
+            chart_dir=self._chart_dir,
+            feature_project_id=self._feature_project_id,
             on_apply=on_apply,
         )
         self._panel_win.bind("<Destroy>", lambda _e: setattr(self, "_panel_win", None))

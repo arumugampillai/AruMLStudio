@@ -155,7 +155,10 @@ class BuildConfigPanel(ttk.LabelFrame):
       saved_project = build.get("feature_project_id")
       if isinstance(saved_project, str) and saved_project.strip() and not self._feature_project_locked:
           self._set_feature_project_combo_value(saved_project.strip().lower())
-      self._populate_feature_project_combo()
+      else:
+          self._populate_feature_project_combo()
+          if self._feature_tab is not None:
+              self._feature_tab.set_feature_project_id(self.feature_project_id())
 
   def refresh_master_project(self, master_status: dict[str, Any] | None) -> None:
       """Bind project dropdown to an existing master DB when present."""
@@ -179,6 +182,8 @@ class BuildConfigPanel(ttk.LabelFrame):
       self._populate_feature_project_combo()
       if locked_pid:
           self._set_feature_project_combo_value(locked_pid)
+      elif self._feature_tab is not None:
+          self._feature_tab.set_feature_project_id(self.feature_project_id())
       if hasattr(self, "_feature_project_cb"):
           self._feature_project_cb.configure(
               state="disabled" if self._feature_project_locked else "readonly",
@@ -189,8 +194,12 @@ class BuildConfigPanel(ttk.LabelFrame):
       for label, mapped in self._feature_project_label_to_id.items():
           if mapped == pid:
               self._feature_project_var.set(label)
+              if self._feature_tab is not None:
+                  self._feature_tab.set_feature_project_id(pid)
               return
       self._feature_project_var.set(pid)
+      if self._feature_tab is not None:
+          self._feature_tab.set_feature_project_id(pid)
 
   def _populate_feature_project_combo(self) -> None:
       from chain_replay_ml.dataset_builder.feature_project_organization import (
@@ -224,6 +233,9 @@ class BuildConfigPanel(ttk.LabelFrame):
   def _on_feature_project_selected(self) -> None:
       if self._feature_project_locked:
           return
+      pid = self.feature_project_id()
+      if self._feature_tab is not None:
+          self._feature_tab.set_feature_project_id(pid)
       self._notify()
 
   def _persist_prefs(self) -> None:
@@ -314,6 +326,7 @@ class BuildConfigPanel(ttk.LabelFrame):
           features_tab,
           self._registry,
           chart_dir=self._chart_dir,
+          feature_project_id=self.feature_project_id(),
           on_change=self._notify,
           get_sampling_interval_sec=lambda: float(self.interval_sec()),
       )
