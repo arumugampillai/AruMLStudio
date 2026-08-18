@@ -21,6 +21,7 @@ def save_feature_preset(
     dataset: str | None = None,
     source_model: str | None = None,
     analysis_feature_selection: dict[str, Any] | None = None,
+    recommendation_decision_bundle: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     feats = [str(f).strip() for f in features if str(f).strip()]
     doc: dict[str, Any] = {
@@ -31,6 +32,8 @@ def save_feature_preset(
     }
     if isinstance(analysis_feature_selection, dict) and analysis_feature_selection:
         doc["analysis_feature_selection"] = dict(analysis_feature_selection)
+    if isinstance(recommendation_decision_bundle, dict) and recommendation_decision_bundle:
+        doc["recommendation_decision_bundle"] = dict(recommendation_decision_bundle)
     path = preset_storage_path(chart_dir)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
@@ -77,6 +80,22 @@ def apply_feature_preset(
     allowed = set(dataset_feature_names) if dataset_feature_names else set(requested)
     applied = {f for f in requested if f in allowed}
     preset_ds = str(preset.get("dataset") or "").strip()
+
+    rdb = preset.get("recommendation_decision_bundle")
+    context_match = True
+    context_warning: str | None = None
+
+    if isinstance(rdb, dict) and rdb:
+        preset_market = str(rdb.get("market") or "").upper()
+        ds_upper = str(dataset_name or "").upper()
+        if preset_market and preset_market in ("NIFTY", "SENSEX", "BANKNIFTY"):
+            if "SENSEX" in ds_upper and preset_market != "SENSEX":
+                context_match = False
+                context_warning = f"Context Mismatch: Preset is for {preset_market} but dataset is SENSEX."
+            elif "NIFTY" in ds_upper and "BANKNIFTY" not in ds_upper and preset_market != "NIFTY":
+                context_match = False
+                context_warning = f"Context Mismatch: Preset is for {preset_market} but dataset is NIFTY."
+
     return {
         "applied": bool(applied),
         "pending": bool(requested) and not applied,
@@ -85,10 +104,15 @@ def apply_feature_preset(
         "features": sorted(applied),
         "dataset": preset_ds or None,
         "dataset_match": not preset_ds or preset_ds == dataset_name,
+        "context_match": context_match,
+        "context_warning": context_warning,
         "source_model": preset.get("source_model"),
         "analysis_feature_selection": (
             dict(preset["analysis_feature_selection"])
             if isinstance(preset.get("analysis_feature_selection"), dict)
             else None
+        ),
+        "recommendation_decision_bundle": (
+            dict(rdb) if isinstance(rdb, dict) else None
         ),
     }

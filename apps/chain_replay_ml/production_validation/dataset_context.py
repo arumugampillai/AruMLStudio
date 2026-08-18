@@ -89,10 +89,37 @@ def resolve_context_from_model_package(
     data_dir: str,
     model_name: str,
 ) -> DatasetContext | None:
-    """Read model package config / dataset_metadata to recover canonical Dataset Context."""
+    """Read model package config / dataset_metadata to recover canonical Dataset Context.
+
+    Resolution order:
+    1. Check metadata.json for authoritative recommendation_provenance.
+    2. If present with context_id, build canonical context from provenanced parameters.
+    3. If absent (legacy model), fall back to heuristic extraction from dataset_metadata / config.
+    """
     from chain_replay_ml.training.paths import model_package_dir, safe_model_name
 
     pkg = model_package_dir(data_dir, safe_model_name(model_name))
+    
+    # 1. Authoritative Recommendation Provenance Check
+    meta_path = os.path.join(pkg, "metadata.json")
+    if os.path.isfile(meta_path):
+        try:
+            with open(meta_path, encoding="utf-8") as mfh:
+                meta = json.load(mfh)
+            if isinstance(meta, dict):
+                rec_prov = meta.get("recommendation_provenance")
+                if isinstance(rec_prov, dict) and rec_prov.get("context_id"):
+                    return build_dataset_context(
+                        market=str(rec_prov.get("market") or "NIFTY"),
+                        sampling_interval_sec=int(rec_prov.get("sampling_interval_sec") or 3),
+                        sampling_label=f"{rec_prov.get('sampling_interval_sec', 3)}s",
+                        sliding_window=str(rec_prov.get("sliding_window") or "standard"),
+                        feature_project_id=str(rec_prov.get("feature_project_id") or "all"),
+                    )
+        except Exception:
+            pass
+
+    # 2. Heuristic Fallback for Legacy Models
     cfg_path = os.path.join(pkg, "config.json")
     if not os.path.isfile(cfg_path):
         return None

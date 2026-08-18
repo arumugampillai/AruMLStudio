@@ -804,6 +804,12 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
             )
             if isinstance(afs, dict) and afs:
                 self.state.analysis_feature_selection = dict(afs)
+            rdb = (
+                result.get("recommendation_decision_bundle")
+                or preset.get("recommendation_decision_bundle")
+            )
+            if isinstance(rdb, dict) and rdb:
+                self.state.recommendation_decision_bundle = dict(rdb)
             self._pending_feature_preset = None
             clear_feature_preset(self.chart_dir)
             self._render_feature_groups()

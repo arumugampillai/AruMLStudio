@@ -47,6 +47,8 @@ class TrainingConfig:
     package_anchor: str | None = None
     # Analysis Lab Final Feature Dataset identity (optional; Model Registry Overview).
     analysis_feature_selection: dict[str, Any] | None = None
+    # Phase 3B/3C Feature Recommendation Decision Bundle & Training Provenance.
+    recommendation_decision_bundle: dict[str, Any] | None = None
     # Optional train-time LTP premium band (Create Model → Premium Selection).
     premium_selection_enabled: bool = False
     premium_min: float | None = None
@@ -75,6 +77,10 @@ class TrainingConfig:
             doc.pop("package_anchor", None)
         if not self.analysis_feature_selection:
             doc.pop("analysis_feature_selection", None)
+        if self.recommendation_decision_bundle:
+            doc["recommendation_decision_bundle"] = dict(self.recommendation_decision_bundle)
+        else:
+            doc.pop("recommendation_decision_bundle", None)
         if self.premium_selection_enabled and self.premium_min is not None and self.premium_max is not None:
             doc["premium_selection"] = {
                 "enabled": True,
@@ -223,6 +229,10 @@ def normalize_training_config(raw: dict[str, Any]) -> TrainingConfig:
     analysis_feature_selection = (
         dict(afs_raw) if isinstance(afs_raw, dict) and afs_raw else None
     )
+    rdb_raw = raw.get("recommendation_decision_bundle") or raw.get("recommendationDecisionBundle")
+    recommendation_decision_bundle = (
+        dict(rdb_raw) if isinstance(rdb_raw, dict) and rdb_raw else None
+    )
     prem_sel = raw.get("premium_selection") or raw.get("premiumSelection") or {}
     if not isinstance(prem_sel, dict):
         prem_sel = {}
@@ -291,6 +301,7 @@ def normalize_training_config(raw: dict[str, Any]) -> TrainingConfig:
         lifecycle=lifecycle,
         package_anchor=package_anchor,
         analysis_feature_selection=analysis_feature_selection,
+        recommendation_decision_bundle=recommendation_decision_bundle,
         premium_selection_enabled=premium_enabled,
         premium_min=premium_min,
         premium_max=premium_max,

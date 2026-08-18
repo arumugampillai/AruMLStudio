@@ -323,6 +323,13 @@ def get_population_recommendations(
     """Retrieve population-specific recommendations and health metrics from Evidence DB."""
     from .dataset_context import LEGACY_UNKNOWN_CONTEXT_ID
     from .evidence_store import get_connection
+    from .recommendation_policy import (
+        RecommendationPolicy,
+        compute_evidence_confidence,
+        compute_model_consensus,
+        compute_recency_staleness,
+        load_recommendation_policy,
+    )
 
     root = str(data_dir or "").strip()
     if not root:
@@ -334,6 +341,7 @@ def get_population_recommendations(
         return []
 
     try:
+        policy = load_recommendation_policy(root, context_id=context_id)
         pop = str(population or "registry").strip().lower()
         if pop == "experimental":
             query = """
@@ -362,7 +370,8 @@ def get_population_recommendations(
 
             query += " ORDER BY e.lifecycle_status DESC, e.lineage_evidence_score DESC, e.feature_name ASC"
             cur = conn.execute(query, params)
-            return [dict(row) for row in cur.fetchall()]
+            rows = [dict(row) for row in cur.fetchall()]
+            return _enrich_intelligence_metrics(rows, conn, population="experimental", context_id=context_id, policy=policy)
 
         elif pop == "base_pipeline":
             query = """
@@ -382,7 +391,7 @@ def get_population_recommendations(
             rows = [dict(r) for r in cur.fetchall()]
             for rank, r in enumerate(rows, start=1):
                 r["priority_rank"] = rank
-            return rows
+            return _enrich_intelligence_metrics(rows, conn, population="base_pipeline", context_id=context_id, policy=policy)
 
         elif pop == "registry":
             query = """
@@ -399,7 +408,8 @@ def get_population_recommendations(
 
             query += " ORDER BY evidence_score ASC, remove_runs DESC, feature_name ASC"
             cur = conn.execute(query, params)
-            return [dict(row) for row in cur.fetchall()]
+            rows = [dict(row) for row in cur.fetchall()]
+            return _enrich_intelligence_metrics(rows, conn, population="registry", context_id=context_id, policy=policy)
 
         else:  # all
             query = "SELECT * FROM feature_context_summary WHERE 1=1"
@@ -412,9 +422,191 @@ def get_population_recommendations(
                 params.append(LEGACY_UNKNOWN_CONTEXT_ID)
             query += " ORDER BY feature_source, evidence_score DESC"
             cur = conn.execute(query, params)
-            return [dict(row) for row in cur.fetchall()]
+            rows = [dict(row) for row in cur.fetchall()]
+            return _enrich_intelligence_metrics(rows, conn, population="all", context_id=context_id, policy=policy)
     finally:
         conn.close()
+
+
+def _enrich_intelligence_metrics(
+    rows: list[dict[str, Any]],
+    conn: Any,
+    *,
+    population: str,
+    context_id: str | None = None,
+    policy: Any = None,
+) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+
+    from .recommendation_policy import (
+        compute_context_generalization,
+        compute_evidence_confidence,
+        compute_model_consensus,
+        compute_recency_staleness,
+        compute_score_volatility,
+        derive_risk_badges,
+    )
+
+    # 1. Fetch raw evidence for historical reconstruction & consensus
+    ev_query = """
+        SELECT context_id, feature_name, feature_source, pipeline_id, pipeline_snapshot_id,
+               model_name, recommendation, run_timestamp, evidence_id
+        FROM recommendation_evidence
+    """
+    params = []
+    if context_id:
+        ev_query += " WHERE context_id = ?"
+        params.append(context_id)
+    ev_query += " ORDER BY run_timestamp ASC"
+
+    try:
+        cur_ev = conn.execute(ev_query, params)
+        raw_ev = [dict(r) for r in cur_ev.fetchall()]
+    except Exception:
+        raw_ev = []
+
+    ev_by_target: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for r in raw_ev:
+        cid = r.get("context_id")
+        fn = r.get("feature_name")
+        pid = r.get("pipeline_id")
+        snap = r.get("pipeline_snapshot_id")
+        if population == "experimental" and pid and snap:
+            key = (cid, pid, snap, fn)
+        else:
+            key = (cid, fn)
+        ev_by_target.setdefault(key, []).append(r)
+
+    # 2. Level 1 Comparable Context Resolution for Generalization
+    level1_comparable_cids: list[str] = []
+    comparable_summaries: dict[str, dict[str, Any]] = {}
+    try:
+        cur_ctxs = conn.execute("SELECT context_id, market, sampling_interval_sec, sliding_window, feature_project_id FROM dataset_contexts;").fetchall()
+        all_ctxs = {c["context_id"]: dict(c) for c in cur_ctxs}
+        
+        target_ctx = all_ctxs.get(context_id) if context_id else None
+        if target_ctx:
+            m = str(target_ctx.get("market") or "").upper()
+            win = str(target_ctx.get("sliding_window") or "").lower()
+            fpid = str(target_ctx.get("feature_project_id") or "").lower()
+            target_sec = int(target_ctx.get("sampling_interval_sec") or 0)
+            
+            for c_id, c_data in all_ctxs.items():
+                if (
+                    c_id != context_id
+                    and str(c_data.get("market") or "").upper() == m
+                    and str(c_data.get("sliding_window") or "").lower() == win
+                    and str(c_data.get("feature_project_id") or "").lower() == fpid
+                    and int(c_data.get("sampling_interval_sec") or 0) != target_sec
+                ):
+                    level1_comparable_cids.append(c_id)
+
+        # Pre-load context summaries across all relevant contexts
+        if level1_comparable_cids or context_id:
+            relevant_cids = list(set(([context_id] if context_id else []) + level1_comparable_cids))
+            placeholders = ",".join("?" for _ in relevant_cids)
+            if population == "experimental":
+                q_sum = f"SELECT context_id, feature_name, lineage_evidence_score as evidence_score, last_recommendation, dominant_recommendation FROM experimental_lineage_summary WHERE context_id IN ({placeholders})"
+            else:
+                q_sum = f"SELECT context_id, feature_name, evidence_score, last_recommendation FROM feature_context_summary WHERE context_id IN ({placeholders})"
+            
+            cur_sum = conn.execute(q_sum, relevant_cids).fetchall()
+            for s_row in cur_sum:
+                cid = s_row["context_id"]
+                fn = s_row["feature_name"]
+                comparable_summaries.setdefault(cid, {})[fn] = dict(s_row)
+    except Exception:
+        level1_comparable_cids = []
+        comparable_summaries = {}
+
+    for r in rows:
+        cid = r.get("context_id")
+        fn = r.get("feature_name")
+        pid = r.get("pipeline_id")
+        snap = r.get("pipeline_snapshot_id")
+
+        if population == "experimental" and pid and snap:
+            key = (cid, pid, snap, fn)
+            runs = int(r.get("total_runs") or 0)
+            score_val = float(r.get("lineage_evidence_score") or 0.0)
+        else:
+            key = (cid, fn)
+            runs = int(r.get("total_runs") or 0)
+            score_val = float(r.get("evidence_score") or 0.0)
+
+        models = int(r.get("unique_models_count") or 0)
+
+        # 1. Evidence Confidence (Phase 2A)
+        conf = compute_evidence_confidence(runs=runs, models=models, policy=policy)
+        r["evidence_confidence"] = conf
+        r["confidence_pct"] = round(conf * 100.0, 1)
+        r["confidence_display"] = f"{conf * 100.0:.1f}%" if runs > 0 else "—"
+
+        # 2. Staleness & Freshness (Phase 2A)
+        staleness = compute_recency_staleness(r.get("last_validated_at"))
+        r["staleness_seconds"] = staleness["staleness_seconds"]
+        r["staleness_days"] = staleness["staleness_days"]
+        r["freshness_label"] = staleness["freshness_label"]
+        r["freshness_display"] = staleness["display_text"]
+
+        # 3. Model Consensus (Phase 2A)
+        feat_ev_rows = ev_by_target.get(key, [])
+        consensus = compute_model_consensus(feat_ev_rows)
+        r["model_consensus"] = consensus
+        r["consensus_ratio"] = consensus["consensus_ratio"]
+        r["is_consensus_tie"] = consensus["is_tie"]
+        r["dominant_recommendation"] = consensus["dominant_recommendation"]
+        r["consensus_display"] = consensus["display_text"]
+
+        # 4. Operational Priority Score (Phase 2A)
+        op_score = round(score_val * conf, 2)
+        r["operational_priority_score"] = op_score
+
+        # 5. Score Stability & Volatility (Phase 2B)
+        vol_res = compute_score_volatility(feat_ev_rows, policy=policy)
+        r["score_volatility"] = vol_res["volatility_score"]
+        r["score_range"] = vol_res["score_range"]
+        r["direction_flips"] = vol_res["direction_flips"]
+        r["stability_label"] = vol_res["stability_label"]
+        r["stability_display"] = vol_res["display_text"]
+        r["score_trajectory"] = vol_res["score_trajectory"]
+
+        # 6. Level 1 Cross-Context Generalization (Phase 2B)
+        gen_res = compute_context_generalization(
+            primary_context_id=cid or "",
+            feature_name=fn or "",
+            context_summaries_by_cid=comparable_summaries,
+            level1_comparable_context_ids=level1_comparable_cids,
+        )
+        r["generalization_score"] = gen_res["generalization_score"]
+        r["generalization_label"] = gen_res["generalization_label"]
+        r["generalization_display"] = gen_res["display_text"]
+        r["comparable_context_count"] = gen_res["comparable_context_count"]
+
+        # 7. Explicit Risk Badges (Phase 2B)
+        risk_badges = derive_risk_badges(
+            evidence_score=score_val,
+            is_consensus_tie=bool(r.get("is_consensus_tie", False)),
+            freshness_label=str(r.get("freshness_label") or ""),
+            stability_label=str(r.get("stability_label") or ""),
+        )
+        r["risk_badges"] = risk_badges
+        r["risk_badges_display"] = " ".join(f"[{b}]" for b in risk_badges) if risk_badges else "—"
+
+    if population == "base_pipeline":
+        sorted_for_advisory = sorted(
+            rows,
+            key=lambda item: (
+                -float(item.get("operational_priority_score") or 0.0),
+                -int(item.get("keep_runs") or 0),
+                str(item.get("feature_name") or ""),
+            ),
+        )
+        for adv_idx, item in enumerate(sorted_for_advisory, start=1):
+            item["advisory_rank"] = adv_idx
+
+    return rows
 
 
 def ignore_recommendation(
@@ -649,7 +841,7 @@ def update_registry_recommendations(
         from .recommendation_policy import load_recommendation_policy
 
         context = resolve_context_from_model_package(root, model) or resolve_context_or_legacy(root, model)
-        policy = load_recommendation_policy(root)
+        policy = load_recommendation_policy(root, context_id=context.context_id)
         conn = get_connection(root)
         try:
             cfg_path = os.path.join(pkg, "config.json")

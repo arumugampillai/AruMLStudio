@@ -1,12 +1,30 @@
-# AruMLStudio Feature Recommendation Lifecycle — Current Implementation
+# AruMLStudio Feature Recommendation Lifecycle & Evidence Subsystem
+## Master Architectural & Technical Reference (Phase 1 + Phase 2A + Phase 2B)
+
+> **Document Status**: AUTHORITATIVE MASTER LIFECYCLE SPECIFICATION  
+> **Target Subsystem**: Feature Recommendation Lifecycle & Evidence Subsystem  
+> **Subsystems Implemented & Verified**:  
+> - **Phase 1**: SQLite Evidence DB, Bounded Evidence Scoring, Dual Projections, Candidate Elimination Gate, Configurable Policy Settings, Versioning & Rollback  
+> - **Phase 2A**: Evidence Intelligence (Confidence Saturation, Multi-Model Consensus, Strict SPLIT Tie Handling, Validation Freshness, Operational Priority Score, Advisory Rank)  
+> - **Phase 2B**: Behavioral Stability (Score Volatility $\sigma_S$, Score Range Spread $\Delta S$, Direction Flips $D_{\text{flips}}$), Level-1 Cross-Context Generalization Index ($G$), Explicit Risk Badges (`[DEGRADED]`, `[SPLIT]`, `[STALE]`, `[UNSTABLE]`)  
+>
+> **Master Documentation Architecture**:
+> ```
+> Doc 08 — Feature Recommendation Lifecycle MASTER
+>   ├── 8.1 — Scoring & Lifecycle Policy (docs/08.1-FEATURE_RECOMMENDATION_SCORING_LIFECYCLE_POLICY.md)
+>   ├── 8.2 — Policy Settings & Versioning (docs/08.2-FEATURE_RECOMMENDATION_POLICY_SETTINGS.md)
+>   ├── 8.3 — Phase 2A — Evidence Intelligence (docs/08.3-FEATURE_RECOMMENDATION_PHASE_2A_EVIDENCE_INTELLIGENCE.md)
+>   └── 8.4 — Phase 2B — Stability, Risk & Generalization (docs/08.4-FEATURE_RECOMMENDATION_PHASE_2B_STABILITY_RISK_GENERALIZATION.md)
+> ```
+> **Future Subsystems**: Phase 3 (Recommendation-to-Training Decision Engine) is documented separately in [`docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md) as a PROPOSED architectural design.
 
 ---
 
-## 1. Executive Summary & Purpose
+## 1. Executive Summary & Master Architecture
 
-This document provides the authoritative technical reference for the **Feature Recommendation Lifecycle** in **AruMLStudio**.
+The **Feature Recommendation Subsystem** in **AruMLStudio** provides end-to-end evidence accumulation, lifecycle governance, multi-model consensus, score stability, and cross-timeframe generalization for all engineered features.
 
-It details how **Production Validation** and **Feature Studio** evaluate trained machine learning models against out-of-sample unseen market data, synthesize multi-signal feature validation metrics (**KEEP**, **WATCH**, **REMOVE**), automatically persist immutable validation evidence into the canonical SQLite database (`feature_recommendation_evidence.db`), and materialize dual derived projections for dataset-context operational state and experimental lineage evaluation.
+Validation diagnostics benchmark trained machine learning models against out-of-sample unseen market data to synthesize multi-signal recommendations (**`KEEP`**, **`WATCH`**, **`REMOVE`**). These recommendations are automatically persisted into an append-only, immutable SQLite evidence database (`feature_recommendation_evidence.db`), materialized into dual projections, enriched with query-time evidence intelligence, and presented through the 5-tab **Feature Recommendation Evidence Studio**.
 
 ```
                          PRODUCTION VALIDATION RUN
@@ -23,47 +41,52 @@ It details how **Production Validation** and **Feature Studio** evaluate trained
           feature_context_summary         experimental_lineage_summary
             (Context Projection)               (Lineage Projection)
                      │                               │
-                     ▼                               ▼
-         Registry & Base Health /         Experimental Streak / Score /
-        Context Pre-Training Gate             Promotion Candidate
-                     │                               │
                      └───────────────┬───────────────┘
+                                     │
                                      ▼
-                  Feature Recommendation Evidence Studio
+                     QUERY-TIME INTELLIGENCE ENRICHMENT
+                     • Phase 2A: Confidence C, Consensus, Freshness, Advisory Rank
+                     • Phase 2B: Volatility σ_S, Range ΔS, Level-1 Gen Index G, Risk Badges
+                                     │
+                     ┌───────────────┴───────────────┐
+                     ▼                               ▼
+       Feature Recommendation Evidence Studio    Auto Candidate Generation
+       (5-Tab Operator Workspace)                (Pre-Training Elimination Gate)
 ```
 
 > [!IMPORTANT]
-> **Part A — Current Implementation**: This document strictly describes the **current codebase**.
-> - The authoritative persistence store is the SQLite Evidence Database: `feature_recommendation_evidence.db`.
-> - The legacy JSON file `feature_recommendation_history.json` is **historical migration source data only** and is **no longer the active store**.
-> - Recommendations and scores serve as **observational evidence, pre-training candidate filtering, and human audit history**.
-> - In the current architecture, there is **no automatic Feature Registry deletion**, **no automatic Base Pipeline deletion**, and **no automatic Experimental → Base promotion**.
+> **Core Architectural Invariants**:
+> 1. `recommendation_evidence` is strictly **append-only and immutable**. Historical events are permanent facts.
+> 2. Dual projections (`feature_context_summary`, `experimental_lineage_summary`) are **purely deterministic and rebuildable** from raw evidence at any time.
+> 3. Phase 2A and Phase 2B intelligence metrics are derived **dynamically at query time** with zero schema migrations and zero DB mutations.
+> 4. **Registry & Base Pipeline Immunity**: Feature Registry and Base Pipeline features are **never automatically deleted or blocked**.
+> 5. **Experimental Promotion**: `PROMOTION_CANDIDATE` is an eligibility state for human governance review; it **never automatically mutates the Base Pipeline**.
 
 ---
 
-## 2. Feature Studio & Production Validation Architecture
+## 2. Production Validation Forward Benchmarking
 
-The **Feature Studio** ([`apps/master_dataset_tk/feature_studio_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_studio_panel.py)) and **Production Validation Panel** ([`apps/master_dataset_tk/production_validation_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/production_validation_panel.py)) provide comprehensive model diagnostics and out-of-sample forward testing.
+Diagnostics and forward out-of-sample benchmarking are orchestrated across **Feature Studio** ([`apps/master_dataset_tk/feature_studio_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_studio_panel.py)) and **Production Validation** ([`apps/master_dataset_tk/production_validation_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/production_validation_panel.py)):
 
 ```
                                   FEATURE STUDIO
-                               (FeatureStudioPanel)
-                                        │
-      ┌─────────────┬─────────────┬─────┴───────┬─────────────┬─────────────┬─────────────┐
-      ▼             ▼             ▼             ▼             ▼             ▼             ▼
- [Importance] [Distribution]   [Drift]   [Studio Compare] [Diagnostics]  [Planner]  [Production]
-  (Native/SHAP) (Moments)   (WF vs. HO)  (Model Deltas)  (Root Cause)   (Audit)     [Validation]
+                                (FeatureStudioPanel)
+                                         │
+       ┌─────────────┬─────────────┬─────┴───────┬─────────────┬─────────────┬─────────────┐
+       ▼             ▼             ▼             ▼             ▼             ▼             ▼
+  [Importance] [Distribution]   [Drift]   [Studio Compare] [Diagnostics]  [Planner]  [Production]
+   (Native/SHAP) (Moments)   (WF vs. HO)  (Model Deltas)  (Root Cause)   (Audit)     [Validation]
 ```
 
-### 2.1. Holdout Validation vs. True Unseen Validation
-- **Diagnostics Studio**: Benchmarks **Walk-Forward Training Days vs. Holdout Days** to identify training overfitting, collinearity, or localized feature drift.
-- **Production Validation**: Benchmarks **Holdout Days vs. True Unseen Forward Days** never seen during hyperparameter tuning or training. Its purpose is to verify if predictive utility collapses under live forward market dynamics.
+### 2.1. Holdout vs. True Unseen Forward Benchmarking
+- **Diagnostics Studio**: Compares **Walk-Forward Training Days vs. Holdout Days** to identify localized feature drift or overfitting.
+- **Production Validation**: Compares **Holdout Days vs. True Unseen Forward Days** never seen during hyperparameter tuning or feature selection. It verifies if predictive utility collapses under live forward market dynamics.
 
 ---
 
 ## 3. The Three Feature Populations
 
-Every feature entering Production Validation is partitioned into exactly one of three distinct populations with strictly defined lifecycles:
+Every feature entering Production Validation is partitioned into exactly one of three distinct governance populations:
 
 ```
                             THREE FEATURE POPULATIONS
@@ -82,328 +105,15 @@ Canonical Master Dataset         Approved Baseline Features     Experimental Can
 • NEVER blocked                 • NEVER blocked                 • NEVER automatically promoted
 ```
 
-### 3.1. Feature Registry Features
-- **Origin**: Canonical features materialized through the Master Dataset catalog. Scoped by `feature_project_id`.
-- **Validation Role**: Receives `KEEP` / `WATCH` / `REMOVE` recommendations.
-- **Invariants**: REMOVE recommendations raise observational alerts for registry curators. Registry features are **never automatically retired, deleted, or blocked** from model training.
-
-### 3.2. Base Pipeline Features
-- **Origin**: Already approved and merged transformation pipeline features (`base_pipeline_export_features`).
-- **Validation Role**: Participates in evidence accumulation, evidence scoring, and ranking health.
-- **Invariants**: Repeated REMOVE recommendations decrease ranking and flag health warnings (e.g. `alert` status when score $\le -40.0$). Base Pipeline features are **never automatically deleted or blocked**.
-
-### 3.3. Selected Experimental Pipeline Features
-- **Origin**: Experimental candidate features generated and evaluated within a specific pipeline lineage (`pipeline_id` + `pipeline_snapshot_id`).
-- **Validation Role**: Evaluated through exact lineage tracking. Tracks `KEEP` streaks, `REMOVE` streaks, and lineage evidence scores.
-- **Invariants**:
-  - Consecutive REMOVE recommendations trigger context-level candidate blocking in pre-training candidate generation.
-  - Consistent KEEP performance unlocks **`PROMOTION_CANDIDATE`** eligibility for human architectural review.
-  - There is **no automatic promotion** from Experimental to Base Pipeline without explicit human review and code integration.
+1. **Feature Registry Features**: Canonical features defined in the Master Dataset schema. Scoped by `feature_project_id`. Repeated REMOVEs raise observational `[ALERT]` flags for data curators, but registry features are **never blocked or deleted**.
+2. **Base Pipeline Features**: Approved baseline pipeline transformations (`base_pipeline_export_features`). Monitored for degradation. Repeated REMOVEs demote rank and trigger health warnings, but base features are **never blocked or deleted**.
+3. **Selected Experimental Features**: Candidate transformations generated and evaluated within an explicit pipeline lineage (`pipeline_id` + `pipeline_snapshot_id`). Consecutive REMOVE streaks trigger context-level **candidate blocking** in Auto Candidate Generation. Consistent KEEP performance unlocks **`PROMOTION_CANDIDATE`** status.
 
 ---
 
-## 4. Unseen Dataset Resolution & Deterministic Lineage
+## 4. Dataset Context & Context Isolation
 
-The module [`apps/chain_replay_ml/production_validation/unseen_dataset.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/unseen_dataset.py) ensures forward test datasets perfectly reproduce the exact feature transformations of the parent model.
-
-```
-                             TRAINED MODEL PACKAGE
-                             models/<model_name>/
-                                       │
-     ┌─────────────────────────────────┼─────────────────────────────────┐
-     ▼                                 ▼                                 ▼
-feature_project_id                pipeline_id                   pipeline_snapshot_id
- (e.g. "all")                    (e.g. "PL_0005")               ("snap_v1")
-     │                                 │                                 │
-     └─────────────────────────────────┼─────────────────────────────────┘
-                                       │
-                                       ▼
-                       unseen_dataset_identity_hash()
-                     (SHA256 content hash of lineage)
-                                       │
-                    ┌──────────────────┴──────────────────┐
-                    ▼                                     ▼
-          [Cached Match Found]                   [No Match / Stale]
-         Reuse existing parquet:               Generate on-the-fly via
-     unseen_<slug>_<hash>.parquet              create_analysis_dataset()
-```
-
-$$\text{identity\_hash} = \text{SHA256}\Big(\text{master\_db} + \text{unseen\_days} + \text{feature\_project\_id} + \text{pipeline\_id} + \text{pipeline\_snapshot\_id} + \text{flags}\Big)[:8]$$
-
----
-
-## 5. Feature Validation Decision Logic (`recommend_feature`)
-
-Located in [`apps/chain_replay_ml/production_validation/rules.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/rules.py):
-
-```
-                           Feature Validation Metrics
-                                       │
-                     ┌─────────────────┼─────────────────┐
-                     ▼                 ▼                 ▼
-                Rank Drop          Imp Drop        Drift Severity
-             (ΔR <= -5: Sev 2) (RelDrop >= 50%: 2) (Drift/KS/W >= Sev 1)
-                     │                 │                 │
-                     └─────────────────┼─────────────────┘
-                                       │
-                                       ▼
-                   Are ALL critical degradation signals severe?
-                                       │
-                         YES ──────────┴────────── NO
-                          │                         │
-                          ▼                         ▼
-                       REMOVE               Any signal medium?
-                                            (ΔR <= -2 OR RelDrop >= 25%)
-                                                    │
-                                          YES ──────┴────── NO
-                                           │                 │
-                                           ▼                 ▼
-                                         WATCH              KEEP
-```
-
-| Recommendation | Criteria | Interpretation |
-|---|---|---|
-| **`REMOVE`** | Severe Rank Drop ($\Delta R \le -5$) **AND** Severe Importance Drop ($\text{RelDrop} \ge 50\%$) **AND** Distribution Drift ($\ge 1$). | Predictive power collapsed on forward data alongside significant distribution drift. |
-| **`WATCH`** | Medium Rank Drop ($\Delta R \le -2$) **OR** Medium Importance Drop ($\text{RelDrop} \ge 25\%$) **OR** Moderate Drift. | Partial degradation or distribution instability between Holdout and Unseen regimes. |
-| **`KEEP`** | Stable Rank ($|\Delta R| \le 1$) and stable importance across regimes. | Feature maintained robust predictive utility on true unseen forward trading days. |
-
----
-
-## 6. SQLite Evidence Database Architecture
-
-Authoritative persistence is managed by [`apps/chain_replay_ml/production_validation/evidence_store.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/evidence_store.py) in the SQLite database:
-$$\text{Path: }\mathtt{<chart\_data\_dir>/feature\_recommendation\_evidence.db}$$
-
-```
-                                SQLite EVIDENCE STORE
-                         (feature_recommendation_evidence.db)
-                                          │
-    ┌───────────────────────────┬─────────┴─────────┬───────────────────────────┐
-    ▼                           ▼                   ▼                           ▼
-dataset_contexts     recommendation_evidence  feature_context_summary  experimental_lineage_summary
-(Regime Metadata)     (Immutable Raw Log)       (Context Projection)        (Lineage Projection)
-```
-
-### 6.1. Schema DDL
-
-#### Table 1: `dataset_contexts` (Dataset Regime Identification)
-```sql
-CREATE TABLE IF NOT EXISTS dataset_contexts (
-    context_id TEXT PRIMARY KEY,               -- e.g. 'ctx_574ee67348f2'
-    market TEXT NOT NULL,                      -- e.g. 'NIFTY', 'BANKNIFTY', 'SENSEX'
-    sampling_interval_sec INTEGER NOT NULL,    -- e.g. 3, 1, 6
-    sampling_label TEXT,                       -- e.g. '3s', '6s'
-    sliding_window TEXT NOT NULL,              -- e.g. 'standard', 'atm_15'
-    feature_project_id TEXT NOT NULL,          -- e.g. 'all', 'chart'
-    context_key TEXT NOT NULL UNIQUE,          -- 'NIFTY:3:standard:all'
-    created_at TEXT NOT NULL
-);
-```
-
-#### Table 2: `recommendation_evidence` (Authoritative Immutable Event Log)
-```sql
-CREATE TABLE IF NOT EXISTS recommendation_evidence (
-    evidence_id TEXT PRIMARY KEY,              -- 'ev_{run_id}_{safe_model_name}_{feature_name}'
-    context_id TEXT NOT NULL,
-    feature_name TEXT NOT NULL,
-    feature_source TEXT NOT NULL,              -- 'registry', 'base_pipeline', 'experimental'
-    pipeline_id TEXT,                          -- NULL for registry/base
-    pipeline_snapshot_id TEXT,                 -- NULL for registry/base
-    recommendation TEXT NOT NULL,              -- 'KEEP', 'WATCH', 'REMOVE'
-    validation_run_id TEXT NOT NULL,
-    model_name TEXT NOT NULL,
-    target_column TEXT,
-    holdout_rank INTEGER,
-    unseen_rank INTEGER,
-    rank_change INTEGER,
-    relative_imp_drop REAL,
-    drift_severity INTEGER,
-    evidence_detail_json TEXT,
-    run_timestamp TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (context_id) REFERENCES dataset_contexts(context_id)
-);
-```
-
-#### Table 3: `feature_context_summary` (Context-Level Materialized Projection)
-```sql
-CREATE TABLE IF NOT EXISTS feature_context_summary (
-    context_id TEXT NOT NULL,
-    feature_source TEXT NOT NULL,
-    feature_name TEXT NOT NULL,
-    total_runs INTEGER NOT NULL DEFAULT 0,
-    unique_models_count INTEGER NOT NULL DEFAULT 0,
-    keep_runs INTEGER NOT NULL DEFAULT 0,
-    watch_runs INTEGER NOT NULL DEFAULT 0,
-    remove_runs INTEGER NOT NULL DEFAULT 0,
-    last_recommendation TEXT,
-    last_run_id TEXT,
-    last_model_name TEXT,
-    last_run_timestamp TEXT,
-    current_streak_type TEXT,                  -- 'KEEP', 'WATCH', 'REMOVE'
-    current_streak_count INTEGER DEFAULT 0,
-    evidence_score REAL DEFAULT 0.0,
-    lifecycle_status TEXT NOT NULL DEFAULT 'active', -- 'active', 'held', 'blocked', 'alert'
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (context_id, feature_source, feature_name),
-    FOREIGN KEY (context_id) REFERENCES dataset_contexts(context_id)
-);
-```
-
-#### Table 4: `experimental_lineage_summary` (Lineage-Specific Promotion Projection)
-```sql
-CREATE TABLE IF NOT EXISTS experimental_lineage_summary (
-    context_id TEXT NOT NULL,
-    pipeline_id TEXT NOT NULL,
-    pipeline_snapshot_id TEXT NOT NULL,
-    feature_name TEXT NOT NULL,
-    feature_identity_key TEXT NOT NULL,        -- 'exp:{feature}:{pipeline_id}:{snapshot_id}'
-    total_runs INTEGER NOT NULL DEFAULT 0,
-    unique_models_count INTEGER NOT NULL DEFAULT 0,
-    keep_runs INTEGER NOT NULL DEFAULT 0,
-    watch_runs INTEGER NOT NULL DEFAULT 0,
-    remove_runs INTEGER NOT NULL DEFAULT 0,
-    last_recommendation TEXT,
-    last_run_id TEXT,
-    last_model_name TEXT,
-    last_run_timestamp TEXT,
-    current_streak_type TEXT,
-    current_streak_count INTEGER DEFAULT 0,
-    evidence_score REAL DEFAULT 0.0,
-    lifecycle_status TEXT NOT NULL DEFAULT 'experimental_eval', -- 'experimental_eval', 'promotion_candidate', 'held', 'blocked'
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (context_id, pipeline_id, pipeline_snapshot_id, feature_name),
-    FOREIGN KEY (context_id) REFERENCES dataset_contexts(context_id)
-);
-```
-
-#### Table 5: `migration_meta` (Migration Audit Tracking)
-```sql
-CREATE TABLE IF NOT EXISTS migration_meta (
-    meta_key TEXT PRIMARY KEY,                 -- e.g. 'json_migration_completed'
-    meta_value TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-```
-
----
-
-## 7. Dual-Projection Architecture: Why Two Summaries?
-
-A single aggregation table cannot simultaneously serve both context-wide pre-training candidate blocking and lineage-specific experimental promotion.
-
-```
-                 recommendation_evidence
-                   IMMUTABLE RAW LOG
-                          │
-              ┌───────────┴───────────┐
-              ▼                       ▼
-     feature_context_summary   experimental_lineage_summary
-       Context Projection        Lineage Projection
-              │                       │
-              ▼                       ▼
-      Registry / Base /        Experimental lifecycle
-      context state             and promotion eligibility
-```
-
-1. **`feature_context_summary` (Aggregated by `context_id + feature_source + feature_name`)**:
-   - Evaluates broad feature performance across models in a dataset regime.
-   - Drives candidate blocking for Auto Candidate Generation.
-   - Monitors Base Pipeline and Registry health scores.
-2. **`experimental_lineage_summary` (Aggregated by `context_id + pipeline_id + pipeline_snapshot_id + feature_name`)**:
-   - Preserves exact algorithmic provenance. An experimental transformation that fails in Snapshot A might succeed with altered parameters in Snapshot B.
-   - Tracks consecutive KEEP streaks and multi-model consistency to qualify experimental features as **`PROMOTION_CANDIDATE`**.
-
-Both projections are **purely deterministic and rebuildable** from `recommendation_evidence` at any time via `rebuild_all_projections()`.
-
----
-
-## 8. Raw Evidence Events vs. Projection Summary Rows
-
-During real-world verification of production models, a fundamental architectural distinction exists between **raw validation events** and **distinct feature summaries**:
-
-### Example: Production Model Package `Future_LTP_5m_WF_1168f_XGB_2243_14`
-1. **Raw Evidence Log (`recommendation_evidence`)**:
-   - Current Model Validation: **583 events** (110 Registry, 89 Base Pipeline, 384 Experimental)
-   - Migrated Historical Model (`Future_LTP_5m_WF_232f_XGB_1539_2`): **232 events** (141 Registry, 91 Base Pipeline)
-   - **Total Raw Immutable Records**: $583 + 232 = \mathbf{815}$ rows.
-2. **Context Materialized Projection (`feature_context_summary`)**:
-   - Feature Registry: **183 distinct features**
-   - Base Pipeline: **138 distinct features**
-   - Selected Experimental: **384 distinct features**
-   - **Total Materialized Summary Rows**: $183 + 138 + 384 = \mathbf{705}$ rows.
-
-### Mathematical Proof of Deduplication:
-$$\begin{aligned}
-\text{Shared Registry Features across both models} &= 68 \\
-\text{Shared Base Pipeline Features across both models} &= 42 \\
-\text{Total Multi-Model Re-evaluations} &= 68 + 42 = \mathbf{110} \text{ events} \\
-\text{Total Raw Events (815)} - \text{Shared Events (110)} &= \mathbf{705} \text{ Distinct Feature Summaries}
-\end{aligned}$$
-
-Every one of the 815 raw events is stored and correctly accumulated into the `total_runs`, `unique_models_count`, streaks, and scores of the 705 summary rows.
-
----
-
-## 9. Automatic Persistence Flow & Idempotency
-
-### 9.1. Persistence Flow
-Validation evidence persistence is decoupled from low-level compute algorithms and executed from the orchestration layer upon successful completion:
-
-```
-Production Validation Compute (run_production_validation_compute)
-    │
-    ▼ (Generates local comparison.json, summary.json, run_meta.json)
-Production Validation Orchestration Layer (production_validation_panel.py)
-    │
-    ▼ (Invokes canonical persistence API)
-persist_validation_evidence(data_dir, model_name)
-    │
-    ▼ (Partitions features via partition_diagnostic_rows)
-append_validation_evidence(conn, context, evidence_rows, policy)
-    │
-    ├──▶ Writes to recommendation_evidence (ON CONFLICT DO NOTHING)
-    ├──▶ Updates feature_context_summary
-    └──▶ Updates experimental_lineage_summary
-```
-
-- **Fully Automatic Persistence**: Persistence occurs automatically in the background upon successful Production Validation compute (`_on_compute()`) and when cached validation results are loaded (`_apply_compute_payload()`).
-- **User-Initiated Action**: The **"Persist Validation Evidence"** UI button allows users to manually persist/re-persist evidence or view persistence confirmation summaries on demand.
-
-### 9.2. Idempotency Guarantees
-- Every evidence record is assigned a deterministic primary key:
-  $$\text{evidence\_id} = \text{ev\_}\{\text{run\_id}\}\_\{\text{safe\_model\_name}\}\_\{\text{feature\_name}\}$$
-- If a user clicks **"Persist Validation Evidence"** or validation compute runs twice for the same run ID, SQLite enforces `ON CONFLICT(evidence_id) DO NOTHING`.
-- Projection updates recalculate scores directly from the deduplicated evidence log, ensuring **zero duplicate records** and 100% stable scores.
-
----
-
-## 10. Legacy JSON Migration
-
-The legacy JSON store `feature_recommendation_history.json` is automatically and idempotently migrated into the SQLite evidence database by [`apps/chain_replay_ml/production_validation/recommendation_migration.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/recommendation_migration.py).
-
-```
-feature_recommendation_history.json (Legacy Historical File)
-                            │
-                            ▼
-           migrate_legacy_recommendation_json(data_dir)
-                            │
-                            ▼
-     • Recovers dataset context and model lineage
-     • Classifies features into Registry / Base / Experimental
-     • Inserts canonical records into recommendation_evidence
-     • Materializes feature_context_summary & experimental_lineage_summary
-     • Writes migration_meta['json_migration_completed'] = 'true'
-```
-
-- **Idempotency**: Once `json_migration_completed` is set, subsequent checks detect the flag and return immediately without re-migrating or altering data.
-- **Audit Preservation**: Historical entries are preserved in full without data loss.
-
----
-
-## 11. Dataset Context & Isolation
-
-The evidence store isolates feature behavior across different market dynamics through `dataset_contexts`:
+Feature performance is strictly isolated by dataset regimes to prevent cross-market or cross-timeframe pollution:
 
 ```
                                 DATASET CONTEXT DIMENSIONS
@@ -417,61 +127,121 @@ The evidence store isolates feature behavior across different market dynamics th
 $$\text{context\_key} = \mathtt{"NIFTY:3:standard:all"}$$
 $$\text{context\_id} = \mathtt{"ctx\_"} + \text{SHA256}(\text{context\_key})[:12] \implies \mathtt{"ctx\_574ee67348f2"}$$
 
-- Evidence from high-frequency $1\text{s}$ datasets never pollutes or blocks candidate features in swing or standard $3\text{s}$ datasets.
-- Evidence from `SENSEX` never impacts `NIFTY` or `BANKNIFTY` models.
-
-### `legacy_unknown` Isolation
-Historical legacy records whose dataset metadata cannot be recovered are tagged with `context_id = "legacy_unknown"`. They remain accessible for human historical audit in the Evidence Studio via the **"Include Legacy Unknown"** filter, but are **strictly excluded** from active candidate blocking in Auto Candidate Generation.
+- **Cross-Context Isolation**: Evidence from high-frequency $1\text{s}$ datasets never pollutes or blocks features in $3\text{s}$ or $6\text{s}$ datasets. Evidence from `SENSEX` never impacts `NIFTY`.
+- **`legacy_unknown` Isolation**: Historical records with unrecoverable dataset metadata are assigned `context_id = "legacy_unknown"`. They are visible for audit in Evidence Studio via the **"Include Legacy Unknown"** checkbox, but are strictly excluded from active candidate blocking.
 
 ---
 
-## 12. Scoring Policy, Streaks & Lifecycle Thresholds
+## 5. Recommendation Decision Logic (`recommend_feature`)
 
-Implemented in [`apps/chain_replay_ml/production_validation/recommendation_policy.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/recommendation_policy.py):
+Located in [`apps/chain_replay_ml/production_validation/rules.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/rules.py):
 
-### 12.1. Exact Evidence Scoring Formula (`compute_evidence_score`)
-For any given feature across its chronological validation history within a dataset context:
+| Recommendation | Exact Criteria | Semantic Meaning |
+|---|---|---|
+| **`REMOVE`** | Severe Rank Drop ($\Delta R \le -5$) **AND** Severe Importance Drop ($\text{RelDrop} \ge 50\%$) **AND** Distribution Drift ($\ge 1$). | Predictive power collapsed on forward data alongside significant distribution drift. |
+| **`WATCH`** | Medium Rank Drop ($\Delta R \le -2$) **OR** Medium Importance Drop ($\text{RelDrop} \ge 25\%$) **OR** Moderate Drift. | Partial degradation or distribution instability between Holdout and Unseen regimes. |
+| **`KEEP`** | Stable Rank ($|\Delta R| \le 1$) and stable importance across regimes. | Feature maintained robust predictive utility on true unseen forward trading days. |
 
+---
+
+## 6. SQLite Evidence Database Architecture (Phase 1)
+
+The canonical database is located at:
+$$\text{Path: }\mathtt{<chart\_data\_dir>/feature\_recommendation\_evidence.db}$$
+
+```
+                                SQLite EVIDENCE STORE
+                         (feature_recommendation_evidence.db)
+                                          │
+    ┌───────────────────────────┬─────────┴─────────┬───────────────────────────┬───────────────────────────┐
+    ▼                           ▼                   ▼                           ▼                           ▼
+dataset_contexts     recommendation_evidence  feature_context_summary  experimental_lineage_summary  policy_settings_history
+(Regime Metadata)     (Immutable Raw Log)       (Context Projection)        (Lineage Projection)        (Policy Audit Log)
+```
+
+### 6.1. Schema DDL Summary
+1. **`dataset_contexts`**: Unique dataset combinations (`context_id`, `market`, `sampling_interval_sec`, `sliding_window`, `feature_project_id`, `context_key`).
+2. **`recommendation_evidence`**: Append-only immutable log of every validation event (`evidence_id`, `context_id`, `feature_name`, `feature_source`, `pipeline_id`, `pipeline_snapshot_id`, `recommendation`, `validation_run_id`, `model_name`, `holdout_rank`, `unseen_rank`, `rank_change`, `relative_imp_drop`, `drift_severity`, `run_timestamp`, `created_at`).
+3. **`feature_context_summary`**: Context-level projection (`context_id`, `feature_source`, `feature_name`, `total_runs`, `unique_models_count`, `keep_runs`, `watch_runs`, `remove_runs`, `current_streak_type`, `current_streak_count`, `evidence_score`, `lifecycle_status`).
+4. **`experimental_lineage_summary`**: Lineage-specific projection (`context_id`, `pipeline_id`, `pipeline_snapshot_id`, `feature_name`, `feature_identity_key`, `total_runs`, `unique_models_count`, `keep_runs`, `watch_runs`, `remove_runs`, `current_streak_type`, `current_streak_count`, `evidence_score`, `lifecycle_status`).
+5. **`policy_settings_history`**: Policy version audit log (`policy_id`, `version`, `settings_json`, `created_at`, `created_by`, `change_reason`).
+
+---
+
+## 7. Automatic Validation Evidence Persistence
+
+- **Automatic Flow**: Production Validation automatically executes `persist_validation_evidence(data_dir, model_name)` upon compute completion and cached result loading.
+- **Idempotency**: SQLite enforces `ON CONFLICT(evidence_id) DO NOTHING` using deterministic IDs (`ev_{run_id}_{model}_{feature}`).
+- **Deterministic Rebuild**: `rebuild_all_projections()` recalculates projections directly from raw evidence without data loss.
+
+---
+
+## 8. Detailed Recommendation Subsystem Architecture
+
+### 8.1. Scoring & Lifecycle Policy (Phase 1)
+Implemented in [`apps/chain_replay_ml/production_validation/recommendation_policy.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/recommendation_policy.py) *(detailed in [`docs/08.1`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.1-FEATURE_RECOMMENDATION_SCORING_LIFECYCLE_POLICY.md))*:
+
+#### Evidence Scoring Formula:
 $$\text{raw\_score} = (w_{\text{keep}} \cdot M_{\text{keep}}) + (w_{\text{remove}} \cdot M_{\text{remove}}) + (w_{\text{watch}} \cdot M_{\text{watch}}) + (B_{\text{keep}} \cdot S_{\text{keep}}) + (P_{\text{remove}} \cdot S_{\text{remove}})$$
-
 $$\text{evidence\_score} = \text{round}\Big(\max(S_{\min}, \min(S_{\max}, \text{raw\_score})), 2\Big)$$
 
-Where:
-- $M_{\text{keep}}$ = Count of unique models where the feature received `KEEP`
-- $M_{\text{remove}}$ = Count of unique models where the feature received `REMOVE`
-- $M_{\text{watch}}$ = Count of unique models where the feature received `WATCH`
-- $S_{\text{keep}}$ = Current consecutive `KEEP` streak count from the end of the run sequence
-- $S_{\text{remove}}$ = Current consecutive `REMOVE` streak count from the end of the run sequence
-- Configured Policy Weights:
-  - $w_{\text{keep}} = +25.0$
-  - $w_{\text{remove}} = -35.0$
-  - $w_{\text{watch}} = -10.0$
-  - $B_{\text{keep}} = +15.0$ (Streak Bonus per consecutive KEEP)
-  - $P_{\text{remove}} = -25.0$ (Streak Penalty per consecutive REMOVE)
-  - $[S_{\min}, S_{\max}] = [-100.0, +100.0]$
-
-### 12.2. Experimental Lineage Promotion-Candidate Rule
-An experimental feature is classified as **`PROMOTION_CANDIDATE`** in `experimental_lineage_summary` if and only if all three conditions are satisfied:
-1. $\text{Current Streak Type} == \text{"KEEP"}$ with $S_{\text{keep}} \ge \mathtt{promotion\_candidate\_consecutive\_keep}\text{ (default: 3)}$.
-2. Evaluated across at least $M_{\text{unique}} \ge \mathtt{min\_unique\_models}\text{ (default: 2)}$ unique model packages.
-3. $\text{Lineage Evidence Score} \ge \mathtt{promotion\_candidate\_min\_score}\text{ (default: 75.0)}$.
-
-> [!NOTE]
-> `PROMOTION_CANDIDATE` is an **eligibility status for human review**. There is **no automated code generation or automatic Base Pipeline insertion**.
-
-### 12.3. Pre-Training Candidate Elimination Gate & Thresholds
-In Auto Candidate Generation ([`apps/chain_replay_ml/dataset_builder/auto_candidate_generator.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/dataset_builder/auto_candidate_generator.py)):
-- Queries `query_blocked_candidates(conn, context_id)` before feature materialization.
-- In `feature_context_summary`, an Experimental feature transitions to `lifecycle_status = "blocked"` if:
-  $$S_{\text{remove}} \ge \mathtt{remove\_block\_consecutive\_threshold}\text{ (default: 2)}$$
-  $$\mathbf{OR}\quad \text{remove\_runs} \ge \mathtt{remove\_block\_total\_threshold}\text{ (default: 4)}$$
-- **Immunity Invariant**: Feature Registry and Base Pipeline features are **never blocked** (their status transitions to `alert` or `held`, but never `blocked`).
+- **Default Weights**: $w_{\text{keep}} = +25.0$, $w_{\text{remove}} = -35.0$, $w_{\text{watch}} = -10.0$, $B_{\text{keep}} = +15.0$, $P_{\text{remove}} = -25.0$, $[S_{\min}, S_{\max}] = [-100.0, +100.0]$.
+- **Experimental Blocking Thresholds**:
+  $$S_{\text{remove}} \ge \mathtt{remove\_block\_consecutive\_threshold}\text{ (2)} \quad\mathbf{OR}\quad \text{remove\_runs} \ge \mathtt{remove\_block\_total\_threshold}\text{ (4)} \implies \mathtt{blocked}$$
+- **Experimental Promotion Candidate Rule**:
+  $$\text{lineage\_status} = \mathbf{PROMOTION\_CANDIDATE} \iff (S_{\text{keep}} \ge 3) \land (M_{\text{unique}} \ge 2) \land (\text{evidence\_score} \ge 75.0)$$
+- **Population Governance Invariant**: Registry and Base Pipeline features are strictly immune from automated candidate blocking and code deletion.
 
 ---
 
-## 13. Feature Recommendation Evidence Studio UI
+### 8.2. Policy Settings & Versioning (Phase 1)
+Implemented in `recommendation_policy.py` *(detailed in [`docs/08.2`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.2-FEATURE_RECOMMENDATION_POLICY_SETTINGS.md))*:
 
-Accessible via the **"Evidence DB & Projections"** button in Production Validation or Feature Studio ([`apps/master_dataset_tk/feature_recommendation_viewer.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_recommendation_viewer.py)):
+- **Tiered Scope Hierarchy**: Global default settings (`pol_recommended_default`) with optional context-specific overrides (`pol_ctx_<id>_v1`).
+- **Policy Versioning & History**: Every save writes an immutable snapshot to `policy_settings_history`.
+- **No-Op Save Prevention**: Unchanged submissions do not create duplicate history records.
+- **Non-Destructive Rollback**: Rolling back copies the historical state into a new active version ($v_{N+1}$), maintaining forward-only audit integrity.
+- **Read-Only Preview Policy Impact**: Simulates proposed threshold changes in-memory before committing.
+- **Projection Metadata**: Materialized projections record `projection_policy_id`, `projection_policy_version`, and `projection_rebuilt_at`.
+- **Evidence Immutability**: Changing policy rules reinterprets facts and updates projections; it **never modifies historical evidence rows**.
+
+---
+
+### 8.3. Phase 2A — Evidence Intelligence `[IMPLEMENTED]`
+Phase 2A adds statistical observation confidence, model consensus, freshness, and dual ranking as query-time intelligence *(detailed in [`docs/08.3`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.3-FEATURE_RECOMMENDATION_PHASE_2A_EVIDENCE_INTELLIGENCE.md))*:
+
+1. **Evidence Confidence ($C$)**:
+   $$C = \sqrt{C_{\text{runs}} \times C_{\text{models}}} = \sqrt{\left(1 - e^{-N_{\text{runs}}/3.0}\right) \times \left(1 - e^{-M_{\text{unique}}/2.0}\right)}$$
+   - $N=1, M=1 \implies C \approx 33.4\%$ | $N=2, M=2 \implies C \approx 55.5\%$ | $N=3, M=3 \implies C \approx 70.1\%$
+2. **Model Consensus & Strict Tie Contract**: Evaluates the latest vote per unique model package. 50/50 splits or 3-way deadlocks are classified as **`SPLIT (50%)`** with `is_consensus_tie = True`.
+3. **Freshness Bands**: $\le 7\text{d} \implies \text{Fresh}$, $8\text{–}30\text{d} \implies \text{Recent}$, $> 30\text{d} \implies \text{Stale}$.
+4. **Dual Ranking System**:
+   - **`priority_rank` (Phase 1 Authoritative)**: Primary sorting order: `evidence_score DESC, keep_runs DESC, feature_name ASC`.
+   - **`operational_priority_score`**: $\text{round}(\text{evidence\_score} \times C, 2)$.
+   - **`advisory_rank` (Phase 2A Preview)**: Sorted by `operational_priority_score DESC, keep_runs DESC, feature_name ASC`.
+
+---
+
+### 8.4. Phase 2B — Stability, Risk & Generalization `[IMPLEMENTED]`
+Phase 2B implements query-time behavioral stability, score range spread, trajectory reversals, Level-1 cross-context generalization, and explicit multi-dimensional risk badges *(detailed in [`docs/08.4`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.4-FEATURE_RECOMMENDATION_PHASE_2B_STABILITY_RISK_GENERALIZATION.md))*:
+
+1. **Score Volatility ($\sigma_S$) & Trajectory Spread ($N \ge 3$)**:
+   $$\sigma_S = \sqrt{\frac{1}{N - 1} \sum_{t=1}^N (S_t - \bar{S})^2} \quad (\sigma_S < 15.0 \implies \text{Stable},\ 15.0 \le \sigma_S < 35.0 \implies \text{Moderate},\ \sigma_S \ge 35.0 \implies \text{Volatile})$$
+   - $N < 3 \implies \text{None}$ (`⚪ N/A (< 3 runs)`).
+   - Tracks score range spread $\Delta S = \max(S_t) - \min(S_t)$ and trajectory direction flips $D_{\text{flips}}$.
+2. **Level-1 Cross-Context Generalization ($K \ge 2$)**:
+   $$G = A_{\text{context}} \times \left(1.0 - \min\left(1.0, \frac{\Delta S_{\text{context}}}{100.0}\right)\right)$$
+   - Evaluated across matching market, window, and project dimensions differing only by sampling interval.
+   - $G \ge 0.75 \implies \text{Universal}$, $0.50 \le G < 0.75 \implies \text{Scale-Robust}$, $0.25 \le G < 0.50 \implies \text{Scale-Sensitive}$, $G < 0.25 \implies \text{Scale-Specific}$. Single context displays `⚪ Single Context`.
+3. **Explicit Multi-Dimensional Risk Badges**:
+   - `[DEGRADED]` (Score $\le -40.0$), `[SPLIT]` (`is_consensus_tie`), `[STALE]` ($> 30\text{d}$), `[UNSTABLE]` ($\sigma_S \ge 35.0$).
+   - Composite scalar risk score was explicitly rejected to maintain transparency.
+
+---
+
+## 9. Feature Recommendation Evidence Studio UI (5 Tabs)
+
+Located in [`apps/master_dataset_tk/feature_recommendation_viewer.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_recommendation_viewer.py):
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -480,84 +250,81 @@ Accessible via the **"Evidence DB & Projections"** button in Production Validati
 │ Context: [Market: NIFTY ▼] [Interval: 3 ▼] [Window: standard ▼] [Project: all ▼] [x] Legacy  │
 │ Context ID: ctx_574ee67348f2                 [Rebuild Projections]  [Refresh Data]                │
 ├───────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ [1. Feature Registry (183)] [2. Base Pipeline (138)] [3. Selected Exp (384)] [4. Raw Log (815)]   │
-│                                                                                                   │
-│ Feature Name    │ Runs │ Models │ Streak  │ Score  │ Status   │ Last Rec │ Last Model             │
-│─────────────────┼──────┼────────┼─────────┼────────┼──────────┼──────────┼────────────────────────│
-│ atm_pcr_chg_5m  │ 2    │ 2      │ KEEP 2  │ 65.0   │ active   │ KEEP     │ Future_LTP_5m_WF_...   │
-│ atm_iv_ce       │ 2    │ 2      │ REMOVE 2│ -60.0  │ alert    │ REMOVE   │ Future_LTP_5m_WF_...   │
-│ ...             │      │        │         │        │          │          │                        │
+│ [1. Feature Registry] [2. Base Pipeline] [3. Selected Exp] [4. Raw Log] [5. Policy Settings]      │
 └───────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### UI Controls & Tabs:
-1. **Context Filters**: Dynamic filtering by `Market`, `Interval`, `Sliding Window`, `Project ID`, and `Include Legacy Unknown`. Automatically initialized to the active model's dataset context.
-2. **Rebuild Projections**: Recomputes all summary projections directly from the immutable `recommendation_evidence` log.
-3. **Tab 1 — Feature Registry**: Displays registry health, multi-model evaluation counts, accumulated scores, and alert flags.
-4. **Tab 2 — Base Pipeline**: Displays Base Pipeline scores, stability rankings, and degradation alerts.
-5. **Tab 3 — Selected Experimental**: Displays lineage-specific features, exact `pipeline_id` + `pipeline_snapshot_id`, streak counters, and `PROMOTION_CANDIDATE` badges.
-6. **Tab 4 — Raw Evidence Log**: Chronological audit trail of all individual validation events.
+### Treeview Columns Implemented by Tab:
+
+| Tab | Exact Treeview Columns |
+|---|---|
+| **Tab 1: Feature Registry** | `Feature Name`, `Runs`, `Models`, `Score`, `Status`, `Confidence`, `Model Consensus`, `Freshness`, `Stability`, `Generalization`, `Badges`, `Last Rec`, `Last Model` |
+| **Tab 2: Base Pipeline** | `Priority Rank`, `Feature Name`, `Runs`, `Models`, `Score`, `Confidence`, `Adj Score`, `Advisory Rank`, `Model Consensus`, `Freshness`, `Stability`, `Generalization`, `Badges`, `Status`, `Last Rec`, `Last Model` |
+| **Tab 3: Selected Experimental** | `Lineage Status`, `Context Status`, `Feature Name`, `Pipeline ID`, `Snapshot`, `Runs`, `Models`, `Streak`, `Score`, `Confidence`, `Consensus`, `Freshness`, `Stability`, `Generalization`, `Badges` |
+| **Tab 4: Raw Evidence Log** | `Evidence ID`, `Context ID`, `Feature`, `Source`, `Pipeline ID`, `Snapshot`, `Run ID`, `Model`, `Rec`, `Holdout Rank`, `Unseen Rank`, `ΔR`, `Imp Drop`, `Drift`, `Timestamp` |
+| **Tab 5: Policy Settings** | Interactive config editor for Scoring Weights, Experimental Thresholds, Base Pipeline Gating, Version History, and Rollback controls |
 
 ---
 
-## 14. Current End-to-End Recommendation Lifecycle Diagram
+## 10. Pre-Training Candidate Elimination Gate
+
+In Auto Candidate Generation ([`apps/master_dataset_tk/auto_candidate_generation.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/auto_candidate_generation.py)):
+- Queries `query_blocked_candidates(conn, context_id)` prior to feature transformation materialization.
+- Automatically discards blocked experimental candidates, preventing expensive parquet generation and model training on degraded features.
+
+---
+
+## 11. Latest Verified Production Facts & Mathematical Reconciliation
+
+Verified through read-only mathematical consistency audits against the SQLite Evidence DB:
+
+### 11.1. Primary Context (NIFTY 3s standard all)
+- **Total Distinct Features**: **`583`** features (110 Registry, 89 Base Pipeline, 384 Experimental)
+- **Total Evidence Rows**: **`848`** rows
+- **Run Distribution**: $N = 1: \mathbf{373}$ ($C = 33.4\%$) | $N = 2: \mathbf{155}$ ($C = 55.5\%$) | $N = 3: \mathbf{55}$ ($C = 70.1\%$)
+- **Model Consensus Distribution**: `KEEP`: 383 | `WATCH`: 75 | `REMOVE`: 38 | `SPLIT/TIE`: 87
+- **Phase 2B Stability ($N \ge 3$)**: 45 Moderate ($15 \le \sigma_S < 35$), 10 Volatile ($\sigma_S \ge 35$), 35 range $[20, 50)$, 20 range $[50, 100)$, 20 flip features
+- **Phase 2B Generalization ($K \ge 2$)**: 89 multi-context features (49 Universal, 25 Scale-Robust, 10 Scale-Sensitive, 5 Scale-Specific)
+
+### 11.2. Global Multi-Context Verification
+- **Total Global Rows**: **`987`** rows
+- **DB Checksum Verification**: 100% SHA-256 identical before and after queries (`1f977494f901a915f0e74348585af1ad1d43164baed41aa19cd1fba55227425b`).
+- **Schema Alterations**: Zero migrations, zero schema modifications.
+
+---
+
+## 12. Safety & Governance Invariants Summary
+
+1. **Evidence Immutability**: Historical validation events are permanent facts.
+2. **Deterministic Projections**: Projections can be rebuilt identically from raw evidence.
+3. **Registry Immunity**: Registry features cannot be automatically deleted or blocked.
+4. **Base Pipeline Immunity**: Base Pipeline features cannot be automatically deleted or blocked.
+5. **Experimental Context Blocking**: Repeated REMOVEs prevent candidate re-generation in Auto Candidate Generation.
+6. **Promotion Candidate Governance**: `PROMOTION_CANDIDATE` is an eligibility flag for human review, not automated code insertion.
+7. **Query-Time Intelligence**: Phase 2A and Phase 2B metrics compute dynamically without database alterations.
+8. **Phase 1 Priority Authority**: Phase 1 `priority_rank` remains authoritative; `advisory_rank` is separate.
+9. **Context Isolation**: Cross-market and cross-interval evaluations remain strictly isolated.
+
+---
+
+## 13. Current Implementation Status
 
 ```
-Master Dataset Catalog ∪ Approved Base Pipeline ∪ Experimental Candidate Pipeline
-                                    │
-                                    ▼
-                        Analysis Dataset (.parquet)
-                                    │
-                                    ▼
-                         Trained Model Package
-                        (config.json + lineage)
-                                    │
-                                    ▼
-                         Production Validation
-                     (True Unseen Days Resolution)
-                                    │
-                                    ▼
-                           Feature Validation
-                      (Holdout vs. Unseen Metrics)
-                                    │
-                     ┌──────────────┼──────────────┐
-                     ▼              ▼              ▼
-                   KEEP           WATCH          REMOVE
-                     │              │              │
-                     └──────────────┼──────────────┘
-                                    │
-                                    ▼
-                      persist_validation_evidence()
-                      ("Persist Validation Evidence")
-                                    │
-                                    ▼
-                         recommendation_evidence
-                        (SQLite Immutable Event Log)
-                                    │
-                     ┌──────────────┴──────────────┐
-                     ▼                             ▼
-          feature_context_summary       experimental_lineage_summary
-            (Context Projection)             (Lineage Projection)
-                     │                             │
-                     ▼                             ▼
-         Auto Candidate Gate /         Promotion Candidate Review /
-         Registry & Base Health           Human Governance Audit
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                          CURRENT IMPLEMENTATION STATUS                                 │
+├────────────────────────────────────────────────────────┬───────────────────────────────┤
+│ Phase 1 (Evidence DB, Policy Settings & Gating)        │ ✅ IMPLEMENTED & VERIFIED     │
+│ Phase 2A (Evidence Intelligence & Dual Ranking)        │ ✅ IMPLEMENTED & VERIFIED     │
+│ Phase 2B (Stability, Risk Badges & Level-1 Gen Index)  │ ✅ IMPLEMENTED & VERIFIED     │
+│ Phase 3 (Recommendation-to-Training Decision Engine)   │ 🔵 FUTURE / PROPOSED ONLY     │
+└────────────────────────────────────────────────────────┴───────────────────────────────┘
 ```
 
 ---
 
-## 15. Invariants & Current Limitations
-
-1. **No Automatic Registry Deletion**: Feature Registry features are never removed, retired, or blocked by validation runs.
-2. **No Automatic Base Pipeline Removal**: Base Pipeline features are never removed or blocked automatically.
-3. **No Automatic Experimental Promotion**: `PROMOTION_CANDIDATE` status provides human governance eligibility only. Promotion requires architectural review and manual pipeline promotion.
-4. **Idempotent Persistence**: Persisting a validation run multiple times creates zero duplicate rows.
-5. **Authoritative Evidence Store**: `feature_recommendation_evidence.db` is the sole authoritative store. `feature_recommendation_history.json` is strictly legacy migration source data.
-6. **Context Isolation**: Candidate blocking and evidence scoring are strictly partitioned by `context_id`.
-
----
-
-## 16. Part B — Future Lifecycle Design (Placeholder)
+## 14. Phase 3 Placeholder: Recommendation-to-Training Decision Engine `[FUTURE / PROPOSED]`
 
 > [!NOTE]
-> Advanced automated lifecycle capabilities (such as automated HCA redundancy pruning, mutual information clustering, autonomous pipeline promotion code synthesis, and multi-regime demotion workflows) are intentionally preserved for future architectural design phases and are not part of the active operational codebase.
+> **Phase 3 Scope**: The Recommendation-to-Training Decision Engine is an architectural design for automated training candidate qualification (`TRAIN_CANDIDATE`, `REVIEW`, `EXCLUDE`), `NEW / UNSEEN` candidate lifecycle handling, and direct Model Builder preset handoff.
+> 
+> Phase 3 is **NOT implemented** in the current operational codebase and is documented in full in [`docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md).

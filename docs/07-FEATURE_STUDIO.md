@@ -1,33 +1,44 @@
 # AruMLStudio Feature Studio — Technical & Functional Architecture
+## Authoritative Technical Specification (Phase 1 + Phase 2A + Phase 2B Integration)
+
+> **Document Status**: AUTHORITATIVE TECHNICAL ARCHITECTURE  
+> **Integrated Subsystems**: Feature Studio Diagnostics Suite, Production Validation Engine, SQLite Evidence Database (Phase 1), Policy Settings & Versioning (Phase 1), Evidence Intelligence (Phase 2A), Stability, Risk Badges & Level-1 Generalization (Phase 2B)  
+> **Detailed Lifecycle References**: [`docs/08-FEATURE_RECOMMENDATION_LIFECYCLE.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08-FEATURE_RECOMMENDATION_LIFECYCLE.md), [`docs/08.1-FEATURE_RECOMMENDATION_SCORING_LIFECYCLE_POLICY.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.1-FEATURE_RECOMMENDATION_SCORING_LIFECYCLE_POLICY.md), [`docs/08.2-FEATURE_RECOMMENDATION_POLICY_SETTINGS.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.2-FEATURE_RECOMMENDATION_POLICY_SETTINGS.md), [`docs/08.3-FEATURE_RECOMMENDATION_PHASE_2A_EVIDENCE_INTELLIGENCE.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.3-FEATURE_RECOMMENDATION_PHASE_2A_EVIDENCE_INTELLIGENCE.md), [`docs/08.4-FEATURE_RECOMMENDATION_PHASE_2B_STABILITY_RISK_GENERALIZATION.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.4-FEATURE_RECOMMENDATION_PHASE_2B_STABILITY_RISK_GENERALIZATION.md)  
+> **Future Subsystems**: Phase 3 (Recommendation-to-Training Decision Engine) is documented separately in [`docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md) as a PROPOSED architectural design.
 
 ---
 
-## 1. Purpose
+## 1. Executive Summary & Purpose
 
-The **Feature Studio** is the dedicated analytical suite within **AruMLStudio** for inspecting, profiling, diagnosing, and validating model features across their lifecycle. 
+The **Feature Studio** is the primary analytical and validation suite within **AruMLStudio** for inspecting, profiling, diagnosing, and validating model features across their full operational lifecycle.
 
-Machine learning models for options trading combine features from multiple distinct generative populations (canonical domain features, deterministic mathematical transformations, and experimental statistical pipelines). Feature Studio provides visibility into:
-- Feature importance rankings (Native tree metrics, Permutation degradation, SHAP attribution).
-- Univariate distribution properties and data anomalies (null percentage, skewness, percentile profiles).
-- Temporal feature drift between training (Walk-Forward) and out-of-sample (Holdout) regimes.
-- Multi-model delta comparisons across paired training architectures.
-- Automated root-cause diagnostics (identifying overfitting, severe drift, volatility regimes, or distribution shifts).
-- Production validation over unseen forward trading days to generate auditable feature lifecycle recommendations (**KEEP**, **WATCH**, **REMOVE**).
+Machine learning models for options trading combine features from multiple distinct generative populations (canonical domain features, deterministic mathematical transformations, and experimental statistical pipelines). Feature Studio provides complete end-to-end visibility into:
+- **Feature Importance Rankings**: Native tree gain, Permutation degradation, and SHAP attribution.
+- **Univariate Distribution Properties**: Data anomalies, moments, null percentages, and percentile profiles.
+- **Temporal Feature Drift**: Distribution shifts between training (Walk-Forward) and out-of-sample (Holdout) splits.
+- **Multi-Model Delta Comparisons**: Side-by-side artifact joins across paired training architectures.
+- **Automated Root-Cause Diagnostics**: Automated detection of overfitting, severe drift, volatility regimes, or distribution shifts.
+- **Production Validation Engine**: Validation over true unseen forward trading days to synthesize multi-signal recommendations (**`KEEP`**, **`WATCH`**, **`REMOVE`**).
+- **SQLite Evidence DB & Evidence Studio**: Append-only persistence into `feature_recommendation_evidence.db`, dual materialized projections, configurable Policy Settings, and query-time intelligence (Confidence, Consensus, Freshness, Stability, Risk Badges, Level-1 Generalization).
 
 ---
 
-## 2. Scope
+## 2. Scope & Subsystems
 
-This document provides end-to-end technical and functional documentation for:
-- **`FeatureStudioPanel`** (`apps/master_dataset_tk/feature_studio_panel.py`) and its 7 viewer tabs.
-- **Compute and artifact pipelines** in `apps/chain_replay_ml/`:
+This document provides technical and functional documentation for:
+- **`FeatureStudioPanel`** ([`apps/master_dataset_tk/feature_studio_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_studio_panel.py)) and its diagnostics tabs.
+- **Compute and Artifact Pipelines** in `apps/chain_replay_ml/`:
   - Feature Importance (`chain_replay_ml.feature_importance_studio`)
   - Feature Distribution (`chain_replay_ml.feature_distribution_studio`)
   - Feature Drift (`chain_replay_ml.feature_drift_studio`)
   - Studio Compare / Multi-Model (`chain_replay_ml.multi_model_studio`)
   - Diagnostics Studio (`chain_replay_ml.diagnostics_studio`)
   - Production Validation (`chain_replay_ml.production_validation`)
-  - Experiment Planner / Recommendation Engine (`chain_replay_ml.recommendation_engine`)
+- **Feature Recommendation Evidence Subsystem**:
+  - SQLite Evidence Database (`evidence_store.py`)
+  - Policy Settings Engine & Versioning (`recommendation_policy.py`)
+  - Query-Time Evidence Intelligence (`recommendation_store.py`, `recommendation_policy.py`)
+  - Feature Recommendation Evidence Studio GUI (`feature_recommendation_viewer.py`)
 - **Three-Population Feature Classification Engine** (`chain_replay_ml.dataset_builder.feature_sources_catalog`).
 - **Feature Project Isolation & Lineage** (`chain_replay_ml.dataset_builder.feature_project_organization`, `master_feature_project`).
 
@@ -35,28 +46,34 @@ This document provides end-to-end technical and functional documentation for:
 
 ## 3. Architecture Overview
 
-Feature Studio follows a decoupled **Compute &rarr; Persist &rarr; Load &rarr; Populate** execution model. UI panels act as stateless visualizers over on-disk JSON/Parquet artifacts stored directly inside each trained model's package directory (`models/<model_name>/`).
+Feature Studio follows a decoupled **Compute &rarr; Persist &rarr; Load &rarr; Populate** execution model. UI panels act as stateless visualizers over on-disk JSON/Parquet artifacts stored directly inside each trained model's package directory (`models/<model_name>/`) and the canonical SQLite Evidence Database (`feature_recommendation_evidence.db`).
 
 ```
-                              ┌────────────────────────────────────────────────────────┐
-                              │                 FeatureStudioPanel                     │
-                              │   (Shared Toolbar: Model Selector, Filter, Top-N)      │
-                              └──────────────────────────┬─────────────────────────────┘
-                                                         │
-                        ┌────────────────────────────────┴─────────────────────────────┐
-                        ▼                                                              ▼
-               [Load Artifacts]                                                    [Compute]
-                        │                                                              │
-         run_load_pipeline()                                                run_compute_pipeline()
-                        │                                                              │
-   Reads on-disk artifacts sequentially                             Runs compute sequentially:
-   (Importance → Dist → Drift → Diag → Planner)                     (Importance → Dist → Drift → Diag → Planner)
-                        │                                                              │
-                        ▼                                                              ▼
-   ┌───────────────────────────────────────────────┐                  ┌─────────────────────────────────────────┐
-   │ Populates UI Tab Payloads                     │                  │ Writes JSON artifacts to model package  │
-   │ (importance, distribution, drift, diagnostics)│                  │ models/<model_name>/<studio_dir>/       │
-   └───────────────────────────────────────────────┘                  └─────────────────────────────────────────┘
+                               ┌────────────────────────────────────────────────────────┐
+                               │                 FeatureStudioPanel                     │
+                               │   (Shared Toolbar: Model Selector, Filter, Top-N)      │
+                               └──────────────────────────┬─────────────────────────────┘
+                                                          │
+                         ┌────────────────────────────────┴─────────────────────────────┐
+                         ▼                                                              ▼
+                [Load Artifacts]                                                    [Compute]
+                         │                                                              │
+          run_load_pipeline()                                                run_compute_pipeline()
+                         │                                                              │
+    Reads on-disk artifacts sequentially                             Runs compute sequentially:
+    (Importance → Dist → Drift → Diag → ProdVal)                     (Importance → Dist → Drift → Diag → ProdVal)
+                         │                                                              │
+                         ▼                                                              ▼
+    ┌───────────────────────────────────────────────┐                  ┌─────────────────────────────────────────┐
+    │ Populates UI Tab Payloads                     │                  │ Writes JSON artifacts to model package  │
+    │ (importance, distribution, drift, diagnostics)│                  │ models/<model_name>/<studio_dir>/       │
+    └───────────────────────────────────────────────┘                  └───────────────────┬─────────────────────┘
+                                                                                           │
+                                                                                           ▼
+                                                                               persist_validation_evidence()
+                                                                                           │
+                                                                                           ▼
+                                                                                feature_recommendation_evidence.db
 ```
 
 ### Core Design Invariants:
@@ -65,12 +82,13 @@ Feature Studio follows a decoupled **Compute &rarr; Persist &rarr; Load &rarr; P
 3. **Strict Separation of Data Regimes**:
    - **Diagnostics Studio** strictly evaluates **Walk-Forward (WF) Training Data vs. Holdout Data**.
    - **Production Validation** strictly evaluates **Holdout Data vs. Unseen Forward Days**.
+4. **Authoritative Evidence Immutability**: Historical validation events in SQLite `recommendation_evidence` are append-only facts and are never overwritten.
 
 ---
 
-## 4. Feature Types
+## 4. The Three Feature Populations
 
-The current architecture partitions all model features into **three disjoint, exhaustive feature populations**:
+The architecture partitions all model features into **three disjoint, exhaustive feature populations**:
 
 ```
                        ┌───────────────────────────────────────────────┐
@@ -88,319 +106,175 @@ The current architecture partitions all model features into **three disjoint, ex
    • Domain-based                    • Mathematical ops                • Dynamic discovery
    • Filtered by Project             • lag, diff, ret, interact        • pipeline_id & snapshot
    • Stored in Master DB             • Derived in Analysis DB          • Derived in Analysis DB
+   • Immune from blocking            • Immune from blocking            • Subject to candidate gate
 ```
 
-### 4.1. Population 1: Feature Registry Features
-- **Source of Truth**: Canonical Feature Registry (`chain_replay_ml.dataset_builder.feature_registry_store` and `feature_domains.py`). 206 active canonical features across 11 core financial domains (Price & Premium, Spot & Futures, IV, Greeks, Straddle, OI, Volume, PCR, Ratios, Spreads, Microstructure).
-- **Project Scoping**: Filtered and organized by `feature_project_id` (e.g. `"all"`, `"chart"`).
-- **Materialization**: Pre-computed and stored directly inside the SQLite **Master Dataset** (`master_dataset_*.db`).
-- **Metadata Fields**:
-  - `feature_project_id`: Project identifier.
-  - `registry_export_features`: Array of selected registry feature names.
-  - `registry_export_count`: Total count of materialized registry features.
+### 4.1. Feature Registry Features
+- **Origin**: Canonical features materialized through the Master Dataset catalog (`feature_registry_store` and `feature_domains.py`). Scoped by `feature_project_id`.
+- **Governance**: Receives `KEEP` / `WATCH` / `REMOVE` recommendations. REMOVE flags trigger `alert` health states for data curators.
+- **Invariants**: Registry features are **never automatically retired, deleted, or blocked** from model training.
 
-### 4.2. Population 2: Base Pipeline Features
-- **Source of Truth**: Fixed, deterministic mathematical feature generators configured in `chain_replay_ml/pipeline.py` and `pipeline_templates.py`.
-- **Generation Families**:
-  - `lag`: Historical time-lagged values (e.g., `spot_lag1`, `atm_iv_ce_lag5`).
-  - `diff`: Absolute first differences (e.g., `spot_diff1`, `futures_basis_diff5`).
-  - `ret` / `pct_change`: Percentage returns (e.g., `spot_ret5`, `atm_straddle_ret1`).
-  - `interact` / `ratio`: Product or quotient interactions (e.g., `spot_x_atm_iv_ce`).
-- **Materialization**: Computed on-the-fly when building an **Analysis Dataset** (`create_analysis_dataset(..., include_pipeline=True)`). Never written to the Master Dataset SQLite table.
-- **Metadata Fields**:
-  - `base_pipeline_export_features`: Array of exported base pipeline feature names.
-  - `base_pipeline_export_count`: Count of generated base pipeline features.
+### 4.2. Base Pipeline Features
+- **Origin**: Approved production transformation generators (`base_pipeline_export_features`).
+- **Governance**: Evaluated for degradation. Repeated REMOVEs demote priority rank and trigger health warnings.
+- **Invariants**: Base Pipeline features are **never automatically deleted or blocked** from candidate generation.
 
-### 4.3. Population 3: Selected Experimental Pipeline Features
-- **Source of Truth**: Experimental Pipeline Registry (`pipeline_id`, e.g., `PL_0005`), immutable snapshot (`pipeline_snapshot_id`, e.g., `ca5945f58f8`), and candidate feature catalog (`pipeline_provenance["candidate_features"]`).
-- **Generation**: Created during Pipeline Exploration via advanced statistical, volatility surface, or cross-strike transformations.
-- **Selection**: Down-selected during **Create Model (Section 5.3)** from candidate features generated by the experimental pipeline.
-- **Metadata Fields**:
-  - `pipeline_id`: Unique pipeline identifier.
-  - `pipeline_name`: Display label of the pipeline.
-  - `pipeline_type`: Transformation engine architecture.
-  - `pipeline_snapshot_id`: Immutable content hash of the pipeline definition.
-  - `pipeline_provenance`: Dictionary tracking `candidate_features`, `input_features`, and transform parameters.
-  - `experimental_pipeline_export_count`: Number of experimental features in the model.
-
-### 4.4. Classification Engine
-The engine in [`chain_replay_ml.dataset_builder.feature_sources_catalog`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/dataset_builder/feature_sources_catalog.py) classifies any feature name deterministically using the following precedence:
-1. If present in `registry_export_features` or canonical registry &rarr; **`DATASET_SOURCE_FEATURE_REGISTRY`**.
-2. If present in `base_pipeline_export_features` or matches base generator templates &rarr; **`DATASET_SOURCE_BASE_PIPELINE`**.
-3. If present in experimental pipeline candidate list or has pipeline prefix &rarr; **`DATASET_SOURCE_OTHER_PIPELINE`**.
+### 4.3. Selected Experimental Features
+- **Origin**: High-velocity exploratory candidate transformations generated within a specific pipeline lineage (`pipeline_id` + `pipeline_snapshot_id`).
+- **Governance**:
+  - Repeated REMOVEs trigger context-level **candidate blocking** in Auto Candidate Generation.
+  - Consistent KEEP performance unlocks **`PROMOTION_CANDIDATE`** status for human architectural review.
+- **Invariants**: Promotion is strictly a human governance milestone; there is **no automatic code generation or Base Pipeline mutation**.
 
 ---
 
-## 5. Feature Lifecycle
+## 5. Feature Studio Tabs & Diagnostic Suite
 
-```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ 1. DEFINITION & ORGANIZATION                                                           │
-│    Feature Projects organize canonical registry features into custom hierarchies.      │
-└───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ 2. MATERIALIZATION (Master Dataset Builder)                                            │
-│    Materializes Registry features selected by feature_project_id into master_*.db.     │
-└───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ 3. TRANSFORMATION & ENRICHMENT (Analysis Dataset Engine)                               │
-│    Applies Base Pipeline + Experimental Pipeline generators to create training matrix. │
-└───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ 4. MODEL TRAINING (Model Builder)                                                      │
-│    Trains XGBoost/Classifier on Walk-Forward splits and validates on Holdout slice.    │
-└───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ 5. FEATURE STUDIO ANALYSIS                                                             │
-│    Computes Native/Permutation/SHAP importance, univariate distributions, and drift.  │
-└───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ 6. AUTOMATED DIAGNOSTICS                                                               │
-│    Synthesizes Holdout vs. WF drift to detect overfitting and assign risk scores.      │
-└───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ 7. PRODUCTION VALIDATION & RECOMMENDATIONS                                             │
-│    Builds identical lineage unseen_* dataset, validates against Holdout, records       │
-│    KEEP / WATCH / REMOVE recommendations into feature_recommendation_history.json.     │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-```
+### 5.1. Feature Importance Tab
+- **Compute Package**: `chain_replay_ml.feature_importance_studio`
+- **Metrics**: Native tree gain/split importance, Permutation drop ($\Delta\text{MAE}$ upon shuffling), and SHAP attribution.
+- **Outputs**: `models/<model>/feature_importance/native.json`, `permutation.json`, `shap.json`.
 
----
+### 5.2. Feature Distribution Tab
+- **Compute Package**: `chain_replay_ml.feature_distribution_studio`
+- **Metrics**: Univariate statistics (mean, std, min, max, skewness, kurtosis, percentiles $p10 \dots p90$, null counts).
+- **Outputs**: `models/<model>/feature_distribution/holdout.json`.
 
-## 6. Feature Project Integration
+### 5.3. Feature Drift Tab
+- **Compute Package**: `chain_replay_ml.feature_drift_studio`
+- **Metrics**: Distribution divergence between Walk-Forward (WF) and Holdout (HO) splits using Kolmogorov-Smirnov (KS) statistics, Wasserstein distance, and drift severity scoring ($0 \dots 2$).
+- **Outputs**: `models/<model>/feature_drift/ranking.json`, `comparison.json`.
 
-`feature_project_id` represents the organizational boundary for Feature Registry features:
-1. **Canonical Source**: Managed via Feature Project Manager (`apps/master_dataset_tk/feature_project_manager_panel.py`). Projects define a subset of canonical registry features and custom display groups.
-2. **Master Dataset Builder**:
-   - `BuildConfigPanel` features a **Feature Project** dropdown.
-   - `FeatureSelectionPicker` dynamically loads `project_registry_feature_source(data_dir, feature_project_id)`.
-   - Materialized SQLite database records `feature_project_id` and `registry_export_features` in `master_config` and `master_dataset_meta_json`.
-3. **Analysis & Unseen Datasets**:
-   - Analysis dataset builder extracts `feature_project_id` from master database and propagates it into dataset metadata.
-   - Unseen dataset generation validates that the target `feature_project_id` matches the parent training dataset exactly before accepting dataset reuse.
+### 5.4. Studio Compare Tab
+- **Compute Package**: `chain_replay_ml.multi_model_studio`
+- **Purpose**: Side-by-side artifact delta joins between Model A and Model B without recomputation.
+- **Outputs**: `models/_pairs/<A>__vs__<B>/feature_studio_compare/comparison.json`.
 
----
-
-## 7. Feature Studio Tabs
-
-### 7.1. Feature Importance Studio
-- **UI Class**: `FeatureImportanceStudioPanel` ([`apps/master_dataset_tk/feature_importance_studio_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_importance_studio_panel.py))
-- **Compute Package**: `chain_replay_ml.feature_importance_studio` ([`apps/chain_replay_ml/feature_importance_studio/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/feature_importance_studio/compute.py))
-- **Purpose**: Computes multi-method feature importance to identify which features drive predictive power and detect spurious signals.
-- **Inputs**: Model binary (`model.xgb` / `model.json`), training config (`config.json`), Holdout slice ($X_{\text{ho}}, y_{\text{ho}}$).
-- **Calculations**:
-  1. **Native XGBoost Importance**: Extracts `weight`, `gain`, `cover`, `total_gain`, and `total_cover` via booster `get_score()`.
-  2. **Permutation Importance**: Evaluates score degradation on Holdout slice across $N=3$ repeats (RMSE metric for regression, log-loss for classification).
-  3. **Tree SHAP**: Calculates mean absolute SHAP values across a representative holdout sample ($N=400$) using `shap.TreeExplainer`.
-  4. **Consensus Ranking**: Calculates rank deltas between Native Gain, Permutation, and SHAP.
-- **Outputs / Artifacts**:
-  - `models/<model>/feature_importance/native.json`
-  - `models/<model>/feature_importance/permutation.json`
-  - `models/<model>/feature_importance/shap.json`
-  - `models/<model>/feature_importance/comparison.json`
-  - `models/<model>/feature_importance/meta.json`
-
----
-
-### 7.2. Feature Distribution Studio
-- **UI Class**: `FeatureDistributionStudioPanel` ([`apps/master_dataset_tk/feature_distribution_studio_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_distribution_studio_panel.py))
-- **Compute Package**: `chain_replay_ml.feature_distribution_studio` ([`apps/chain_replay_ml/feature_distribution_studio/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/feature_distribution_studio/compute.py))
-- **Purpose**: Profiles holdout feature column statistics to catch data anomalies, extreme values, and high missingness.
-- **Inputs**: Holdout feature matrix ($X_{\text{ho}}$) up to 20,000 rows, joined with Importance comparison rows.
-- **Calculations**:
-  - Univariate metrics: `count`, `n_finite`, `null_count`, `null_pct`, `n_unique`.
-  - Moments: `mean`, `std`, `skew`.
-  - Percentiles: `min`, `p1`, `p5`, `p25`, `p50`, `p75`, `p95`, `p99`, `max`.
-  - Accelerated execution via Polars (`feature_distribution_rows_via_polars`) with automatic fallback to Pandas.
-- **Outputs / Artifacts**:
-  - `models/<model>/feature_distribution/holdout.json`
-  - `models/<model>/feature_distribution/comparison.json`
-  - `models/<model>/feature_distribution/meta.json`
-
----
-
-### 7.3. Feature Drift Studio
-- **UI Class**: `FeatureDriftStudioPanel` ([`apps/master_dataset_tk/feature_drift_studio_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_drift_studio_panel.py))
-- **Compute Package**: `chain_replay_ml.feature_drift_studio` ([`apps/chain_replay_ml/feature_drift_studio/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/feature_drift_studio/compute.py))
-- **Purpose**: Measures statistical divergence between the training regime (Walk-Forward) and validation regime (Holdout).
-- **Inputs**: Walk-Forward slice ($X_{\text{wf}}$ up to 50,000 rows) and Holdout slice ($X_{\text{ho}}$ up to 20,000 rows).
-- **Calculations & Formulas**:
-  1. **Normalized Mean Shift**:
-     $$\text{shift} = \frac{\mu_{\text{ho}} - \mu_{\text{wf}}}{\sigma_{\text{pooled}}}, \quad \sigma_{\text{pooled}} = \sqrt{\frac{\sigma_{\text{wf}}^2 + \sigma_{\text{ho}}^2}{2}}$$
-  2. **Feature Drift Score ($0.0 \dots 1.0$)**:
-     $$\text{drift} = \text{mean}\left( \text{clamp}_{[0,1]}\left(\frac{|\text{shift}|}{1.5}\right), \, \text{clamp}_{[0,1]}\left(\frac{|\sigma_{\text{ho}}/\sigma_{\text{wf}} - 1.0|}{0.5}\right) \right)$$
-     > [!NOTE]
-     > **Drift = 1.0000** indicates complete saturation where the mean shifted by $\ge 1.5$ pooled standard deviations and standard deviation changed by $\ge 50\%$.
-  3. **Distribution Shape & Missingness**:
-     - Two-sample Kolmogorov-Smirnov test (`ks_statistic`, `ks_pvalue`).
-     - 1D Wasserstein distance (`wasserstein_distance`, `wasserstein_normalized`).
-     - Missingness divergence: $\text{null\_drift\_pp} = \text{null\%}_{\text{ho}} - \text{null\%}_{\text{wf}}$.
-  4. **Composite Risk Score ($0 \dots 100$)**:
-     Combines mean drift, KS statistic, Wasserstein metric, null shift, and feature importance weight into four risk buckets: `low` ($<30$), `medium` ($30\dots 55$), `high` ($55\dots 75$), `critical` ($\ge 75$).
-- **Outputs / Artifacts**:
-  - `models/<model>/feature_drift/ranking.json`
-  - `models/<model>/feature_drift/comparison.json`
-  - `models/<model>/feature_drift/meta.json`
-
----
-
-### 7.4. Studio Compare
-- **UI Class**: `MultiModelStudioPanel` ([`apps/master_dataset_tk/multi_model_studio_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/multi_model_studio_panel.py))
-- **Compute Package**: `chain_replay_ml.multi_model_studio` ([`apps/chain_replay_ml/multi_model_studio/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/multi_model_studio/compute.py))
-- **Purpose**: Performs side-by-side artifact delta joins between two trained models (Model A vs. Model B) without recomputation.
-- **Inputs**: Pre-computed Importance, Distribution, and Drift artifacts for Model A and Model B.
-- **Outputs**:
-  - Delta metrics: `in_a`, `in_b`, `rank_gain_a`, `rank_gain_b`, $\Delta\text{Rank}$, `risk_a`, `risk_b`, $\Delta\text{Risk Score}$, `drift_a`, `drift_b`, $\text{null\%}_a$, $\text{null\%}_b$.
-  - Saved to `models/_pairs/<model_a>__vs__<model_b>/feature_studio_compare/comparison.json`.
-
----
-
-### 7.5. Diagnostics Studio
-- **UI Class**: `DiagnosticsStudioPanel` ([`apps/master_dataset_tk/diagnostics_studio_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/diagnostics_studio_panel.py))
-- **Compute Package**: `chain_replay_ml.diagnostics_studio` ([`apps/chain_replay_ml/diagnostics_studio/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/diagnostics_studio/compute.py))
+### 5.5. Diagnostics Studio Tab
+- **Compute Package**: `chain_replay_ml.diagnostics_studio`
 - **Purpose**: Automated root-cause performance diagnosis across Holdout vs. Walk-Forward data splits.
-- **Headline Diagnostics**:
-  - **Primary Cause**: `Overfitting`, `Severe Drift`, `Feature Shift`, `Target Shift`, `Premium Shift`, `Volatility Shift`, or `Stable/Good`.
-  - **Confidence**: Diagnostic confidence percentage ($0\dots 100\%$).
-  - **MAE $\Delta$**: Out-of-sample error degradation percentage.
-  - **Similarity Score**: Regime similarity metric ($100 - \text{composite drift}$).
-  - **Overall Feature Drift**: Average drift across Top-10 features.
-- **Three-Source Partitioning**:
-  Features are partitioned into 3 isolated sub-tabs using `partition_diagnostic_rows`:
-  1. `Feature Registry`: Features belonging to `feature_project_id` & `registry_export_features`.
-  2. `Base Pipeline`: Features matching base pipeline generators (`lag`, `diff`, `ret`, `interact`).
-  3. `Selected Experimental`: Features from experimental pipeline snapshots.
-- **Action Invariants**:
-  $$\text{registry\_count} + \text{base\_pipeline\_count} + \text{experimental\_count} \equiv \text{total\_model\_features}$$
-  Every row displays recommended actions: `KEEP`, `WATCH`, or `REMOVE`.
+- **Headline Diagnostics**: `Overfitting`, `Severe Drift`, `Feature Shift`, `Target Shift`, `Volatility Shift`, or `Stable/Good`.
+- **Three-Source Partitioning**: Partitions features into Registry, Base Pipeline, and Selected Experimental sub-tables.
+
+### 5.6. Production Validation Tab
+- **Compute Package**: `chain_replay_ml.production_validation`
+- **Purpose**: Forward out-of-sample evaluation against unseen trading days.
+- **Outputs**: `unseen_metrics.json`, `feature_comparison.json`, and automatic background persistence into `feature_recommendation_evidence.db`.
 
 ---
 
-### 7.6. Production Validation
-- **UI Class**: `ProductionValidationPanel` ([`apps/master_dataset_tk/production_validation_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/production_validation_panel.py))
-- **Compute Package**: `chain_replay_ml.production_validation` ([`apps/chain_replay_ml/production_validation/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/compute.py))
-- **Purpose**: Validates the model against forward out-of-sample **unseen trading days** (days in Master Dataset not present in training).
-- **Lineage-Preserving Unseen Dataset Resolution**:
-  - Extracts `feature_project_id`, `pipeline_id`, `pipeline_snapshot_id`, `include_registry`, and `include_pipeline` from the model's parent dataset metadata.
-  - Generates or reuses an `unseen_*` analysis dataset with exact matching lineage hash (`unseen_dataset_identity_hash`).
-  - Verifies that 100% of the model's selected features exist in the unseen matrix.
-- **Feature Validation Radio Filter**:
-  Allows filtering the Holdout vs. Unseen comparison table across the three feature sources:
-  1. `Selected Experimental` (Default)
-  2. `Base Pipeline`
-  3. `Feature Registry`
-- **Output Artifacts**:
-  - `models/<model>/production_validation/unseen_metrics.json`
-  - `models/<model>/production_validation/feature_comparison.json`
-  - `data/feature_recommendation_history.json` (Cumulative history store)
+## 6. Feature Recommendation Evidence Architecture
 
----
-
-## 8. Diagnostics Architecture
-
-Diagnostics Studio synthesizes signals across metrics, importance, distribution, and drift:
+The authoritative recommendation store is the SQLite database located at `<chart_data_dir>/feature_recommendation_evidence.db`.
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        DIAGNOSTICS ENGINE                              │
-├────────────────────────┬───────────────────────────────────────────────┤
-│ Metric Inputs          │ WF MAE, Holdout MAE, RMSE, Premium RMSE       │
-│ Distribution Inputs    │ WF vs. Holdout Target / Volatility Moments    │
-│ Drift Inputs           │ Feature Drift Scores, KS stats, Wasserstein   │
-│ Importance Inputs      │ Native Gain, Permutation, SHAP consensus      │
-├────────────────────────┴───────────────────────────────────────────────┤
-│                           HEURISTIC RULES                              │
-├────────────────────────┬───────────────────────────────────────────────┤
-│ Overfitting            │ Holdout MAE > WF MAE + 15% AND                │
-│                        │ Target/Vol Drift < 25% AND Feature Drift Low  │
-├────────────────────────┼───────────────────────────────────────────────┤
-│ Severe Drift           │ Overall Feature Drift > 40% OR                │
-│                        │ Similarity Score < 60%                        │
-├────────────────────────┼───────────────────────────────────────────────┤
-│ Target / Vol Regime    │ Target Drift > 30% OR Volatility Drift > 30%  │
-└────────────────────────┴───────────────────────────────────────────────┘
+                         PRODUCTION VALIDATION RUN
+                                     │
+                                     ▼
+                      persist_validation_evidence()
+                                     │
+                                     ▼
+                          recommendation_evidence
+                         (IMMUTABLE RAW AUDIT LOG)
+                                     │
+                     ┌───────────────┴───────────────┐
+                     ▼                               ▼
+          feature_context_summary         experimental_lineage_summary
+            (Context Projection)               (Lineage Projection)
+                     │                               │
+                     └───────────────┬───────────────┘
+                                     │
+                                     ▼
+                     QUERY-TIME INTELLIGENCE ENRICHMENT
+                     • Phase 2A: Confidence C, Consensus, Freshness, Advisory Rank
+                     • Phase 2B: Volatility σ_S, Range ΔS, Level-1 Gen Index G, Risk Badges
+                                     │
+                     ┌───────────────┴───────────────┐
+                     ▼                               ▼
+       Feature Recommendation Evidence Studio    Auto Candidate Generation
+       (5-Tab Operator Workspace)                (Pre-Training Elimination Gate)
 ```
 
+### 6.1. Raw Evidence vs Dual Projections
+1. **`recommendation_evidence`**: Append-only log of every validation event (`evidence_id`, `context_id`, `feature_name`, `feature_source`, `recommendation`, `validation_run_id`, `model_name`, `holdout_rank`, `unseen_rank`, `rank_change`, `relative_imp_drop`, `drift_severity`, `run_timestamp`).
+2. **`feature_context_summary`**: Context-level projection aggregating runs, models, streaks, scores, and candidate blocking states per `(context_id, feature_source, feature_name)`.
+3. **`experimental_lineage_summary`**: Lineage-specific projection tracking exact algorithmic provenance and `PROMOTION_CANDIDATE` eligibility per `(context_id, pipeline_id, pipeline_snapshot_id, feature_name)`.
+4. **`policy_settings_history`**: Audit log recording every policy version, context override, and rollback snapshot.
+
+### 6.2. Cumulative Evidence Scoring Formula (Phase 1)
+$$\text{raw\_score} = (w_{\text{keep}} \cdot M_{\text{keep}}) + (w_{\text{remove}} \cdot M_{\text{remove}}) + (w_{\text{watch}} \cdot M_{\text{watch}}) + (B_{\text{keep}} \cdot S_{\text{keep}}) + (P_{\text{remove}} \cdot S_{\text{remove}})$$
+$$\text{evidence\_score} = \text{round}\Big(\max(-100.0, \min(+100.0, \text{raw\_score})), 2\Big)$$
+- Default weights: $w_{\text{keep}} = +25.0$, $w_{\text{remove}} = -35.0$, $w_{\text{watch}} = -10.0$, $B_{\text{keep}} = +15.0$, $P_{\text{remove}} = -25.0$.
+
 ---
 
-## 9. Production Validation Architecture
+## 7. Phase 2A & 2B Query-Time Evidence Intelligence
 
-Production Validation runs an un-biased forward evaluation:
+Phase 2A and Phase 2B add rich statistical intelligence dynamically at query time with zero SQLite schema changes and zero raw evidence mutation:
+
+### 7.1. Phase 2A Intelligence Metrics
+1. **Evidence Confidence ($C$)**:
+   $$C = \sqrt{C_{\text{runs}} \times C_{\text{models}}} = \sqrt{\left(1 - e^{-N_{\text{runs}}/3.0}\right) \times \left(1 - e^{-M_{\text{unique}}/2.0}\right)}$$
+   - $N=1, M=1 \implies 33.4\%$ | $N=2, M=2 \implies 55.5\%$ | $N=3, M=3 \implies 70.1\%$
+2. **Model Consensus & Strict Tie Contract**: Reconstructs latest vote per model. 50/50 splits or 3-way deadlocks are classified as **`SPLIT (50%)`**.
+3. **Freshness Bands**: $\le 7\text{d} \implies \text{Fresh}$, $8\text{–}30\text{d} \implies \text{Recent}$, $> 30\text{d} \implies \text{Stale}$.
+4. **Dual Ranking**:
+   - **`priority_rank` (Phase 1 Authoritative)**: Sorted by `evidence_score DESC, keep_runs DESC, feature_name ASC`.
+   - **`operational_priority_score`**: $\text{round}(\text{evidence\_score} \times C, 2)$.
+   - **`advisory_rank` (Phase 2A Preview)**: Sorted by `operational_priority_score DESC, keep_runs DESC, feature_name ASC`.
+
+### 7.2. Phase 2B Stability, Risk Badges & Generalization
+1. **Score Volatility ($\sigma_S$) & Trajectory Spread ($N \ge 3$)**:
+   $$\sigma_S = \sqrt{\frac{1}{N - 1} \sum_{t=1}^N (S_t - \bar{S})^2} \quad (\sigma_S < 15.0 \implies \text{Stable},\ 15.0 \le \sigma_S < 35.0 \implies \text{Moderate},\ \sigma_S \ge 35.0 \implies \text{Volatile})$$
+   - $N < 3 \implies \text{None}$ (`⚪ N/A (< 3 runs)`).
+   - Tracks score range spread $\Delta S = \max(S_t) - \min(S_t)$ and trajectory direction flips $D_{\text{flips}}$.
+2. **Level-1 Cross-Context Generalization ($K \ge 2$)**:
+   $$G = A_{\text{context}} \times \left(1.0 - \min\left(1.0, \frac{\Delta S_{\text{context}}}{100.0}\right)\right)$$
+   - Evaluated across matching market, window, and project dimensions differing only by sampling interval.
+   - $G \ge 0.75 \implies \text{Universal}$, $0.50 \le G < 0.75 \implies \text{Scale-Robust}$, $0.25 \le G < 0.50 \implies \text{Scale-Sensitive}$, $G < 0.25 \implies \text{Scale-Specific}$.
+3. **Explicit Multi-Dimensional Risk Badges**:
+   - `[DEGRADED]` (Score $\le -40.0$), `[SPLIT]` (`is_consensus_tie`), `[STALE]` ($> 30\text{d}$), `[UNSTABLE]` ($\sigma_S \ge 35.0$).
+
+---
+
+## 8. Feature Recommendation Evidence Studio UI (5 Tabs)
+
+Accessible via the **"Evidence DB & Projections"** toolbar button in Feature Studio or Production Validation ([`apps/master_dataset_tk/feature_recommendation_viewer.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_recommendation_viewer.py)):
 
 ```
-   Selected Model
-         │
-         ▼
-   Parent Dataset Metadata ────────► Extract: feature_project_id, pipeline_id,
-         │                                    pipeline_snapshot_id, include_pipeline
-         ▼
-   Identify Unseen Trading Days (Master Days \ Training Days)
-         │
-         ▼
-   Compute / Resolve Unseen Dataset (unseen_<slug>_<hash>)
-   • Exact lineage match: feature_project_id + pipeline_snapshot_id
-   • Materializes Feature Registry + Base Pipeline + Experimental Pipeline
-         │
-         ▼
-   Evaluate Model on Unseen Days
-   • Production MAE, RMSE, Directional Accuracy, PnL simulation
-         │
-         ▼
-   Holdout vs. Unseen Feature Comparison
-   • Drift score on unseen regime
-   • Null percentage on unseen regime
-   • Action assignment: KEEP / WATCH / REMOVE
+┌───────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Feature Recommendation Evidence Studio                                                            │
+├───────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Context: [Market: NIFTY ▼] [Interval: 3 ▼] [Window: standard ▼] [Project: all ▼] [x] Legacy  │
+│ Context ID: ctx_574ee67348f2                 [Rebuild Projections]  [Refresh Data]                │
+├───────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [1. Feature Registry] [2. Base Pipeline] [3. Selected Exp] [4. Raw Log] [5. Policy Settings]      │
+└───────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
----
-
-## 10. Feature Validation
-
-Inside Production Validation, the **Feature Validation** section evaluates individual feature behavior in production:
-1. **Radio Selectors**:
-   - `Selected Experimental` (Default): Focuses validation on new candidate features generated by experimental pipelines.
-   - `Base Pipeline`: Evaluates deterministic mathematical transforms.
-   - `Feature Registry`: Evaluates canonical registry domain features.
-2. **Metrics Displayed**:
-   - Holdout Importance Rank & Weight.
-   - Holdout Mean & Std vs. Unseen Mean & Std.
-   - Unseen Drift Score & Unseen Null %.
-   - Production Recommendation (`KEEP`, `WATCH`, `REMOVE`).
+### Exact Treeview Columns by Tab:
+- **Tab 1: Feature Registry**: `Feature Name`, `Runs`, `Models`, `Score`, `Status`, `Confidence`, `Model Consensus`, `Freshness`, `Stability`, `Generalization`, `Badges`, `Last Rec`, `Last Model`.
+- **Tab 2: Base Pipeline**: `Priority Rank`, `Feature Name`, `Runs`, `Models`, `Score`, `Confidence`, `Adj Score`, `Advisory Rank`, `Model Consensus`, `Freshness`, `Stability`, `Generalization`, `Badges`, `Status`, `Last Rec`, `Last Model`.
+- **Tab 3: Selected Experimental**: `Lineage Status`, `Context Status`, `Feature Name`, `Pipeline ID`, `Snapshot`, `Runs`, `Models`, `Streak`, `Score`, `Confidence`, `Consensus`, `Freshness`, `Stability`, `Generalization`, `Badges`.
+- **Tab 4: Raw Evidence Log**: Chronological audit log of all individual validation events.
+- **Tab 5: Policy Settings & History**: Interactive editor for scoring weights, experimental blocking/promotion gates, context overrides, version history, preview impact, and rollback.
 
 ---
 
-## 11. KEEP / WATCH / REMOVE Rules
+## 9. Policy Settings System Architecture (Tab 5)
 
-| Recommendation | Criteria | Operational Meaning |
-|---|---|---|
-| **`KEEP`** | • Drift $< 0.30$<br>• Null $\% < 1.0\%$<br>• Importance Rank stable | Feature demonstrates high generalization and stability in production. Retained in future models. |
-| **`WATCH`** | • Drift $0.30 \dots 0.65$<br>• OR Null $\% 1.0\% \dots 5.0\%$<br>• OR Moderate rank loss | Feature exhibits mild instability or regime sensitivity. Flagged for monitoring. |
-| **`REMOVE`** | • Drift $\ge 0.65$<br>• OR Null $\% \ge 5.0\%$<br>• OR Permutation rank $\le 0$ | Feature suffers from severe distribution shift or spurious correlation. Excluded from future model runs. |
+Implemented in [`apps/chain_replay_ml/production_validation/recommendation_policy.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/recommendation_policy.py):
 
-### Recommendation Persistence:
-- Clicking **"Update Registry Recommendations"** appends records to [`data/feature_recommendation_history.json`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/data/feature_recommendation_history.json).
-- **Critical Invariant**: Recommendations **never delete or alter canonical feature registry definitions or pipeline transformations**. They serve as advisory metadata for Model Builder and Feature Project filtering.
-
----
-
-## 12. Model Builder Integration
-
-Feature Studio directly feeds into **Create Model (Section 5)**:
-1. **Registry Tab**: Populated by the selected dataset's `feature_project_id`. Users can exclude features flagged as `REMOVE`.
-2. **Base Pipeline Tab**: Populated by `base_pipeline_export_features`. Users enable/disable standard generator families.
-3. **Selected Experimental Tab**: Populated by `pipeline_provenance["candidate_features"]` for the active `pipeline_id` and `pipeline_snapshot_id`.
-4. **Final Model Feature Vector**:
-   $$\mathcal{F}_{\text{model}} = \mathcal{F}_{\text{registry}} \cup \mathcal{F}_{\text{base\_pipeline}} \cup \mathcal{F}_{\text{experimental}}$$
+- **Tiered Scope Hierarchy**: Global default settings with optional context-specific overrides.
+- **Policy Versioning & History**: Every save creates an immutable version snapshot in `policy_settings_history`.
+- **No-Op Save Prevention**: Submitting unchanged settings does not create duplicate history rows.
+- **Non-Destructive Rollback**: Rolling back to a previous version creates a new active version ($v_{N+1}$) copying the historical state, preserving forward-only audit history.
+- **Read-Only Preview Impact**: Evaluates proposed threshold changes in-memory before committing.
+- **Projection Rebuild Invariant**: Policy updates automatically trigger `rebuild_all_projections()`, updating projections while preserving raw evidence immutability.
 
 ---
 
-## 13. Storage & Artifacts Map
+## 10. Storage & Artifacts Map
 
 | Artifact | Typical Path | Format | Producer | Consumer |
 |---|---|---|---|---|
@@ -415,144 +289,24 @@ Feature Studio directly feeds into **Create Model (Section 5)**:
 | **Diagnostics Meta** | `models/<model>/diagnostics_studio/meta.json` | JSON | `diagnostics_studio` | Diagnostics Tab |
 | **Diagnostics Summary** | `models/<model>/diagnostics_studio/summary.json` | JSON | `diagnostics_studio` | Diagnostics Tab |
 | **Unseen Dataset** | `datasets/analysis_datasets/unseen_<slug>_<hash>.parquet` | Parquet | `production_validation` | Validation Engine |
-| **Unseen Metadata** | `datasets/analysis_datasets/unseen_<slug>_<hash>.json` | JSON | `production_validation` | Lineage Verifier |
 | **Production Metrics** | `models/<model>/production_validation/unseen_metrics.json` | JSON | `production_validation` | Prod Validation Tab |
-| **Recommendation History**| `<chart_data_dir>/feature_recommendation_history.json` | JSON | `production_validation` | Feature Project / Model Builder |
+| **SQLite Evidence DB** | `<chart_data_dir>/feature_recommendation_evidence.db` | SQLite | `production_validation` | Evidence Studio, Candidate Gate |
+| **Policy Settings DB** | `<chart_data_dir>/feature_recommendation_evidence.db` (table `policy_settings_history`)| SQLite | `recommendation_policy` | Evidence Studio Tab 5 |
 | **Feature Projects** | `<chart_data_dir>/feature_registry_projects.json` | JSON | `feature_project_manager`| Master Builder, Model Builder |
 
 ---
 
-## 14. Source Code Map
+## 11. Source Code Map
 
 | Component | Source File | Key Class / Functions | Reads | Writes |
 |---|---|---|---|---|
-| **Studio Shell** | [`apps/master_dataset_tk/feature_studio_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_studio_panel.py) | `FeatureStudioPanel` | Model registry, UI prefs | UI cache |
+| **Studio Shell** | [`apps/master_dataset_tk/feature_studio_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_studio_panel.py) | `FeatureStudioPanel` | Model registry, UI prefs | UI cache, Evidence DB trigger |
 | **Pipeline Controller** | [`apps/master_dataset_tk/feature_studio_pipeline.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_studio_pipeline.py) | `run_compute_pipeline`, `run_load_pipeline` | Model packages | Studio artifacts |
-| **Importance Compute** | [`apps/chain_replay_ml/feature_importance_studio/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/feature_importance_studio/compute.py) | `run_compute`, `_load_holdout_xy` | Model binary, Holdout matrix | `feature_importance/*.json` |
-| **Distribution Compute**| [`apps/chain_replay_ml/feature_distribution_studio/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/feature_distribution_studio/compute.py)| `run_compute`, `compute_holdout_stats`| Holdout matrix | `feature_distribution/*.json` |
-| **Drift Compute** | [`apps/chain_replay_ml/feature_drift_studio/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/feature_drift_studio/compute.py) | `run_compute`, `load_wf_holdout_xy` | WF & Holdout matrices | `feature_drift/*.json` |
-| **Multi-Model Compare** | [`apps/chain_replay_ml/multi_model_studio/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/multi_model_studio/compute.py) | `run_compute`, `build_comparison_rows` | Model A & B artifacts | `models/_pairs/.../comparison.json` |
 | **Diagnostics Engine** | [`apps/chain_replay_ml/diagnostics_studio/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/diagnostics_studio/compute.py) | `run_compute`, `summarize_diagnostics` | Importance, Drift, Metrics | `diagnostics_studio/*.json` |
-| **Feature Partition** | [`apps/chain_replay_ml/diagnostics_studio/feature_partition.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/diagnostics_studio/feature_partition.py) | `partition_diagnostic_rows` | Dataset metadata, Feature Catalog | Partitioned subsets |
-| **Unseen Dataset Builder**| [`apps/chain_replay_ml/production_validation/unseen_dataset.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/unseen_dataset.py) | `resolve_or_create_unseen_dataset` | Master DB, Parent Dataset meta | `unseen_*.parquet` |
 | **Validation Compute** | [`apps/chain_replay_ml/production_validation/compute.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/compute.py) | `run_production_validation` | Unseen matrix, Model binary | `production_validation/*.json` |
-| **Recommendation Store**| [`apps/chain_replay_ml/production_validation/recommendation_store.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/recommendation_store.py)| `update_registry_recommendations` | UI recommendation selections | `feature_recommendation_history.json` |
-
----
-
-## 15. End-to-End Data Flow
-
-```
-                      ┌────────────────────────┐
-                      │ Feature Project Doc    │
-                      │ (e.g. project_id='all')│
-                      └───────────┬────────────┘
-                                  │
-                                  ▼
-                      ┌────────────────────────┐
-                      │ Master Dataset Store   │
-                      │ (master_nifty_6s.db)   │
-                      └───────────┬────────────┘
-                                  │
-                                  ▼
-                      ┌────────────────────────┐
-                      │ Analysis Dataset       │
-                      │ (Registry + Base + Exp)│
-                      └───────────┬────────────┘
-                                  │
-                                  ▼
-                      ┌────────────────────────┐
-                      │ Model Training (XGB)   │
-                      │ • Walk-Forward (Train) │
-                      │ • Holdout Slice (Eval) │
-                      └───────────┬────────────┘
-                                  │
-                                  ▼
-                      ┌────────────────────────┐
-                      │ Model Package          │
-                      │ models/<model_name>/   │
-                      └───────────┬────────────┘
-                                  │
-         ┌────────────────────────┼────────────────────────┐
-         ▼                        ▼                        ▼
-┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
-│Importance Studio │    │Distribution St.  │    │  Drift Studio    │
-│• Native Gain     │    │• Moments (μ, σ)  │    │• Normalized Shift│
-│• Permutation     │    │• Percentiles     │    │• KS / Wasserstein│
-│• SHAP Holdout    │    │• Null counts     │    │• Composite Risk  │
-└────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-                                 ▼
-                      ┌────────────────────────┐
-                      │  Diagnostics Studio    │
-                      │  (Holdout vs. WF Split)│
-                      │  • Overfitting / Drift │
-                      │  • 3-Source Sub-Tabs   │
-                      └───────────┬────────────┘
-                                  │
-                                  ▼
-                      ┌────────────────────────┐
-                      │ Production Validation  │
-                      │ (Holdout vs. Unseen)   │
-                      │ • unseen_* dataset     │
-                      │ • 3-Source Radios      │
-                      │ • KEEP / WATCH / REMOVE│
-                      └───────────┬────────────┘
-                                  │
-                                  ▼
-                      ┌────────────────────────┐
-                      │ Recommendation History │
-                      │ (JSON Audit Store)     │
-                      └────────────────────────┘
-```
-
----
-
-## 16. Architectural Rules
-
-1. **Master Dataset Isolation**: Master Dataset contains only materialized Feature Registry features. Base and Experimental Pipeline features are never materialized into the Master Dataset SQLite store.
-2. **Deterministic Classification**: Every model feature must belong to exactly one source category (`Feature Registry`, `Base Pipeline`, or `Selected Experimental`). No feature may appear in multiple tabs or be omitted.
-3. **Lineage Preservation in Validation**: `unseen_*` datasets must inherit the exact `feature_project_id`, `pipeline_id`, and `pipeline_snapshot_id` of the parent training dataset.
-4. **No Ad-Hoc Recomputation**: Tab switches inside Feature Studio must use cached in-memory structures or reload existing on-disk JSON artifacts. Recomputations occur only via explicit user action ("Compute").
-5. **Non-Destructive Recommendations**: Production Validation recommendations (`KEEP`, `WATCH`, `REMOVE`) write to an audit history log and must never mutate or delete canonical Feature Registry definitions or pipeline configurations.
-6. **Data Split Boundaries**:
-   - Diagnostics Studio evaluates **Walk-Forward vs. Holdout**.
-   - Production Validation evaluates **Holdout vs. Unseen Forward Days**.
-
----
-
-## 17. Known Limitations
-
-### Current Limitations:
-- **Studio Compare Source Flattening**: `MultiModelStudioPanel` displays a flat comparison between Model A and Model B without sub-partitioning into the 3 feature sources.
-- **Tree SHAP Sample Size**: SHAP importance uses a background sample size of $N=400$ holdout rows to balance latency with fidelity, which provides sample-approximate attribution rather than exhaustive exact Shapley values.
-
-### Intentional Design:
-- **Sequential Pipeline Execution**: Features compute sequentially (`Importance` &rarr; `Distribution` &rarr; `Drift` &rarr; `Diagnostics` &rarr; `Planner`) because downstream diagnostics and planner engines require upstream artifact JSON files on disk.
-- **Unseen Dataset Caching**: Unseen datasets are indexed by an 8-character identity hash of their data slice and pipeline snapshot, preventing redundant feature generation across validation runs.
-
----
-
-## 18. Troubleshooting
-
-| Symptom | Probable Cause | Resolution |
-|---|---|---|
-| `"Select an experimental pipeline when Pipeline Features is enabled"` | Parent dataset metadata lacked `pipeline_id` propagation during unseen dataset resolution. | Resolved in `unseen_dataset.py` by propagating `pipeline_id` and `pipeline_snapshot_id` from `parent_meta` / `train_cfg`. |
-| `"Feature 'XYZ' has no primary domain assignment"` | Custom feature name used in project setup is missing from canonical domain mappings in `feature_domains.py`. | Use valid canonical names (e.g., `futures_ltp`, `atm_iv_ce`, `spot_ema20`). |
-| `Drift reports 1.0000 (100%) for all features` | Mean shift exceeded $1.5\sigma$ and std shifted by $\ge 50\%$, saturating the normalization clamp. | Inspect data scaling or verify whether market regime (high volatility vs. consolidation) shifted dramatically between WF and Holdout. |
-| `No module named 'tkinter'` | PyCharm executed system Python (`C:\python\python.exe`) rather than project virtualenv. | Configure PyCharm SDK to `C:\Users\admin\PycharmProjects\AruMLStudio\.venv\Scripts\python.exe`. |
-
----
-
-## 19. Glossary
-
-- **Walk-Forward (WF)**: The sequential training and fold-validation slice of the dataset used during model fitting.
-- **Holdout**: The out-of-sample time slice set aside during model training to assess validation performance and initial drift.
-- **Unseen Days**: Complete trading days present in the Master Dataset that occurred strictly outside the model's training and holdout intervals.
-- **`feature_project_id`**: Identifier of the Feature Registry project document organizing canonical registry features.
-- **`pipeline_snapshot_id`**: Cryptographic content hash of an experimental pipeline configuration guaranteeing immutable feature generation.
-- **`registry_export_features`**: The subset of canonical Feature Registry features selected for dataset export.
-- **`base_pipeline_export_features`**: Mathematical transformations (lags, differences, returns, interactions) generated by the base pipeline.
-- **Consensus Rank**: Median/average rank of a feature across Native XGBoost, Permutation, and SHAP importance metrics.
+| **Evidence Store** | [`apps/chain_replay_ml/production_validation/evidence_store.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/evidence_store.py) | `append_validation_evidence`, `rebuild_all_projections`, `query_blocked_candidates` | SQLite schema, Validation rows | `recommendation_evidence`, Projections |
+| **Policy Engine** | [`apps/chain_replay_ml/production_validation/recommendation_policy.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/recommendation_policy.py) | `RecommendationPolicy`, `compute_evidence_score`, `compute_score_volatility`, `compute_context_generalization` | Policy config, Evidence history | Projections, Policy History |
+| **Recommendation Store**| [`apps/chain_replay_ml/production_validation/recommendation_store.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/recommendation_store.py)| `get_population_recommendations`, `_enrich_intelligence_metrics` | Projections, Raw Evidence | Query-Time Intelligence Payloads |
+| **Dataset Context** | [`apps/chain_replay_ml/production_validation/dataset_context.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/production_validation/dataset_context.py) | `build_dataset_context`, `resolve_dataset_context_id` | Market, Sampling, Window, Project | Canonical Context ID |
+| **Evidence Studio GUI**| [`apps/master_dataset_tk/feature_recommendation_viewer.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/feature_recommendation_viewer.py)| `FeatureRecommendationViewerDialog` | SQLite Evidence DB, Policies | Projections, Policies, UI Views |
+| **Candidate Gate** | [`apps/master_dataset_tk/auto_candidate_generation.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/auto_candidate_generation.py) | `query_blocked_candidates` | `feature_context_summary` | Filtered Candidate List |

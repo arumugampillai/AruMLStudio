@@ -495,10 +495,74 @@ def save_model_package(
                 "snapshot_date": lc.get("snapshot_date"),
                 "registry_version": lc.get("registry_version"),
             }
+    # Phase 3C: Recommendation Decision Provenance Stamping
+    rdb = getattr(config, "recommendation_decision_bundle", None)
+    if isinstance(rdb, dict) and rdb:
+        prov_map = rdb.get("feature_provenance") or {}
+        trained_candidates = list(config.features or [])
+        feature_snapshots = {}
+        for feat in trained_candidates:
+            p = prov_map.get(feat) or {}
+            if p:
+                feature_snapshots[feat] = {
+                    "source": p.get("feature_source"),
+                    "decision": p.get("decision"),
+                    "primary_reason": p.get("primary_reason"),
+                    "badges": p.get("reason_badges") or [],
+                    "pre_train_evidence_score": p.get("evidence_score"),
+                    "pre_train_confidence": p.get("evidence_confidence"),
+                }
+            else:
+                feature_snapshots[feat] = {
+                    "source": "unknown",
+                    "decision": "TRAIN_CANDIDATE",
+                    "primary_reason": "MANUALLY_INCLUDED",
+                    "badges": [],
+                    "pre_train_evidence_score": 0.0,
+                    "pre_train_confidence": 0.0,
+                }
+
+        recommendation_provenance = {
+            "has_recommendation_lineage": True,
+            "context_id": rdb.get("context_id"),
+            "market": rdb.get("market"),
+            "sampling_interval_sec": rdb.get("sampling_interval_sec"),
+            "sliding_window": rdb.get("sliding_window"),
+            "feature_project_id": rdb.get("feature_project_id"),
+            "originating_policy_id": rdb.get("policy_id"),
+            "originating_policy_version": rdb.get("policy_version"),
+            "decision_engine_version": rdb.get("decision_engine_version") or "3B.1",
+            "handoff_timestamp": rdb.get("generated_at_ms"),
+            "trained_candidates": trained_candidates,
+            "selection_summary": {
+                "eligible_candidates_count": rdb.get("eligible_candidates_count", len(trained_candidates)),
+                "selected_candidates_count": len(trained_candidates),
+                "review_count": rdb.get("review_count", 0),
+                "unseen_count": rdb.get("unseen_count", 0),
+                "excluded_count": rdb.get("excluded_count", 0),
+            },
+            "feature_decision_snapshots": feature_snapshots,
+        }
+        metadata_doc["recommendation_provenance"] = recommendation_provenance
+        config_doc["recommendation_provenance"] = recommendation_provenance
+
     with open(os.path.join(paths["package_dir"], "metadata.json"), "w", encoding="utf-8") as fh:
         json.dump(metadata_doc, fh, indent=2)
     with open(os.path.join(paths["package_dir"], "training_config.json"), "w", encoding="utf-8") as fh:
         json.dump(config_doc, fh, indent=2)
+
+    manifest_doc = {
+        "model_name": model_name,
+        "trained_at": trained_at,
+        "dataset": config.dataset,
+        "target": config.target,
+        "algorithm": config.algorithm,
+        "feature_count": len(config.features),
+        "features": list(config.features),
+        "recommendation_provenance": metadata_doc.get("recommendation_provenance"),
+    }
+    with open(os.path.join(paths["package_dir"], "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(manifest_doc, fh, indent=2)
 
     algo = normalize_algorithm(config.algorithm)
     native_path = native_model_path(paths["package_dir"], "model", algo)

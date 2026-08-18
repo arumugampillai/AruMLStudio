@@ -38,6 +38,23 @@ def get_connection(data_dir: str) -> sqlite3.Connection:
     return conn
 
 
+def _ensure_projection_columns(conn: sqlite3.Connection) -> None:
+    """Safe, non-destructive migration ensuring projection metadata columns exist."""
+    for table in ("feature_context_summary", "experimental_lineage_summary"):
+        try:
+            cur = conn.execute(f"PRAGMA table_info({table});")
+            cols = {row["name"] for row in cur.fetchall()}
+            if cols:
+                if "projection_policy_id" not in cols:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN projection_policy_id TEXT;")
+                if "projection_policy_version" not in cols:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN projection_policy_version INTEGER;")
+                if "projection_rebuilt_at" not in cols:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN projection_rebuilt_at TEXT;")
+        except Exception:
+            pass
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     with conn:
         conn.executescript(
@@ -101,6 +118,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
                     CHECK (lifecycle_status IN ('active', 'held', 'blocked', 'alert')),
                 last_recommendation TEXT,
                 last_validated_at TEXT NOT NULL,
+                projection_policy_id TEXT,
+                projection_policy_version INTEGER,
+                projection_rebuilt_at TEXT,
                 FOREIGN KEY (context_id) REFERENCES dataset_contexts(context_id),
                 UNIQUE(context_id, feature_source, feature_name)
             );
@@ -128,6 +148,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
                     CHECK (lifecycle_status IN ('active', 'held', 'blocked', 'promotion_candidate')),
                 last_recommendation TEXT,
                 last_validated_at TEXT NOT NULL,
+                projection_policy_id TEXT,
+                projection_policy_version INTEGER,
+                projection_rebuilt_at TEXT,
                 FOREIGN KEY (context_id) REFERENCES dataset_contexts(context_id),
                 UNIQUE(context_id, pipeline_id, pipeline_snapshot_id, feature_name)
             );
@@ -141,6 +164,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             );
             """
         )
+        _ensure_projection_columns(conn)
 
 
 def ensure_dataset_context(conn: sqlite3.Connection, context: DatasetContext) -> None:
@@ -302,7 +326,6 @@ def _update_context_summary_for_feature(
     feature_name: str,
     policy: RecommendationPolicy,
 ) -> None:
-    # Query all historical evidence for this feature in this context ordered chronologically
     cur = conn.execute(
         """
         SELECT recommendation, model_name, run_timestamp
@@ -324,12 +347,10 @@ def _update_context_summary_for_feature(
     unique_models = set(r["model_name"] for r in rows if r["model_name"])
     unique_models_count = len(unique_models)
 
-    # Calculate model counts by recommendation
     remove_models_count = len(set(r["model_name"] for r in rows if r["recommendation"] == "REMOVE" and r["model_name"]))
     keep_models_count = len(set(r["model_name"] for r in rows if r["recommendation"] == "KEEP" and r["model_name"]))
     watch_models_count = len(set(r["model_name"] for r in rows if r["recommendation"] == "WATCH" and r["model_name"]))
 
-    # Calculate current streaks from end of chronological sequence
     consecutive_removes = 0
     for r in reversed(rows):
         if r["recommendation"] == "REMOVE":
@@ -380,7 +401,7 @@ def _update_context_summary_for_feature(
         reg_pol = policy.feature_registry
         if (
             remove_runs >= reg_pol.remove_audit_alert_threshold
-            and remove_models_count >= reg_pol.min_unique_models
+            and remove_models_count >= reg_pol.registry_alert_min_unique_models
         ):
             status = "alert"
         elif last_rec == "WATCH":
@@ -389,6 +410,8 @@ def _update_context_summary_for_feature(
             status = "active"
 
     summary_id = f"sum_{context_id}_{feature_source}_{feature_name}"
+    rebuilt_at = _utc_now()
+
     conn.execute(
         """
         INSERT INTO feature_context_summary (
@@ -396,8 +419,9 @@ def _update_context_summary_for_feature(
             total_runs, keep_runs, watch_runs, remove_runs,
             unique_models_count, consecutive_remove_count, consecutive_keep_count,
             evidence_score, priority_rank, lifecycle_status,
-            last_recommendation, last_validated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+            last_recommendation, last_validated_at,
+            projection_policy_id, projection_policy_version, projection_rebuilt_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(context_id, feature_source, feature_name) DO UPDATE SET
             total_runs=excluded.total_runs,
             keep_runs=excluded.keep_runs,
@@ -409,7 +433,10 @@ def _update_context_summary_for_feature(
             evidence_score=excluded.evidence_score,
             lifecycle_status=excluded.lifecycle_status,
             last_recommendation=excluded.last_recommendation,
-            last_validated_at=excluded.last_validated_at;
+            last_validated_at=excluded.last_validated_at,
+            projection_policy_id=excluded.projection_policy_id,
+            projection_policy_version=excluded.projection_policy_version,
+            projection_rebuilt_at=excluded.projection_rebuilt_at;
         """,
         (
             summary_id,
@@ -427,6 +454,9 @@ def _update_context_summary_for_feature(
             status,
             last_rec,
             last_val_at,
+            policy.policy_id,
+            policy.policy_version,
+            rebuilt_at,
         ),
     )
 
@@ -501,7 +531,7 @@ def _update_lineage_summary_for_candidate(
     elif (
         consecutive_keeps >= exp_pol.promotion_candidate_consecutive_keep
         and score >= exp_pol.promotion_candidate_min_score
-        and unique_models_count >= exp_pol.min_unique_models
+        and unique_models_count >= exp_pol.experimental_promotion_min_unique_models
     ):
         status = "promotion_candidate"
     elif last_rec == "WATCH":
@@ -510,6 +540,8 @@ def _update_lineage_summary_for_candidate(
         status = "active"
 
     lineage_id = f"lin_{context_id}_{pipeline_id}_{pipeline_snapshot_id}_{feature_name}"
+    rebuilt_at = _utc_now()
+
     conn.execute(
         """
         INSERT INTO experimental_lineage_summary (
@@ -518,8 +550,9 @@ def _update_lineage_summary_for_candidate(
             total_runs, keep_runs, watch_runs, remove_runs,
             unique_models_count, consecutive_keep_count, consecutive_remove_count,
             lineage_evidence_score, lifecycle_status,
-            last_recommendation, last_validated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            last_recommendation, last_validated_at,
+            projection_policy_id, projection_policy_version, projection_rebuilt_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(context_id, pipeline_id, pipeline_snapshot_id, feature_name) DO UPDATE SET
             total_runs=excluded.total_runs,
             keep_runs=excluded.keep_runs,
@@ -531,7 +564,10 @@ def _update_lineage_summary_for_candidate(
             lineage_evidence_score=excluded.lineage_evidence_score,
             lifecycle_status=excluded.lifecycle_status,
             last_recommendation=excluded.last_recommendation,
-            last_validated_at=excluded.last_validated_at;
+            last_validated_at=excluded.last_validated_at,
+            projection_policy_id=excluded.projection_policy_id,
+            projection_policy_version=excluded.projection_policy_version,
+            projection_rebuilt_at=excluded.projection_rebuilt_at;
         """,
         (
             lineage_id,
@@ -551,6 +587,9 @@ def _update_lineage_summary_for_candidate(
             status,
             last_rec,
             last_val_at,
+            policy.policy_id,
+            policy.policy_version,
+            rebuilt_at,
         ),
     )
 
@@ -558,20 +597,49 @@ def _update_lineage_summary_for_candidate(
 def rebuild_all_projections(
     conn: sqlite3.Connection,
     policy: RecommendationPolicy | None = None,
+    context_id: str | None = None,
 ) -> dict[str, int]:
-    """Deterministic disaster-recovery rebuild of all materialized summary projections."""
+    """Deterministic disaster-recovery rebuild of materialized summary projections."""
     pol = policy or RecommendationPolicy()
-    with conn:
-        conn.execute("DELETE FROM feature_context_summary;")
-        conn.execute("DELETE FROM experimental_lineage_summary;")
+    cid = str(context_id or "").strip() or None
 
-        # Fetch all distinct (context_id, feature_source, feature_name)
-        cur_ctx = conn.execute(
-            """
-            SELECT DISTINCT context_id, feature_source, feature_name
-            FROM recommendation_evidence
-            """
-        )
+    with conn:
+        if cid:
+            conn.execute("DELETE FROM feature_context_summary WHERE context_id = ?;", (cid,))
+            conn.execute("DELETE FROM experimental_lineage_summary WHERE context_id = ?;", (cid,))
+            cur_ctx = conn.execute(
+                """
+                SELECT DISTINCT context_id, feature_source, feature_name
+                FROM recommendation_evidence
+                WHERE context_id = ?
+                """,
+                (cid,),
+            )
+            cur_lin = conn.execute(
+                """
+                SELECT DISTINCT context_id, pipeline_id, pipeline_snapshot_id, feature_name, feature_identity_key
+                FROM recommendation_evidence
+                WHERE context_id = ? AND feature_source = 'experimental' AND pipeline_id IS NOT NULL AND pipeline_snapshot_id IS NOT NULL
+                """,
+                (cid,),
+            )
+        else:
+            conn.execute("DELETE FROM feature_context_summary;")
+            conn.execute("DELETE FROM experimental_lineage_summary;")
+            cur_ctx = conn.execute(
+                """
+                SELECT DISTINCT context_id, feature_source, feature_name
+                FROM recommendation_evidence
+                """
+            )
+            cur_lin = conn.execute(
+                """
+                SELECT DISTINCT context_id, pipeline_id, pipeline_snapshot_id, feature_name, feature_identity_key
+                FROM recommendation_evidence
+                WHERE feature_source = 'experimental' AND pipeline_id IS NOT NULL AND pipeline_snapshot_id IS NOT NULL
+                """
+            )
+
         ctx_targets = cur_ctx.fetchall()
         for t in ctx_targets:
             _update_context_summary_for_feature(
@@ -582,14 +650,6 @@ def rebuild_all_projections(
                 policy=pol,
             )
 
-        # Fetch all distinct experimental lineages
-        cur_lin = conn.execute(
-            """
-            SELECT DISTINCT context_id, pipeline_id, pipeline_snapshot_id, feature_name, feature_identity_key
-            FROM recommendation_evidence
-            WHERE feature_source = 'experimental' AND pipeline_id IS NOT NULL AND pipeline_snapshot_id IS NOT NULL
-            """
-        )
         lin_targets = cur_lin.fetchall()
         for l in lin_targets:
             _update_lineage_summary_for_candidate(
@@ -605,6 +665,261 @@ def rebuild_all_projections(
     return {
         "context_summaries_rebuilt": len(ctx_targets),
         "lineage_summaries_rebuilt": len(lin_targets),
+    }
+
+
+def preview_policy_impact(
+    conn: sqlite3.Connection,
+    *,
+    context_id: str,
+    proposed_policy: RecommendationPolicy,
+) -> dict[str, Any]:
+    """Strictly in-memory simulation of proposed policy on existing raw evidence (zero DB writes)."""
+    # 1. Fetch current projections for context
+    cur_ctx = conn.execute(
+        "SELECT feature_name, feature_source, evidence_score, lifecycle_status FROM feature_context_summary WHERE context_id = ?",
+        (context_id,),
+    )
+    current_ctx_rows = {row["feature_name"]: dict(row) for row in cur_ctx.fetchall()}
+
+    cur_lin = conn.execute(
+        "SELECT feature_name, pipeline_id, pipeline_snapshot_id, lineage_evidence_score, lifecycle_status FROM experimental_lineage_summary WHERE context_id = ?",
+        (context_id,),
+    )
+    current_lin_rows = {
+        (row["pipeline_id"], row["pipeline_snapshot_id"], row["feature_name"]): dict(row)
+        for row in cur_lin.fetchall()
+    }
+
+    # 2. Fetch raw evidence for context ordered chronologically
+    cur_ev = conn.execute(
+        """
+        SELECT context_id, feature_name, feature_source, feature_identity_key,
+               pipeline_id, pipeline_snapshot_id, recommendation, model_name, run_timestamp
+        FROM recommendation_evidence
+        WHERE context_id = ?
+        ORDER BY run_timestamp ASC
+        """,
+        (context_id,),
+    )
+    raw_rows = [dict(r) for r in cur_ev.fetchall()]
+
+    # Group by feature for context summary preview
+    by_feature: dict[str, list[dict[str, Any]]] = {}
+    for r in raw_rows:
+        fn = r["feature_name"]
+        by_feature.setdefault(fn, []).append(r)
+
+    # Group experimental features by lineage
+    by_lineage: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for r in raw_rows:
+        if r["feature_source"] == "experimental" and r["pipeline_id"] and r["pipeline_snapshot_id"]:
+            key = (r["pipeline_id"], r["pipeline_snapshot_id"], r["feature_name"])
+            by_lineage.setdefault(key, []).append(r)
+
+    proposed_ctx: dict[str, dict[str, Any]] = {}
+    for fn, rows in by_feature.items():
+        feat_source = rows[0]["feature_source"]
+        remove_runs = sum(1 for r in rows if r["recommendation"] == "REMOVE")
+        unique_models = set(r["model_name"] for r in rows if r["model_name"])
+        unique_models_count = len(unique_models)
+        remove_models_count = len(set(r["model_name"] for r in rows if r["recommendation"] == "REMOVE" and r["model_name"]))
+        keep_models_count = len(set(r["model_name"] for r in rows if r["recommendation"] == "KEEP" and r["model_name"]))
+        watch_models_count = len(set(r["model_name"] for r in rows if r["recommendation"] == "WATCH" and r["model_name"]))
+
+        consecutive_removes = 0
+        for r in reversed(rows):
+            if r["recommendation"] == "REMOVE":
+                consecutive_removes += 1
+            else:
+                break
+
+        consecutive_keeps = 0
+        for r in reversed(rows):
+            if r["recommendation"] == "KEEP":
+                consecutive_keeps += 1
+            else:
+                break
+
+        score = compute_evidence_score(
+            keep_models=keep_models_count,
+            remove_models=remove_models_count,
+            watch_models=watch_models_count,
+            consecutive_keeps=consecutive_keeps,
+            consecutive_removes=consecutive_removes,
+            policy=proposed_policy.scoring,
+        )
+        last_rec = rows[-1]["recommendation"]
+
+        if feat_source == "experimental":
+            exp_pol = proposed_policy.experimental_lifecycle
+            if (
+                consecutive_removes >= exp_pol.remove_block_consecutive_threshold
+                or remove_runs >= exp_pol.remove_block_total_threshold
+            ):
+                status = "blocked"
+            elif last_rec == "WATCH":
+                status = "held"
+            else:
+                status = "active"
+        elif feat_source == "base_pipeline":
+            base_pol = proposed_policy.base_pipeline
+            if score <= base_pol.negative_alert_score_threshold:
+                status = "alert"
+            elif last_rec == "WATCH":
+                status = "held"
+            else:
+                status = "active"
+        else:  # registry
+            reg_pol = proposed_policy.feature_registry
+            if (
+                remove_runs >= reg_pol.remove_audit_alert_threshold
+                and remove_models_count >= reg_pol.registry_alert_min_unique_models
+            ):
+                status = "alert"
+            elif last_rec == "WATCH":
+                status = "held"
+            else:
+                status = "active"
+
+        proposed_ctx[fn] = {
+            "feature_name": fn,
+            "feature_source": feat_source,
+            "score": score,
+            "lifecycle_status": status,
+        }
+
+    # Lineage preview (PROMOTION_CANDIDATE)
+    proposed_lin: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for key, rows in by_lineage.items():
+        remove_runs = sum(1 for r in rows if r["recommendation"] == "REMOVE")
+        unique_models = set(r["model_name"] for r in rows if r["model_name"])
+        unique_models_count = len(unique_models)
+        remove_models_count = len(set(r["model_name"] for r in rows if r["recommendation"] == "REMOVE" and r["model_name"]))
+        keep_models_count = len(set(r["model_name"] for r in rows if r["recommendation"] == "KEEP" and r["model_name"]))
+        watch_models_count = len(set(r["model_name"] for r in rows if r["recommendation"] == "WATCH" and r["model_name"]))
+
+        consecutive_removes = 0
+        for r in reversed(rows):
+            if r["recommendation"] == "REMOVE":
+                consecutive_removes += 1
+            else:
+                break
+
+        consecutive_keeps = 0
+        for r in reversed(rows):
+            if r["recommendation"] == "KEEP":
+                consecutive_keeps += 1
+            else:
+                break
+
+        score = compute_evidence_score(
+            keep_models=keep_models_count,
+            remove_models=remove_models_count,
+            watch_models=watch_models_count,
+            consecutive_keeps=consecutive_keeps,
+            consecutive_removes=consecutive_removes,
+            policy=proposed_policy.scoring,
+        )
+        last_rec = rows[-1]["recommendation"]
+
+        exp_pol = proposed_policy.experimental_lifecycle
+        if (
+            consecutive_removes >= exp_pol.remove_block_consecutive_threshold
+            or remove_runs >= exp_pol.remove_block_total_threshold
+        ):
+            status = "blocked"
+        elif (
+            consecutive_keeps >= exp_pol.promotion_candidate_consecutive_keep
+            and score >= exp_pol.promotion_candidate_min_score
+            and unique_models_count >= exp_pol.experimental_promotion_min_unique_models
+        ):
+            status = "promotion_candidate"
+        elif last_rec == "WATCH":
+            status = "held"
+        else:
+            status = "active"
+
+        proposed_lin[key] = {
+            "pipeline_id": key[0],
+            "pipeline_snapshot_id": key[1],
+            "feature_name": key[2],
+            "score": score,
+            "lifecycle_status": status,
+        }
+
+    # Aggregate metrics
+    cur_promo_set = {k[2] for k, v in current_lin_rows.items() if v.get("lifecycle_status") == "promotion_candidate"}
+    prop_promo_set = {k[2] for k, v in proposed_lin.items() if v.get("lifecycle_status") == "promotion_candidate"}
+
+    cur_blocked_set = {k for k, v in current_ctx_rows.items() if v.get("lifecycle_status") == "blocked"}
+    prop_blocked_set = {k for k, v in proposed_ctx.items() if v.get("lifecycle_status") == "blocked"}
+
+    cur_alert_set = {k for k, v in current_ctx_rows.items() if v.get("lifecycle_status") == "alert"}
+    prop_alert_set = {k for k, v in proposed_ctx.items() if v.get("lifecycle_status") == "alert"}
+
+    cur_held_set = {k for k, v in current_ctx_rows.items() if v.get("lifecycle_status") == "held"}
+    prop_held_set = {k for k, v in proposed_ctx.items() if v.get("lifecycle_status") == "held"}
+
+    cur_active_set = {k for k, v in current_ctx_rows.items() if v.get("lifecycle_status") == "active"}
+    prop_active_set = {k for k, v in proposed_ctx.items() if v.get("lifecycle_status") == "active"}
+
+    feature_transitions = []
+    for fn, prop_data in proposed_ctx.items():
+        cur_data = current_ctx_rows.get(fn, {})
+        cur_stat = str(cur_data.get("lifecycle_status") or "active")
+        prop_stat = str(prop_data.get("lifecycle_status") or "active")
+        cur_sc = float(cur_data.get("evidence_score") or 0.0)
+        prop_sc = float(prop_data.get("score") or 0.0)
+
+        # Check if lineage has promotion status
+        is_cur_promo = fn in cur_promo_set
+        is_prop_promo = fn in prop_promo_set
+        display_cur_stat = "promotion_candidate" if is_cur_promo else cur_stat
+        display_prop_stat = "promotion_candidate" if is_prop_promo else prop_stat
+
+        feature_transitions.append({
+            "feature_name": fn,
+            "feature_source": prop_data["feature_source"],
+            "current_status": display_cur_stat,
+            "proposed_status": display_prop_stat,
+            "current_score": cur_sc,
+            "proposed_score": prop_sc,
+            "score_delta": round(prop_sc - cur_sc, 2),
+            "status_changed": display_cur_stat != display_prop_stat,
+        })
+
+    return {
+        "context_id": context_id,
+        "policy_id": proposed_policy.policy_id,
+        "policy_version": proposed_policy.policy_version,
+        "total_features": len(proposed_ctx),
+        "current_counts": {
+            "promotion_candidates": len(cur_promo_set),
+            "blocked": len(cur_blocked_set),
+            "alert": len(cur_alert_set),
+            "held": len(cur_held_set),
+            "active": len(cur_active_set),
+        },
+        "proposed_counts": {
+            "promotion_candidates": len(prop_promo_set),
+            "blocked": len(prop_blocked_set),
+            "alert": len(prop_alert_set),
+            "held": len(prop_held_set),
+            "active": len(prop_active_set),
+        },
+        "deltas": {
+            "promotion_candidates": len(prop_promo_set) - len(cur_promo_set),
+            "blocked": len(prop_blocked_set) - len(cur_blocked_set),
+            "alert": len(prop_alert_set) - len(cur_alert_set),
+            "held": len(prop_held_set) - len(cur_held_set),
+            "active": len(prop_active_set) - len(cur_active_set),
+        },
+        "gained_promotion": sorted(list(prop_promo_set - cur_promo_set)),
+        "lost_promotion": sorted(list(cur_promo_set - prop_promo_set)),
+        "newly_blocked": sorted(list(prop_blocked_set - cur_blocked_set)),
+        "unblocked": sorted(list(cur_blocked_set - prop_blocked_set)),
+        "feature_transitions": sorted(feature_transitions, key=lambda x: (not x["status_changed"], x["feature_name"])),
     }
 
 

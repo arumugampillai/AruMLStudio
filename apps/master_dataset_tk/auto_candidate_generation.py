@@ -569,9 +569,8 @@ def generate_pipeline_candidate_names(
     blocked_names: set[str] = set()
     try:
         from chain_replay_ml.production_validation.dataset_context import build_dataset_context
-        from chain_replay_ml.production_validation.evidence_store import (
-            get_connection,
-            query_blocked_candidates,
+        from chain_replay_ml.production_validation.training_decision_engine import (
+            evaluate_candidate_training_eligibility,
         )
 
         ctx = build_dataset_context(
@@ -580,15 +579,14 @@ def generate_pipeline_candidate_names(
             sliding_window=sliding_window,
             feature_project_id=fpid,
         )
-        conn = get_connection(data_dir)
-        try:
-            blocked_names = query_blocked_candidates(
-                conn,
-                context_id=ctx.context_id,
-                candidate_names=allowed,
-            )
-        finally:
-            conn.close()
+        decision_map = evaluate_candidate_training_eligibility(
+            data_dir_or_conn=data_dir,
+            context_id=ctx.context_id,
+            candidate_names=allowed,
+        )
+        blocked_names = {
+            name for name, d in decision_map.items() if not d.is_candidate_generation_allowed
+        }
     except Exception:
         blocked_names = set()
 

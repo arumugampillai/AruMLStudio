@@ -294,6 +294,12 @@ class TestEvidenceStoreAndProjections(unittest.TestCase):
         sums_after = get_feature_context_summaries(self.conn, self.ctx.context_id)
         lins_after = get_experimental_lineage_summaries(self.conn, self.ctx.context_id)
 
+        # Pop projection_rebuilt_at timestamp for deterministic content assertion
+        for s in sums_before + sums_after:
+            s.pop("projection_rebuilt_at", None)
+        for l in lins_before + lins_after:
+            l.pop("projection_rebuilt_at", None)
+
         self.assertEqual(sums_before, sums_after)
         self.assertEqual(lins_before, lins_after)
 

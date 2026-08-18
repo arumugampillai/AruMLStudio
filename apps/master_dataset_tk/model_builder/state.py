@@ -86,6 +86,8 @@ class ModelBuilderState:
     package_anchor: str | None = None
     # Frozen Analysis → Final Feature Dataset identity (Create Model Builder handoff).
     analysis_feature_selection: dict[str, Any] | None = None
+    # Phase 3B/3C Feature Recommendation Decision Bundle & Training Provenance.
+    recommendation_decision_bundle: dict[str, Any] | None = None
 
     def split_strategy_backend(self) -> str:
         if self.validation_strategy in ("walk_forward", "rolling_window"):
@@ -243,6 +245,8 @@ class ModelBuilderState:
             cfg["prediction_package_id"] = str(self.package_anchor).strip()
         if self.analysis_feature_selection:
             cfg["analysis_feature_selection"] = dict(self.analysis_feature_selection)
+        if self.recommendation_decision_bundle:
+            cfg["recommendation_decision_bundle"] = dict(self.recommendation_decision_bundle)
         if self.premium_selection_enabled:
             lo = float(self.premium_min)
             hi = float(self.premium_max)
@@ -382,6 +386,8 @@ class ModelBuilderState:
         }
         if self.analysis_feature_selection:
             doc["analysisFeatureSelection"] = dict(self.analysis_feature_selection)
+        if self.recommendation_decision_bundle:
+            doc["recommendationDecisionBundle"] = dict(self.recommendation_decision_bundle)
         return doc
 
     def apply_saved_dict(self, saved: dict[str, Any]) -> None:
@@ -510,6 +516,9 @@ class ModelBuilderState:
         afs = saved.get("analysisFeatureSelection") or saved.get("analysis_feature_selection")
         if isinstance(afs, dict) and afs:
             self.analysis_feature_selection = dict(afs)
+        rdb = saved.get("recommendationDecisionBundle") or saved.get("recommendation_decision_bundle")
+        if isinstance(rdb, dict) and rdb:
+            self.recommendation_decision_bundle = dict(rdb)
 
 
 def _strip_lifecycle_from_saved(saved: dict[str, Any] | None) -> dict[str, Any] | None:

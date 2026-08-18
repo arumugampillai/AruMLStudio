@@ -275,6 +275,36 @@ class TestFeatureStudioRecommendationUI(unittest.TestCase):
         self.assertEqual(rows_sx[0]["lifecycle_status"], "active")
         self.assertEqual(rows_sx[0]["context_status"], "active")
 
+    def test_viewer_dialog_initialization_with_policy_tab(self) -> None:
+        import tkinter as tk
+        from master_dataset_tk.feature_recommendation_viewer import open_feature_recommendation_viewer
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            dlg = open_feature_recommendation_viewer(
+                root,
+                chart_dir=self.tmp,
+                initial_market="NIFTY",
+                initial_interval_sec=3,
+                initial_sliding_window="standard",
+                initial_feature_project_id="all",
+            )
+            # Verify that all 5 tabs are present
+            tab_texts = [dlg._notebook.tab(i, "text") for i in range(dlg._notebook.index("end"))]
+            self.assertIn("1. Feature Registry", tab_texts)
+            self.assertIn("2. Base Pipeline", tab_texts)
+            self.assertIn("3. Selected Experimental", tab_texts)
+            self.assertIn("4. Raw Evidence Log", tab_texts)
+            self.assertIn("5. Policy Settings", tab_texts)
+
+            # Verify policy fields populated
+            self.assertEqual(dlg._exp_promo_keep_streak_var.get(), "3")
+            self.assertEqual(dlg._weight_keep_var.get(), "25.0")
+            dlg.destroy()
+        finally:
+            root.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()
