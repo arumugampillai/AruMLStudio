@@ -6,12 +6,33 @@ from typing import Any, Callable, Iterable
 
 from .compute import run_production_validation_compute
 from .recommendation_store import (
+    get_population_recommendations,
     get_recommendation_summary,
     ignore_recommendation,
     list_recommendation_history,
     recommended_for_removal,
     unignore_recommendation,
     update_registry_recommendations,
+)
+from .dataset_context import (
+    DatasetContext,
+    build_dataset_context,
+    resolve_context_from_model_package,
+    resolve_context_or_legacy,
+)
+from .evidence_store import (
+    evidence_db_path,
+    get_connection as get_evidence_connection,
+    get_experimental_lineage_summaries,
+    get_feature_context_summaries,
+    query_blocked_candidates,
+    rebuild_all_projections,
+)
+from .recommendation_migration import migrate_legacy_recommendation_json
+from .recommendation_policy import (
+    RecommendationPolicy,
+    load_recommendation_policy,
+    save_recommendation_policy,
 )
 from .types import ProductionValidationResult, UnseenDatasetResolveResult
 from .unseen_dataset import load_unseen_dataset_status, resolve_unseen_dataset
@@ -80,18 +101,37 @@ def persist_registry_recommendations(
     )
 
 
+persist_validation_evidence = persist_registry_recommendations
+
+
 __all__ = [
+    "DatasetContext",
     "ProductionValidationResult",
+    "RecommendationPolicy",
     "UnseenDatasetResolveResult",
+    "build_dataset_context",
+    "evidence_db_path",
+    "get_evidence_connection",
+    "get_experimental_lineage_summaries",
+    "get_feature_context_summaries",
+    "get_population_recommendations",
     "get_recommendation_summary",
     "ignore_recommendation",
     "list_recommendation_history",
+    "load_recommendation_policy",
     "load_unseen_dataset_status",
     "load_validation_artifacts",
+    "migrate_legacy_recommendation_json",
     "persist_registry_recommendations",
+    "persist_validation_evidence",
+    "query_blocked_candidates",
+    "rebuild_all_projections",
     "recommended_for_removal",
+    "resolve_context_from_model_package",
+    "resolve_context_or_legacy",
     "resolve_unseen_dataset_for_model",
     "run_production_validation",
+    "save_recommendation_policy",
     "unignore_recommendation",
     "update_registry_recommendations",
 ]

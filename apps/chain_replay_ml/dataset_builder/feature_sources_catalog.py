@@ -291,7 +291,7 @@ def dataset_registry_export_feature_names(
 ) -> frozenset[str]:
     """Selected registry export names for a dataset (snapshot at build, else current prefs)."""
     if isinstance(metadata, dict):
-        snap = metadata.get("registry_export_features")
+        snap = metadata.get("registry_export_features") or metadata.get("registry_features")
         if isinstance(snap, list) and snap:
             return frozenset(str(n).strip() for n in snap if str(n).strip())
     from .registry_features_prefs import resolve_registry_export_features
@@ -306,7 +306,7 @@ def dataset_base_pipeline_export_feature_names(
 ) -> frozenset[str]:
     """Base pipeline catalogue snapshot at build (else current active catalogue)."""
     if isinstance(metadata, dict):
-        snap = metadata.get("base_pipeline_export_features")
+        snap = metadata.get("base_pipeline_export_features") or metadata.get("base_pipeline_features")
         if isinstance(snap, list) and snap:
             return frozenset(str(n).strip() for n in snap if str(n).strip())
     return base_pipeline_feature_names(data_dir)
@@ -319,11 +319,14 @@ def other_pipeline_feature_names_from_metadata(
     if not isinstance(metadata, dict):
         return frozenset()
     prov = metadata.get("pipeline_provenance")
-    if not isinstance(prov, dict):
-        return frozenset()
-    return frozenset(
-        str(n).strip() for n in (prov.get("candidate_features") or []) if str(n).strip()
-    )
+    if isinstance(prov, dict):
+        cand = prov.get("candidate_features")
+        if isinstance(cand, list) and cand:
+            return frozenset(str(n).strip() for n in cand if str(n).strip())
+    other = metadata.get("other_pipeline_features") or metadata.get("experimental_features")
+    if isinstance(other, list) and other:
+        return frozenset(str(n).strip() for n in other if str(n).strip())
+    return frozenset()
 
 
 def classify_dataset_feature_source(

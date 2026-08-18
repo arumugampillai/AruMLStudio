@@ -251,6 +251,9 @@ class FeatureStudioPanel(ttk.Frame):
         ttk.Button(row1, text="Export CSV", command=self._on_export).pack(
             side="left", padx=2
         )
+        ttk.Button(
+            row1, text="Evidence DB", command=self._on_open_evidence_viewer
+        ).pack(side="left", padx=4)
 
         row2 = ttk.Frame(bar)
         row2.pack(fill="x", pady=(6, 0))
@@ -663,3 +666,26 @@ class FeatureStudioPanel(ttk.Frame):
         on_show = getattr(current, "on_show", None)
         if callable(on_show):
             on_show()
+
+    def _on_open_evidence_viewer(self) -> None:
+        from chain_replay_ml.production_validation.dataset_context import (
+            resolve_context_from_model_package,
+        )
+        from .feature_recommendation_viewer import open_feature_recommendation_viewer
+
+        name = self._selected_model()
+        ctx = resolve_context_from_model_package(self._data_dir(), name) if name else None
+        if ctx:
+            open_feature_recommendation_viewer(
+                self,
+                chart_dir=self.chart_dir,
+                initial_market=ctx.market,
+                initial_interval_sec=ctx.sampling_interval_sec,
+                initial_sliding_window=ctx.sliding_window,
+                initial_feature_project_id=ctx.feature_project_id,
+            )
+        else:
+            open_feature_recommendation_viewer(
+                self,
+                chart_dir=self.chart_dir,
+            )

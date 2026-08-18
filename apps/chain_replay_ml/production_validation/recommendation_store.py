@@ -286,6 +286,7 @@ def recommended_for_removal(
     *,
     min_remove_runs: int = 1,
     include_ignored: bool = False,
+    context_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Features with REMOVE history for Pipeline Features / Registry dialogs."""
     summary = get_recommendation_summary(data_dir)
@@ -310,6 +311,110 @@ def recommended_for_removal(
         )
     )
     return rows
+
+
+def get_population_recommendations(
+    data_dir: str,
+    *,
+    population: str = "registry",  # 'registry', 'base_pipeline', 'experimental', 'all'
+    context_id: str | None = None,
+    include_legacy_unknown: bool = False,
+) -> list[dict[str, Any]]:
+    """Retrieve population-specific recommendations and health metrics from Evidence DB."""
+    from .dataset_context import LEGACY_UNKNOWN_CONTEXT_ID
+    from .evidence_store import get_connection
+
+    root = str(data_dir or "").strip()
+    if not root:
+        return []
+
+    try:
+        conn = get_connection(root)
+    except Exception:
+        return []
+
+    try:
+        pop = str(population or "registry").strip().lower()
+        if pop == "experimental":
+            query = """
+                SELECT 
+                    e.lineage_id, e.context_id, e.pipeline_id, e.pipeline_snapshot_id,
+                    e.feature_name, e.feature_identity_key, e.total_runs, e.keep_runs,
+                    e.watch_runs, e.remove_runs, e.unique_models_count,
+                    e.consecutive_keep_count, e.consecutive_remove_count,
+                    e.lineage_evidence_score, e.lifecycle_status, e.last_recommendation,
+                    e.last_validated_at,
+                    COALESCE(c.lifecycle_status, 'active') as context_status
+                FROM experimental_lineage_summary e
+                LEFT JOIN feature_context_summary c 
+                    ON e.context_id = c.context_id 
+                    AND c.feature_source = 'experimental' 
+                    AND e.feature_name = c.feature_name
+                WHERE 1=1
+            """
+            params: list[Any] = []
+            if context_id:
+                query += " AND e.context_id = ?"
+                params.append(context_id)
+            elif not include_legacy_unknown:
+                query += " AND e.context_id != ?"
+                params.append(LEGACY_UNKNOWN_CONTEXT_ID)
+
+            query += " ORDER BY e.lifecycle_status DESC, e.lineage_evidence_score DESC, e.feature_name ASC"
+            cur = conn.execute(query, params)
+            return [dict(row) for row in cur.fetchall()]
+
+        elif pop == "base_pipeline":
+            query = """
+                SELECT * FROM feature_context_summary
+                WHERE feature_source = 'base_pipeline'
+            """
+            params = []
+            if context_id:
+                query += " AND context_id = ?"
+                params.append(context_id)
+            elif not include_legacy_unknown:
+                query += " AND context_id != ?"
+                params.append(LEGACY_UNKNOWN_CONTEXT_ID)
+
+            query += " ORDER BY evidence_score DESC, keep_runs DESC, feature_name ASC"
+            cur = conn.execute(query, params)
+            rows = [dict(r) for r in cur.fetchall()]
+            for rank, r in enumerate(rows, start=1):
+                r["priority_rank"] = rank
+            return rows
+
+        elif pop == "registry":
+            query = """
+                SELECT * FROM feature_context_summary
+                WHERE feature_source = 'registry'
+            """
+            params = []
+            if context_id:
+                query += " AND context_id = ?"
+                params.append(context_id)
+            elif not include_legacy_unknown:
+                query += " AND context_id != ?"
+                params.append(LEGACY_UNKNOWN_CONTEXT_ID)
+
+            query += " ORDER BY evidence_score ASC, remove_runs DESC, feature_name ASC"
+            cur = conn.execute(query, params)
+            return [dict(row) for row in cur.fetchall()]
+
+        else:  # all
+            query = "SELECT * FROM feature_context_summary WHERE 1=1"
+            params = []
+            if context_id:
+                query += " AND context_id = ?"
+                params.append(context_id)
+            elif not include_legacy_unknown:
+                query += " AND context_id != ?"
+                params.append(LEGACY_UNKNOWN_CONTEXT_ID)
+            query += " ORDER BY feature_source, evidence_score DESC"
+            cur = conn.execute(query, params)
+            return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
 
 
 def ignore_recommendation(
@@ -490,6 +595,13 @@ def update_registry_recommendations(
     # Prefer human model name from meta when present
     display_model = str(meta.get("model_name") or model).strip() or safe
 
+    # Ensure legacy migration runs on existing pre-existing JSON before new entries are added
+    try:
+        from .recommendation_migration import migrate_legacy_recommendation_json
+        migrate_legacy_recommendation_json(root)
+    except Exception:
+        pass
+
     id_map = _feature_id_map(root)
     domains = _domain_map(root)
     doc = load_recommendation_store(root)
@@ -529,6 +641,120 @@ def update_registry_recommendations(
     rebuild_summary(doc, domains=domains)
     save_recommendation_store(root, doc)
 
+    # --- SQLite Evidence DB Write Path (Canonical Evidence Store) ---
+    sqlite_res: dict[str, Any] = {}
+    try:
+        from .dataset_context import resolve_context_from_model_package, resolve_context_or_legacy
+        from .evidence_store import append_validation_evidence, get_connection
+        from .recommendation_policy import load_recommendation_policy
+
+        context = resolve_context_from_model_package(root, model) or resolve_context_or_legacy(root, model)
+        policy = load_recommendation_policy(root)
+        conn = get_connection(root)
+        try:
+            cfg_path = os.path.join(pkg, "config.json")
+            model_cfg: dict[str, Any] = {}
+            if os.path.isfile(cfg_path):
+                try:
+                    with open(cfg_path, encoding="utf-8") as cfh:
+                        model_cfg = json.load(cfh)
+                except Exception:
+                    model_cfg = {}
+
+            model_pid = str(model_cfg.get("pipeline_id") or "").strip().upper() or None
+            model_snap = str(model_cfg.get("pipeline_snapshot_id") or "").strip() or None
+            target_col = str(model_cfg.get("target") or "")
+
+            ds_meta = model_cfg.get("dataset_metadata")
+            if not isinstance(ds_meta, dict):
+                ds_name = model_cfg.get("dataset")
+                if ds_name:
+                    from chain_replay_ml.dataset_builder.writer import _safe_filename, datasets_dir
+                    ds_meta_path = os.path.join(datasets_dir(root), f"{_safe_filename(ds_name)}.json")
+                    if os.path.isfile(ds_meta_path):
+                        try:
+                            with open(ds_meta_path, "r", encoding="utf-8") as dsfh:
+                                ds_meta = json.load(dsfh)
+                        except Exception:
+                            ds_meta = {}
+            if not isinstance(ds_meta, dict):
+                ds_meta = {}
+
+            from chain_replay_ml.diagnostics_studio.feature_partition import partition_diagnostic_rows
+            partition = partition_diagnostic_rows(
+                artifacts.get("rows") or [],
+                data_dir=root,
+                dataset_metadata=ds_meta,
+            )
+            reg_features = {str(r.get("feature") or "").strip() for r in partition.registry_rows}
+            base_features = {str(r.get("feature") or "").strip() for r in partition.base_pipeline_rows}
+            exp_features = {str(r.get("feature") or "").strip() for r in partition.experimental_rows}
+
+            if not model_pid:
+                ds_name_str = str(ds_meta.get("dataset_name") or model_cfg.get("dataset") or "")
+                if "PL" in ds_name_str:
+                    import re
+                    m_pl = re.search(r"PL_?(\d+)", ds_name_str, re.IGNORECASE)
+                    if m_pl:
+                        model_pid = f"PL_{int(m_pl.group(1)):04d}"
+            if not model_pid and exp_features:
+                model_pid = "PL_EXP"
+            if not model_snap:
+                model_snap = "snap_v1"
+
+            evidence_rows: list[dict[str, Any]] = []
+            for row in artifacts.get("rows") or []:
+                if not isinstance(row, dict):
+                    continue
+                rec = _normalize_recommendation(row.get("recommendation"))
+                if not rec or rec not in allowed:
+                    continue
+                feat = str(row.get("feature") or row.get("feature_name") or "").strip()
+                if not feat:
+                    continue
+
+                if feat in base_features:
+                    f_source = "base_pipeline"
+                elif feat in exp_features:
+                    f_source = "experimental"
+                elif feat in reg_features:
+                    f_source = "registry"
+                else:
+                    f_source = "registry"
+
+                evidence_rows.append(
+                    {
+                        "evidence_id": f"ev_{run_id}_{safe}_{feat}",
+                        "feature_name": feat,
+                        "feature_source": f_source,
+                        "pipeline_id": model_pid if f_source == "experimental" else None,
+                        "pipeline_snapshot_id": model_snap if f_source == "experimental" else None,
+                        "recommendation": rec,
+                        "validation_run_id": run_id,
+                        "model_name": display_model,
+                        "target_column": target_col,
+                        "holdout_rank": row.get("holdout_rank"),
+                        "unseen_rank": row.get("unseen_rank"),
+                        "rank_change": row.get("rank_change"),
+                        "relative_imp_drop": row.get("relative_imp_drop"),
+                        "drift_severity": row.get("drift_severity"),
+                        "evidence_detail_json": row.get("recommendation_detail"),
+                        "run_timestamp": generated_date,
+                    }
+                )
+
+            if evidence_rows:
+                sqlite_res = append_validation_evidence(
+                    conn,
+                    context=context,
+                    evidence_rows=evidence_rows,
+                    policy=policy,
+                )
+        finally:
+            conn.close()
+    except Exception as exc:
+        sqlite_res = {"error": str(exc)}
+
     return {
         "ok": True,
         "model_name": display_model,
@@ -540,6 +766,7 @@ def update_registry_recommendations(
         "entry_count": len(entries),
         "feature_count": len((doc.get("summary") or {}).get("by_feature") or {}),
         "artifacts_dir": artifacts.get("artifacts_dir"),
+        "sqlite_evidence": sqlite_res,
     }
 
 
@@ -559,4 +786,7 @@ __all__ = [
     "storage_path",
     "unignore_recommendation",
     "update_registry_recommendations",
+    "persist_validation_evidence",
 ]
+
+persist_validation_evidence = update_registry_recommendations

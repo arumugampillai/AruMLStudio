@@ -82,6 +82,10 @@ def normalize_candidate_generation_prefs(raw: dict[str, Any] | None) -> dict[str
             if key in ops_raw:
                 out["interaction_ops"][key] = bool(ops_raw[key])
 
+    for extra_key in ("market", "sliding_window", "feature_project_id"):
+        if src.get(extra_key):
+            out[extra_key] = str(src[extra_key]).strip()
+
     return out
 
 
@@ -379,10 +383,12 @@ class CandidateGenerationReport:
     combinations_estimated: int = 0
     candidates_generated: int = 0
     candidates_rejected_policy: int = 0
+    candidates_rejected_evidence_blocked: int = 0
     candidates_rejected_duplicates: int = 0
     candidates_added: int = 0
     errors: list[str] = field(default_factory=list)
     policy_rejected_names: list[str] = field(default_factory=list)
+    evidence_blocked_names: list[str] = field(default_factory=list)
     duplicate_names: list[str] = field(default_factory=list)
     new_names: list[str] = field(default_factory=list)
 
@@ -469,12 +475,15 @@ def _log_candidate_generation_report(report: CandidateGenerationReport) -> None:
     logger.info("  Candidate combinations estimated: %s", report.combinations_estimated)
     logger.info("  Candidates generated: %s", report.candidates_generated)
     logger.info("  Candidates rejected by policy: %s", report.candidates_rejected_policy)
+    logger.info("  Candidates blocked by recommendation evidence: %s", report.candidates_rejected_evidence_blocked)
     logger.info("  Candidates rejected as duplicates: %s", report.candidates_rejected_duplicates)
     logger.info("  Candidates finally added: %s", report.candidates_added)
     if report.errors:
         logger.info("  Errors: %s", report.errors)
     if report.policy_rejected_names:
         logger.debug("  Policy rejected sample: %s", report.policy_rejected_names[:20])
+    if report.evidence_blocked_names:
+        logger.debug("  Evidence blocked sample: %s", report.evidence_blocked_names[:20])
 
 
 def generate_pipeline_candidate_names(
@@ -552,6 +561,48 @@ def generate_pipeline_candidate_names(
     report.policy_rejected_names = policy_rejected
     report.candidates_rejected_policy = len(policy_rejected)
 
+    # --- Pre-Training Elimination Gate ---
+    market = str(prefs.get("market") or "NIFTY").upper()
+    sliding_window = str(prefs.get("sliding_window") or "standard").lower()
+    fpid = str(prefs.get("feature_project_id") or "all").lower()
+
+    blocked_names: set[str] = set()
+    try:
+        from chain_replay_ml.production_validation.dataset_context import build_dataset_context
+        from chain_replay_ml.production_validation.evidence_store import (
+            get_connection,
+            query_blocked_candidates,
+        )
+
+        ctx = build_dataset_context(
+            market=market,
+            sampling_interval_sec=int(interval_sec),
+            sliding_window=sliding_window,
+            feature_project_id=fpid,
+        )
+        conn = get_connection(data_dir)
+        try:
+            blocked_names = query_blocked_candidates(
+                conn,
+                context_id=ctx.context_id,
+                candidate_names=allowed,
+            )
+        finally:
+            conn.close()
+    except Exception:
+        blocked_names = set()
+
+    filtered_allowed: list[str] = []
+    evidence_blocked: list[str] = []
+    for name in allowed:
+        if name in blocked_names:
+            evidence_blocked.append(name)
+        else:
+            filtered_allowed.append(name)
+
+    report.evidence_blocked_names = evidence_blocked
+    report.candidates_rejected_evidence_blocked = len(evidence_blocked)
+
     from .pipeline_registry_service import get_pipeline
 
     row = get_pipeline(chart_dir, pid) or {}
@@ -559,7 +610,7 @@ def generate_pipeline_candidate_names(
     new_names: list[str] = []
     duplicates: list[str] = []
     seen: set[str] = set()
-    for name in allowed:
+    for name in filtered_allowed:
         if name in seen:
             continue
         seen.add(name)

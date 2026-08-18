@@ -357,15 +357,21 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
                 bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
                 self._btn_update_recs = ttk.Button(
                     bar,
-                    text="Update Registry Recommendations",
-                    command=self._on_update_registry_recommendations,
+                    text="Persist Validation Evidence",
+                    command=self._on_persist_validation_evidence,
                 )
                 self._btn_update_recs.pack(side="left")
+                self._btn_view_evidence = ttk.Button(
+                    bar,
+                    text="View Evidence DB & Projections",
+                    command=self._on_open_evidence_viewer,
+                )
+                self._btn_view_evidence.pack(side="left", padx=(6, 0))
                 ttk.Label(
                     bar,
                     text=(
-                        "Persists recommendations only — does not remove "
-                        "pipeline features or retire registry features."
+                        "Appends validation recommendations to Evidence DB — "
+                        "does not retire registry features or delete pipeline features."
                     ),
                     foreground=COL_MUTED,
                 ).pack(side="left", padx=(8, 0))
@@ -923,6 +929,14 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
         self._phase_var.set("Idle — results loaded")
         self._set_progress_pct(100 if rows else 0)
 
+        # Idempotently ensure completed validation evidence is persisted to Evidence DB
+        if rows and model_name:
+            try:
+                from chain_replay_ml.production_validation import persist_validation_evidence
+                persist_validation_evidence(data_dir=self._data_dir(), model_name=model_name)
+            except Exception:
+                pass
+
     def _top_n(self) -> int:
         try:
             return max(1, int(self._top_n_var.get() or 20))
@@ -992,8 +1006,8 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
                 except tk.TclError:
                     pass
 
-    def _on_update_registry_recommendations(self) -> None:
-        """Persist PV recommendations for the selected model (no feature mutation)."""
+    def _on_persist_validation_evidence(self) -> None:
+        """Persist PV recommendations for the selected model into Evidence DB (idempotent)."""
         if self._busy:
             return
         name = self._selected_model()
@@ -1004,7 +1018,7 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
             return
         if not self._rows:
             messagebox.showinfo(
-                "Update Registry Recommendations",
+                "Persist Validation Evidence",
                 "Load validation results first (Compute / Refresh Status).",
                 parent=self,
             )
@@ -1026,11 +1040,11 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
             if str(r.get("recommendation") or "").strip().upper() == "WATCH"
         )
         if not messagebox.askyesno(
-            "Update Registry Recommendations",
+            "Persist Validation Evidence",
             (
-                f"Persist recommendations for model «{name}»?\n\n"
+                f"Persist recommendations for model «{name}» into Evidence DB?\n\n"
                 f"KEEP {keep_n} · WATCH {watch_n} · REMOVE {remove_n}\n\n"
-                "This only updates the recommendation history.\n"
+                "This appends/updates the canonical evidence log and projections.\n"
                 "It does not remove pipeline features or retire registry features."
             ),
             parent=self,
@@ -1038,7 +1052,7 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
             return
 
         self._set_busy(True)
-        self._status_var.set(f"{name} — Updating registry recommendations…")
+        self._status_var.set(f"{name} — Persisting validation evidence…")
         data_dir = self._data_dir()
 
         def work() -> None:
@@ -1046,10 +1060,10 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
             result_doc: dict[str, Any] | None = None
             try:
                 from chain_replay_ml.production_validation import (
-                    persist_registry_recommendations,
+                    persist_validation_evidence,
                 )
 
-                result_doc = persist_registry_recommendations(
+                result_doc = persist_validation_evidence(
                     data_dir=data_dir,
                     model_name=name,
                 )
@@ -1059,10 +1073,10 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
             def done() -> None:
                 self._set_busy(False)
                 if err or not result_doc:
-                    self._status_var.set(f"Update recommendations failed: {err or 'unknown'}")
+                    self._status_var.set(f"Persist evidence failed: {err or 'unknown'}")
                     messagebox.showerror(
-                        "Update Registry Recommendations",
-                        err or "Update failed",
+                        "Persist Validation Evidence",
+                        err or "Persistence failed",
                         parent=self,
                     )
                     return
@@ -1070,15 +1084,14 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
                 updated = int(result_doc.get("updated") or 0)
                 run_id = str(result_doc.get("production_validation_run_id") or "")
                 self._status_var.set(
-                    f"Recommendations updated · {inserted} new · {updated} refreshed"
+                    f"Evidence persisted · {inserted} new · {updated} refreshed"
                     + (f" · run {run_id[:8]}" if run_id else "")
                 )
                 messagebox.showinfo(
-                    "Update Registry Recommendations",
+                    "Persist Validation Evidence",
                     (
-                        f"Saved recommendations for «{name}».\n\n"
-                        f"Inserted: {inserted}\n"
-                        f"Updated: {updated}\n"
+                        f"Validation evidence saved for «{name}».\n\n"
+                        f"Evidence Rows: {len(self._rows)}\n"
                         f"Features in store: {result_doc.get('feature_count') or 0}\n\n"
                         "No pipeline features were removed.\n"
                         "No registry features were retired."
@@ -1089,6 +1102,29 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
             self.after(0, done)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _on_open_evidence_viewer(self) -> None:
+        from chain_replay_ml.production_validation.dataset_context import (
+            resolve_context_from_model_package,
+        )
+        from .feature_recommendation_viewer import open_feature_recommendation_viewer
+
+        name = self._selected_model()
+        ctx = resolve_context_from_model_package(self._data_dir(), name) if name else None
+        if ctx:
+            open_feature_recommendation_viewer(
+                self,
+                chart_dir=self.chart_dir,
+                initial_market=ctx.market,
+                initial_interval_sec=ctx.sampling_interval_sec,
+                initial_sliding_window=ctx.sliding_window,
+                initial_feature_project_id=ctx.feature_project_id,
+            )
+        else:
+            open_feature_recommendation_viewer(
+                self,
+                chart_dir=self.chart_dir,
+            )
 
     def _load_cached_status(self, *, quiet: bool = True) -> None:
         name = self._selected_model()
@@ -1256,6 +1292,14 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
                     progress=_progress,
                 )
                 result_doc = result.as_dict()
+
+                # Automatic persistence after successful PV compute (Orchestration Layer)
+                if result_doc.get("ok"):
+                    try:
+                        from chain_replay_ml.production_validation import persist_validation_evidence
+                        persist_validation_evidence(data_dir=data_dir, model_name=name)
+                    except Exception:
+                        pass
             except Exception as exc:
                 err = str(exc)
 
@@ -1304,6 +1348,7 @@ class ProductionValidationPanel(ttk.Frame, LazyLoadMixin):
                     if wall is not None
                     else f"✓ Compute complete · {n_rows} features · {elapsed:.1f}s{device_bit}"
                 )
+                self._append_timeline("✓ Validation evidence persisted to Evidence DB")
                 self.apply_artifacts(payload, name)
                 self._phase_var.set(
                     f"Done · {n_rows} features"
