@@ -239,14 +239,22 @@ The **Manual Pipeline** interface in `master_data_panel.py` and `pipeline_regist
 
 ## 8. Automatic Pipeline & Auto Candidate Generation
 
-The Auto Candidate subsystem ([`apps/master_dataset_tk/auto_candidate_generation.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/auto_candidate_generation.py)) performs high-throughput combinatorial feature synthesis:
+The Auto Candidate subsystem ([`apps/master_dataset_tk/auto_candidate_generation.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/auto_candidate_generation.py)) performs high-throughput combinatorial feature synthesis with intelligent parent selection and mathematical deduplication:
 
 ### 8.1. Generation Flow
-1. **Source Feature Resolution**: Extracts active Feature Registry features or existing pipeline candidates.
-2. **Combinatorial Synthesis**: Expands selected transformations across defined time horizons:
+1. **Source Feature Resolution**: Resolves active Feature Registry features or existing pipeline candidates, filtering out retired and pipeline-owned features.
+2. **Context-Aware Interaction Parent Selection**: Calls `select_interaction_parent_features()` to select up to 36 parent features using:
+   - **Phase 1–3A Evidence Ranking**: Evaluates candidates via `rank_features_for_candidate_generation()` in `training_decision_engine.py`. Features with `PROMOTION_CANDIDATE_QUALIFIED` and `TRAIN_CANDIDATE` standings are prioritized, while `NEW_UNSEEN` (cold-start) features are admitted without starvation.
+   - **Strict Deprecation & Exclusion Gating**: Deprecated features (`implementation_status == "deprecated"`) and hard-blocked features (`is_candidate_generation_allowed == False`) are strictly excluded from becoming interaction parents.
+   - **Domain-Stratified Quota Allocation**: Distributes parent slots evenly across canonical Feature Registry domains (`price_premium`, `spot_futures`, `greeks`, `implied_volatility`, `open_interest`, `volume_liquidity`, `chain_analytics`, `market_structure`, etc.). If a domain has fewer available features than its quota, unused slots are redistributed deterministically via round-robin in canonical `DOMAIN_ORDER`.
+3. **Commutative Canonical Deduplication**:
+   - For commutative operators (`multiply`, `add`, `absolute_difference`, `min`, `max`), pairs are generated in canonical lexicographical order $A \le B$ (e.g. `current_iv_x_delta` is generated, while redundant duplicate `delta_x_current_iv` is pruned).
+   - For asymmetric operators (`divide`, `subtract`), both directional pairs are preserved (e.g. `delta_div_current_iv` and `current_iv_div_delta`).
+   - This eliminates 100% of redundant symmetric pairs, reducing pairwise explosion by $\approx 43.5\%$ (from 7,800 pairs down to 4,410 pairs for 5 active operators on 36 parents).
+4. **Combinatorial Synthesis**: Expands selected transformations across defined time horizons:
    $$\text{Combinations} \approx N_{\text{sources}} \times \left( H_{\text{lag}} + H_{\text{diff}} + H_{\text{ret}} + 4 H_{\text{roll}} + 2 H_{\text{exp}} + H_{\text{norm}} \right) + N_{\text{interactions}}$$
-3. **Policy Rejection & De-duplication**: Filters out prohibited metadata columns (`META_SKIP_COLUMNS`), retired features, identity transforms, and pre-existing candidates.
-4. **Pipeline Record Creation**: Writes the combined `transformation_config` and `candidate_features` list into a newly allocated `PL_000X` record (`pipeline_type="auto"`).
+5. **Policy Rejection & De-duplication**: Filters out prohibited metadata columns (`META_SKIP_COLUMNS`), identity transforms, and pre-existing candidates.
+6. **Pipeline Record Creation**: Writes the combined `transformation_config` and `candidate_features` list into a newly allocated `PL_000X` record (`pipeline_type="auto"`).
 
 ---
 
@@ -526,7 +534,7 @@ During **Create Model (Section 5)** in [`apps/master_dataset_tk/model_builder/pa
 ## 23. Known Limitations
 
 ### Current Implementation Limitations:
-- **Combinatorial Explosion in Auto Mode**: Generating interactions across $\ge 50$ features creates large pairwise sets; the generator currently caps interaction candidates to the first 40 source features.
+- **Pairwise Combinatorial Budget in Auto Mode**: Generating interactions across the full 206-feature Registry would produce $> 210,000$ pairs. Auto Candidate Generation enforces a 36-parent budget using Phase 1–3A evidence ranking, domain stratification, and commutative canonical deduplication ($A \le B$) to generate a balanced $\approx 4,410$-pair candidate set.
 - **Single Experimental Pipeline per Dataset**: An Analysis Dataset currently binds to exactly one experimental pipeline (`PL_000X`) in addition to the Base Pipeline (`PL_0001`).
 
 ### Intentional Architecture:

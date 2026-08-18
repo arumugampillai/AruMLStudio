@@ -266,11 +266,14 @@ Located in [`apps/master_dataset_tk/feature_recommendation_viewer.py`](file:///c
 
 ---
 
-## 10. Pre-Training Candidate Elimination Gate
+## 10. Pre-Training Candidate Elimination Gate & Evidence-Driven Parent Selection
 
 In Auto Candidate Generation ([`apps/master_dataset_tk/auto_candidate_generation.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/auto_candidate_generation.py)):
-- Queries `query_blocked_candidates(conn, context_id)` prior to feature transformation materialization.
-- Automatically discards blocked experimental candidates, preventing expensive parquet generation and model training on degraded features.
+- **Evidence-Driven Parent Ranking**: Consumes `rank_features_for_candidate_generation()` from the Phase 3A Decision Engine (`training_decision_engine.py`) to rank potential interaction parents by their authoritative standing (`PROMOTION_CANDIDATE_QUALIFIED`, `TRAIN_CANDIDATE`, `NEW_UNSEEN`, `REVIEW`, `EXCLUDE`).
+- **Domain-Stratified Quota Allocation**: Allocates up to 36 interaction parents across canonical Feature Registry domains with deterministic round-robin redistribution.
+- **Strict Deprecation & Exclusion Gating**: Queries `evaluate_candidate_training_eligibility()` and `query_blocked_candidates(conn, context_id)` prior to feature transformation materialization.
+- **Commutative Deduplication**: Prunes duplicate symmetric pairs ($A \le B$) for commutative operators (`multiply`, `add`, `absdiff`, `min`, `max`) while preserving directional pairs for asymmetric operators (`divide`, `subtract`).
+- Automatically discards blocked and deprecated candidates, preventing expensive parquet generation and model training on degraded features.
 
 ---
 
