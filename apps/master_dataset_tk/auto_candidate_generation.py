@@ -245,6 +245,142 @@ def _interaction_op_keys(interaction_ops: dict[str, bool]) -> list[str]:
     return list(dict.fromkeys(keys))
 
 
+def _safe_domain_of(name: str) -> str:
+    """Safe domain lookup with fallback heuristic for custom/experimental/derived features."""
+    try:
+        from chain_replay_ml.dataset_builder.feature_domains import primary_domain_of
+        return str(primary_domain_of(name))
+    except Exception:
+        n = str(name).strip().lower()
+        if any(t in n for t in ("iv", "volatility", "vega", "vol", "reiv")):
+            return "implied_volatility"
+        if any(t in n for t in ("delta", "gamma", "theta", "rho", "greek")):
+            return "greeks"
+        if any(t in n for t in ("spot", "future", "basis", "underlying")):
+            return "spot_futures"
+        if any(t in n for t in ("oi", "open_interest", "pcr", "coi")):
+            return "open_interest"
+        if any(t in n for t in ("volume", "vwap", "liquidity", "flow", "trade", "turnover")):
+            return "volume_liquidity"
+        if any(t in n for t in ("price", "bid", "ask", "spread", "ltp", "premium")):
+            return "price_premium"
+        if any(t in n for t in ("chain", "atm", "otm", "itm", "strike")):
+            return "chain_analytics"
+        if any(t in n for t in ("high", "low", "open", "close", "range", "body")):
+            return "market_structure"
+        return "metadata"
+
+
+def _safe_can_participate_in_interaction(name: str) -> bool:
+    """Safe check for interaction participation."""
+    try:
+        from chain_replay_ml.dataset_builder.feature_domains import build_feature_domain_meta
+        return bool(build_feature_domain_meta(name).get("can_participate_in_interaction", True))
+    except Exception:
+        n = str(name).strip().lower()
+        if n.startswith("is_") or n.endswith("_clock") or n in ("token", "trading_day", "timestamp"):
+            return False
+        return True
+
+
+def select_interaction_parent_features(
+    features: Sequence[str],
+    data_dir: str = "",
+    context: Any = None,
+    max_parents: int = 36,
+) -> list[str]:
+    """Selects interaction parent features using context evidence and domain stratification.
+
+    Requirements:
+    1. Context-scoped: Reads evidence for the active DatasetContext.
+    2. Excludes deprecated features, hard exclusions, and interaction-forbidden features.
+    3. Prioritizes PROMOTION_CANDIDATE_QUALIFIED, TRAIN_CANDIDATE, and evidence score.
+    4. Stratifies across canonical Feature Registry domains (e.g. price_premium, spot_futures,
+       greeks, implied_volatility, open_interest, volume_liquidity, etc.).
+    5. Fallback on cold-start (zero evidence) to deterministic domain-stratified distribution.
+    6. Returns up to ``max_parents`` features without alphabetical starvation.
+    """
+    clean_feats = [str(f).strip() for f in features if str(f).strip()]
+    if not clean_feats:
+        return []
+
+    from chain_replay_ml.dataset_builder.feature_domains import DOMAIN_ORDER
+    from chain_replay_ml.production_validation.api import (
+        rank_features_for_candidate_generation,
+    )
+
+    # 1. Rank all candidate features using Phase 1-3A engine
+    try:
+        ranked_tuples = rank_features_for_candidate_generation(
+            data_dir_or_conn=data_dir if data_dir else "",
+            features=clean_feats,
+            context=context,
+        )
+    except Exception:
+        ranked_tuples = [(f, None) for f in clean_feats]
+
+    # 2. Filter allowed features
+    allowed_ranked: list[str] = []
+    for item in ranked_tuples:
+        fname = item[0]
+        dec = item[1]
+        if dec is not None:
+            if not dec.is_candidate_generation_allowed or dec.is_excluded:
+                continue
+        if not _safe_can_participate_in_interaction(fname):
+            continue
+        allowed_ranked.append(fname)
+
+    if not allowed_ranked:
+        allowed_ranked = [f for f in clean_feats if _safe_can_participate_in_interaction(f)]
+
+    if len(allowed_ranked) <= max_parents:
+        return allowed_ranked
+
+    # 3. Group allowed features by canonical domain
+    domain_buckets: dict[str, list[str]] = {d: [] for d in DOMAIN_ORDER}
+    for fname in allowed_ranked:
+        dom = _safe_domain_of(fname)
+        if dom not in domain_buckets:
+            domain_buckets[dom] = []
+        domain_buckets[dom].append(fname)
+
+    active_domains = [d for d in DOMAIN_ORDER if domain_buckets.get(d)]
+    if not active_domains:
+        return allowed_ranked[:max_parents]
+
+    # 4. Determine domain quotas
+    base_quota = max(1, max_parents // len(active_domains))
+    selected: list[str] = []
+    domain_indices: dict[str, int] = {d: 0 for d in active_domains}
+
+    # Round 1: Allocate up to base_quota from each active domain
+    for d in active_domains:
+        bucket = domain_buckets[d]
+        take_count = min(base_quota, len(bucket))
+        selected.extend(bucket[:take_count])
+        domain_indices[d] = take_count
+
+    # Round 2: Redistribute remaining slots round-robin in deterministic DOMAIN_ORDER
+    slots_remaining = max_parents - len(selected)
+    while slots_remaining > 0:
+        added_in_pass = 0
+        for d in active_domains:
+            bucket = domain_buckets[d]
+            idx = domain_indices[d]
+            if idx < len(bucket):
+                selected.append(bucket[idx])
+                domain_indices[d] += 1
+                slots_remaining -= 1
+                added_in_pass += 1
+                if slots_remaining <= 0:
+                    break
+        if added_in_pass == 0:
+            break
+
+    return selected
+
+
 def build_auto_candidate_transformation_config(
     *,
     features: list[str],
@@ -355,11 +491,27 @@ def build_auto_candidate_transformation_config(
     pairs: list[dict[str, Any]] = []
     if transforms.get("interaction"):
         ops = _interaction_op_keys(prefs["interaction_ops"])
-        # Cap pairwise explosion for very wide source sets.
-        ix_feats = feats[:40]
+        context = {
+            "market": prefs.get("market", "NIFTY"),
+            "sampling_interval_sec": interval,
+            "sliding_window": prefs.get("sliding_window", "standard"),
+            "feature_project_id": prefs.get("feature_project_id", "all"),
+        }
+        ix_feats = select_interaction_parent_features(
+            features=feats,
+            data_dir=data_dir or "",
+            context=context,
+            max_parents=36,
+        )
         for op in ops:
             pairs.extend(
-                bulk_interaction_pairs(ix_feats, ix_feats, op=op, skip_identical=True)
+                bulk_interaction_pairs(
+                    ix_feats,
+                    ix_feats,
+                    op=op,
+                    skip_identical=True,
+                    symmetric_canonical=True,
+                )
             )
 
     config = merge_interaction_into_config(
@@ -459,9 +611,17 @@ def _estimate_combinations(
         est += n * roll_h
     if transforms.get("interaction"):
         ops = prefs.get("interaction_ops") if isinstance(prefs.get("interaction_ops"), dict) else {}
-        op_count = sum(1 for v in ops.values() if v)
-        capped = min(n, 40)
-        est += capped * capped * max(op_count, 1)
+        from chain_replay_ml.dataset_builder.transformations.interaction_ui import COMMUTATIVE_INTERACTION_OPS
+        capped = min(n, 36)
+        if capped > 1:
+            for op, enabled in ops.items():
+                if not enabled:
+                    continue
+                op_norm = "divide" if op == "ratio" else op
+                if op_norm in COMMUTATIVE_INTERACTION_OPS:
+                    est += (capped * (capped - 1)) // 2
+                else:
+                    est += capped * (capped - 1)
     return est
 
 

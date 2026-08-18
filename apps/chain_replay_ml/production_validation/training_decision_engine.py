@@ -549,7 +549,29 @@ def evaluate_candidate_training_eligibility(
                 "run_timestamp": rts,
             })
 
+        # Check registry store for deprecation / implementation status
+        retired_names: set[str] = set()
+        deprecated_names: set[str] = set()
+        if isinstance(data_dir_or_conn, str) and data_dir_or_conn:
+            try:
+                from chain_replay_ml.dataset_builder.feature_registry_store import (
+                    disabled_registry_feature_names,
+                    load_store as load_registry_store,
+                )
+                rstore = load_registry_store(data_dir_or_conn)
+                retired_names.update(disabled_registry_feature_names(rstore))
+                for fid, fident in (rstore.get("feature_identities") or {}).items():
+                    if str(fident.get("implementation_status") or "").lower() == "deprecated":
+                        fname = fident.get("name")
+                        if fname:
+                            deprecated_names.add(fname)
+            except Exception:
+                pass
+
         for name in candidate_names:
+            is_dep = (name in deprecated_names) or (name in retired_names)
+            impl_status = "deprecated" if is_dep else None
+
             row = db_rows.get(name)
             if row is None:
                 # Brand-new feature with zero historical runs
@@ -558,6 +580,7 @@ def evaluate_candidate_training_eligibility(
                     context_id=cid,
                     feature_source="experimental",
                     total_runs=0,
+                    implementation_status=impl_status,
                     policy=policy,
                 )
                 continue
@@ -606,6 +629,8 @@ def evaluate_candidate_training_eligibility(
                 freshness_label=freshness_info.get("freshness_label"),
                 score_volatility=volatility_info.get("volatility_score"),
                 is_promotion_candidate=is_promo,
+                implementation_status=impl_status,
+                operational_priority_score=e_score,
                 policy=policy,
             )
     finally:
@@ -713,3 +738,75 @@ def evaluate_population_training_decisions(
         enriched_rows.append(row_dict)
 
     return enriched_rows
+
+
+def rank_features_for_candidate_generation(
+    data_dir_or_conn: str | Any,
+    features: Sequence[str],
+    context: DatasetContext | Mapping[str, Any] | None = None,
+    policy: RecommendationPolicy | None = None,
+) -> list[tuple[str, TrainingDecisionResult]]:
+    """Ranks candidate source features using Phase 1-3A evidence scores and decision standing.
+
+    Reuses existing recommendation evidence, consensus, volatility, and Phase 3A decision logic.
+    Returns a list of (feature_name, decision_result) sorted deterministically:
+    1. is_candidate_generation_allowed (True before False)
+    2. is_training_candidate (True before False)
+    3. Decision priority tier:
+       PROMOTION_CANDIDATE_QUALIFIED (4) > TRAIN_CANDIDATE (3) > NEW_UNSEEN (2) > REVIEW (1) > EXCLUDE (0)
+    4. evidence_score / operational_priority_score (higher before lower)
+    5. feature_name (alphabetical tie-breaker)
+    """
+    clean_feats = [str(f).strip() for f in features if str(f).strip()]
+    if not clean_feats:
+        return []
+
+    if isinstance(context, DatasetContext):
+        ctx = context
+    elif isinstance(context, Mapping):
+        ctx = build_dataset_context(
+            market=str(context.get("market") or "NIFTY"),
+            sampling_interval_sec=int(context.get("sampling_interval_sec") or 3),
+            sliding_window=str(context.get("sliding_window") or "standard"),
+            feature_project_id=str(context.get("feature_project_id") or "all"),
+        )
+    else:
+        ctx = build_dataset_context(market="NIFTY", sampling_interval_sec=3)
+
+    cid = ctx.context_id if isinstance(ctx, DatasetContext) else str(ctx)
+    eligibility_map = evaluate_candidate_training_eligibility(
+        data_dir_or_conn=data_dir_or_conn,
+        context_id=cid,
+        candidate_names=clean_feats,
+        policy=policy,
+    )
+
+    decision_priority: dict[str, int] = {
+        TrainingDecisionState.TRAIN_CANDIDATE: 3,
+        TrainingDecisionState.NEW_UNSEEN: 2,
+        TrainingDecisionState.REVIEW: 1,
+        TrainingDecisionState.EXCLUDE: 0,
+    }
+
+    def _item_priority(dec: TrainingDecisionResult) -> int:
+        if dec.primary_reason == "PROMOTION_CANDIDATE_QUALIFIED":
+            return 4
+        return decision_priority.get(dec.decision, 0)
+
+    def _sort_key(item: tuple[str, TrainingDecisionResult]) -> tuple[Any, ...]:
+        fname, dec = item
+        allowed = 1 if dec.is_candidate_generation_allowed else 0
+        is_train = 1 if dec.is_training_candidate else 0
+        p_tier = _item_priority(dec)
+        score = float(dec.operational_priority_score if dec.operational_priority_score is not None else 0.0)
+        return (
+            -allowed,
+            -is_train,
+            -p_tier,
+            -score,
+            fname,
+        )
+
+    ranked_items = sorted(eligibility_map.items(), key=_sort_key)
+    return ranked_items
+

@@ -342,6 +342,22 @@ def available_interaction_features(
     )
 
 
+COMMUTATIVE_INTERACTION_OPS: frozenset[str] = frozenset({
+    "multiply",
+    "add",
+    "absolute_difference",
+    "min",
+    "max",
+})
+
+
+def is_commutative_interaction_op(op: str) -> bool:
+    try:
+        return normalize_interaction_op(op) in COMMUTATIVE_INTERACTION_OPS
+    except Exception:
+        return False
+
+
 def bulk_interaction_pairs(
     feature_a: list[str],
     feature_b: list[str],
@@ -349,11 +365,21 @@ def bulk_interaction_pairs(
     op: str = "multiply",
     scale: float = 1.0,
     skip_identical: bool = True,
+    symmetric_canonical: bool = True,
 ) -> list[dict[str, Any]]:
-    """Cartesian product A × B → pair configs."""
+    """Cartesian product A × B → pair configs.
+
+    When ``symmetric_canonical`` is True and ``op`` is commutative (multiply, add,
+    absolute_difference, min, max), redundant symmetric pairs (e.g. B × A where A × B
+    was already formed) are pruned by enforcing canonical lexicographical ordering
+    left <= right.
+    """
     op_key = normalize_interaction_op(op)
+    is_comm = symmetric_canonical and (op_key in COMMUTATIVE_INTERACTION_OPS)
     pairs: list[dict[str, Any]] = []
     seen: set[str] = set()
+    seen_comm_pairs: set[tuple[str, str]] = set()
+
     for left in feature_a:
         left_s = str(left).strip()
         if not left_s:
@@ -364,13 +390,22 @@ def bulk_interaction_pairs(
                 continue
             if skip_identical and left_s == right_s:
                 continue
-            output = interaction_column_name(left_s, right_s, op_key)
+
+            l_name, r_name = left_s, right_s
+            if is_comm:
+                pair_sorted = (min(left_s, right_s), max(left_s, right_s))
+                if pair_sorted in seen_comm_pairs:
+                    continue
+                seen_comm_pairs.add(pair_sorted)
+                l_name, r_name = pair_sorted
+
+            output = interaction_column_name(l_name, r_name, op_key)
             if output in seen:
                 continue
             seen.add(output)
             pairs.append({
-                "left": left_s,
-                "right": right_s,
+                "left": l_name,
+                "right": r_name,
                 "op": op_key,
                 "output": output,
                 "scale": float(scale),

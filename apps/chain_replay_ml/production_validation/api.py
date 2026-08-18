@@ -78,6 +78,7 @@ from .training_decision_engine import (
     evaluate_candidate_training_eligibility,
     evaluate_population_training_decisions,
     evaluate_training_decision,
+    rank_features_for_candidate_generation,
 )
 from .types import ProductionValidationResult, UnseenDatasetResolveResult
 from .unseen_dataset import load_unseen_dataset_status, resolve_unseen_dataset
@@ -199,6 +200,7 @@ __all__ = [
     "persist_validation_evidence",
     "preview_policy_impact",
     "query_blocked_candidates",
+    "rank_features_for_candidate_generation",
     "rebuild_all_projections",
     "recommended_for_removal",
     "resolve_context_from_model_package",
