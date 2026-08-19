@@ -1,4 +1,6 @@
-"""SQLite store for model family registry (current champion) and full training history.
+"""[DEPRECATED LEGACY ARUNEO ADAPTER] SQLite store for legacy model registry / history.
+
+Authoritative AruMLStudio governance resides in analysis.db (champion_history) and models/<safe_model_name>/ packages.
 
 Evaluation metrics (MAE, RMSE, Direction, Composite, etc.) are **not** stored or
 trusted from this database. Package ``metrics.json`` is the single authoritative

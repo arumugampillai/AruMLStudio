@@ -4,7 +4,7 @@
 > **Document Number**: `Doc 13`  
 > **Document Status**: `AUTHORITATIVE SPECIFICATION (Phase 4C, Phase 4D & Phase 4E COMPLETE & VERIFIED — 472/472 Tests Passing; Phase 4F+ PLANNED)`  
 > **Operational Baseline**: Phases 1–3D, Phase 4C Complete, Phase 4D Complete, Phase 4E Complete (**472/472 Tests Passing**), Docs 00–13  
-> **Implementing Modules**: `apps/chain_replay_ml/model_taxonomy/`, `apps/chain_replay_ml/research_memory/`, `apps/chain_replay_ml/research_recommendations/` (`coverage.py`, `vulnerability.py`, `feature_affinity.py`, `negative_pruning.py`, `priority_scoring.py`, `dossier.py`), `apps/chain_replay_ml/training/lifecycle_store.py`, `apps/chain_replay_ml/training/registry.py`, `apps/chain_replay_ml/training/artifacts.py`, `apps/master_dataset_tk/model_registry_panel.py`, `apps/master_dataset_tk/model_registry_detail.py`, `apps/master_dataset_tk/model_research_leaderboard_panel.py`  
+> **Implementing Modules**: `apps/chain_replay_ml/model_taxonomy/`, `apps/chain_replay_ml/research_memory/`, `apps/chain_replay_ml/research_recommendations/` (`coverage.py`, `vulnerability.py`, `feature_affinity.py`, `negative_pruning.py`, `priority_scoring.py`, `dossier.py`), `apps/chain_replay_ml/research_memory/champion_history.py`, `apps/chain_replay_ml/training/registry.py`, `apps/chain_replay_ml/training/artifacts.py`, `apps/master_dataset_tk/model_registry_panel.py`, `apps/master_dataset_tk/model_registry_detail.py`, `apps/master_dataset_tk/model_research_leaderboard_panel.py`  
 > **Hardware Constraint**: Designed for a **16 GB RAM Local Workstation** without external cloud dependencies.
 
 ---
@@ -53,7 +53,7 @@ A rigorous read-only source-code inspection of the active codebase yields the fo
 │ Package Artifacts    │ `model.json`/`.ubj`, `config.json`, `metrics.json`,              │ ✅ IMPLEMENTED    │
 │                      │ `training_metadata.json`, `dataset_build_snapshot.json`          │                   │
 ├──────────────────────┼──────────────────────────────────────────────────────────────────┼───────────────────┤
-│ Local Registry DB    │ SQLite `<data_dir>/models/.lifecycle_registry.db`                │ ✅ IMPLEMENTED    │
+│ Local Registry DB    │ SQLite `<data_dir>/analysis.db` (champion_history)                │ ✅ IMPLEMENTED    │
 │                      │ (`model_registry`, `model_history` tables)                       │                   │
 ├──────────────────────┼──────────────────────────────────────────────────────────────────┼───────────────────┤
 │ UI Discovery         │ `apps/master_dataset_tk/model_registry_panel.py` scans           │ ✅ IMPLEMENTED    │
@@ -69,7 +69,7 @@ A rigorous read-only source-code inspection of the active codebase yields the fo
 ├──────────────────────┼──────────────────────────────────────────────────────────────────┼───────────────────┤
 │ Market Regime Schema │ No formal `regime_id`, `regime_taxonomy`, or regime registry     │ ❌ NOT FOUND      │
 ├──────────────────────┼──────────────────────────────────────────────────────────────────┼───────────────────┤
-│ Champion/Challenger  │ Single `current_model_name` pointer in `.lifecycle_registry.db`; │ ⚠️ PARTIALLY IMPL. │
+│ Champion/Challenger  │ Context-scoped champion history in `analysis.db` (champion_history); │ ⚠️ PARTIALLY IMPL. │
 │ Management           │ no regime-specific champion/challenger tracking                  │                   │
 ├──────────────────────┼──────────────────────────────────────────────────────────────────┼───────────────────┤
 │ Persistent Multi-    │ In-memory comparison in `MultiModelStudioPanel`;                 │ 🔵 PLANNED        │
@@ -438,7 +438,7 @@ To ensure **zero regression on existing model packages**:
 
 ## 16. Database & Registry Architecture Impact
 
-1. **SQLite `.lifecycle_registry.db`**:
+1. **SQLite `analysis.db` (`champion_history`)**:
    - Additive optional columns: `task_type TEXT`, `regime_id TEXT`, `regime_name TEXT`, `population TEXT`.
    - Existing tables (`model_registry`, `model_history`) remain 100% backward compatible.
 2. **Dedicated Regime Registry (`regime_registry_store.json`)**:

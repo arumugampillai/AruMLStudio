@@ -9,7 +9,7 @@ Invariants:
 2. Pure Presentation Layer: Consumes authoritative Phase 4D service APIs (`rank_models_in_context`,
    `get_champion_history_for_context`, etc.) without reproducing ranking mathematics.
 3. Human Governance Boundary: Visually distinguishes Production Champion state from
-   Research `CHAMPION_CANDIDATE`. Strictly read-only; zero mutation of `.lifecycle_registry.db`
+   Research `CHAMPION_CANDIDATE`. Strictly read-only; zero mutation of `analysis.db` or `.active_model.json`
    or `active_model.json`.
 4. 16 GB Workstation Safety: Uses database-side filtering and bounded Treeviews.
 """
@@ -34,7 +34,7 @@ from chain_replay_ml.research_memory import (
     get_regime_evaluations_for_model,
     rank_models_in_context,
 )
-from chain_replay_ml.training.lifecycle_store import get_champion_for_context
+from chain_replay_ml.research_memory.champion_history import get_champion_for_context
 from chain_replay_ml.research_recommendations import (
     RecommendationDossier,
     generate_context_recommendation_dossiers,
@@ -90,7 +90,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
     def _data_dir(self) -> str:
         if not self.chart_dir:
             return ""
-        if os.path.exists(os.path.join(self.chart_dir, "analysis.db")) or os.path.exists(os.path.join(self.chart_dir, ".lifecycle_registry.db")):
+        if os.path.exists(os.path.join(self.chart_dir, "analysis.db")):
             return self.chart_dir
         return chart_data_dir(self.chart_dir)
 
@@ -292,7 +292,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         ctx_key = self._context_key_var.get()
         data_dir = self._data_dir()
 
-        # 1. Update Production Champion & Challenger Banner from lifecycle_store
+        # 1. Update Context Champion & Challenger Banner from analysis.db champion_history
         try:
             prod_doc = get_champion_for_context(data_dir, ctx_key)
             champ_name = prod_doc.get("champion_model_name") if prod_doc else None

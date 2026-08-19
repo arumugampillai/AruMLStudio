@@ -10,7 +10,7 @@ Verifies:
 4. Multi-Threaded Campaign Quota Concurrency & Atomic Slot Reservation.
 5. Exact Deduplication & Float Quantization Invariance.
 6. Regime Definition Shift Lineage Branching.
-7. Cryptographic Immutability of Production State (zero mutations to .lifecycle_registry.db, active_model.json, Evidence DB).
+7. Cryptographic Immutability of Production State (zero mutations to analysis.db, active_model.json, Evidence DB).
 """
 
 import concurrent.futures
@@ -64,7 +64,7 @@ from chain_replay_ml.research_memory import (
     register_or_get_experiment,
     start_campaign,
 )
-from chain_replay_ml.training.lifecycle_store import (
+from chain_replay_ml.research_memory.champion_history import (
     get_champion_for_context,
     set_champion_for_context,
 )

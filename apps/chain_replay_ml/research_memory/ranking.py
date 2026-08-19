@@ -14,7 +14,7 @@ Invariants:
    versioned, deterministically hashed `RobustnessRankingPolicy` (e.g. `ROB_POLICY_v1.0`).
 4. Pure Ranking & Advisory Boundary: Outputs ranked candidate dossiers with recommendation
    statuses (e.g. `CHAMPION_CANDIDATE`). It strictly NEVER automatically modifies
-   `.lifecycle_registry.db`, `active_model.json`, or promotes champions.
+   `active_model.json`, promotes champions, or alters production states.
 5. 16 GB Workstation Safety: Operates strictly on persisted scalar research memory records.
 """
 

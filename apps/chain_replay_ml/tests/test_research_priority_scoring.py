@@ -70,7 +70,7 @@ from chain_replay_ml.research_recommendations.priority_scoring import (
     compute_research_priority_score,
     evaluate_research_opportunity,
 )
-from chain_replay_ml.training.lifecycle_store import (
+from chain_replay_ml.research_memory.champion_history import (
     set_champion_for_context,
 )
 

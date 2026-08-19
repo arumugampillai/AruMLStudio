@@ -68,7 +68,7 @@ from chain_replay_ml.research_recommendations.feature_affinity import (
     compute_interaction_synergy_score,
     recommend_features_for_context,
 )
-from chain_replay_ml.training.lifecycle_store import (
+from chain_replay_ml.research_memory.champion_history import (
     set_champion_for_context,
 )
 

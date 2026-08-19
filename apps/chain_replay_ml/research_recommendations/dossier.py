@@ -55,7 +55,7 @@ from chain_replay_ml.research_recommendations.vulnerability import (
     VulnerabilityClass,
     audit_champion_vulnerability,
 )
-from chain_replay_ml.training.lifecycle_store import get_champion_for_context
+from chain_replay_ml.research_memory.champion_history import get_champion_for_context
 
 
 def _utc_now_iso() -> str:

@@ -133,7 +133,7 @@ def format_model_taxonomy_display(
 def get_context_champions_map(data_dir: str) -> dict[str, dict[str, Any]]:
     """Build a mapping of context_key -> champion registry dict for fast lookup."""
     try:
-        from ..training.lifecycle_store import list_context_champions
+        from ..research_memory.champion_history import list_context_champions
         rows = list_context_champions(data_dir)
         return {str(r.get("context_key") or r.get("model_id")): r for r in rows if r.get("context_key") or r.get("model_id")}
     except Exception:

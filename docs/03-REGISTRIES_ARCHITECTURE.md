@@ -376,9 +376,9 @@ Population                 Feature Registry            Dataset Registry         
 - **Writes**: Registers new datasets in SQLite.
 
 ### 9.3. Model Registry UI ([`model_registry_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/model_registry_panel.py))
-- **Reads**: `models/<model_name>/` package files (`config.json`, `metrics.json`), `regime_registry_store.json`, and `.lifecycle_registry.db`.
+- **Reads**: `models/<model_name>/` package files (`config.json`, `metrics.json`), `regime_registry_store.json`, and `analysis.db` (champion_history).
 - **Actions**: Faceted filtering across 4 orthogonal dimensions (Task Type, Market Regime, Population Tier, Lifecycle Status), inspect out-of-fold metrics, feature importances, context-scoped Champion/Challenger badges (`👑 CHAMPION`, `⚔️ CHALLENGER`), set active model, launch Feature Studio.
-- **Writes**: Deletes unprotected models, sets context-scoped champion in `.lifecycle_registry.db` and active model in `.active_model.json`.
+- **Writes**: Deletes unprotected models, sets context-scoped champion in `analysis.db` (champion_history) and active model in `.active_model.json`.
 
 ---
 

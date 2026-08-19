@@ -44,7 +44,7 @@ from chain_replay_ml.research_recommendations.vulnerability import (
     ChampionVulnerabilityResult,
     audit_champion_vulnerability,
 )
-from chain_replay_ml.training.lifecycle_store import get_champion_for_context
+# get_champion_for_context decoupled to analysis.db
 
 
 def _utc_now_iso() -> str:

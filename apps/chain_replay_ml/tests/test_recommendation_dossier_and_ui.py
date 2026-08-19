@@ -63,7 +63,7 @@ from chain_replay_ml.research_recommendations.priority_scoring import (
     build_context_priority_agenda,
     evaluate_research_opportunity,
 )
-from chain_replay_ml.training.lifecycle_store import (
+from chain_replay_ml.research_memory.champion_history import (
     set_champion_for_context,
 )
 
@@ -394,7 +394,7 @@ class TestRecommendationDossierAndUI(unittest.TestCase):
         # Ensure no new databases or unmanaged files were written to tmp_dir
         files = os.listdir(self.tmp_dir)
         for f in files:
-            self.assertIn(f, ("analysis.db", ".lifecycle_registry.db", "models"))
+            self.assertIn(f, ("analysis.db", "analysis.db", "models"))
 
     def test_19_production_database_immutability(self):
         """19. Assert that evidence database SHA-256 remains 100% unmutated."""

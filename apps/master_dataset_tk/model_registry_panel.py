@@ -1411,7 +1411,7 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
             # Phase 4C.4: Multi-dimensional Taxonomy & Context Champion Header
             try:
                 from chain_replay_ml.model_taxonomy import format_model_taxonomy_display
-                from chain_replay_ml.training.lifecycle_store import get_champion_for_context
+                from chain_replay_ml.research_memory.champion_history import get_champion_for_context
 
                 row = doc.get("table_row") or {}
                 tax = format_model_taxonomy_display(row or doc)

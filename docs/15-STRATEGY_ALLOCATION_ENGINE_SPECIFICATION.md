@@ -487,7 +487,7 @@ This specification strictly adheres to all established AruMLStudio engineering a
 3. **Context Isolation**: All models and rankings operate strictly within the canonical 5-tuple `ModelContextKey` (`Market + Sampling Interval + Task Type + Prediction Horizon + Regime ID`).
 4. **Walk-Forward Validation**: Strict temporal integrity with zero look-ahead leakage.
 5. **Hardware Safety**: Designed for a standard **16 GB RAM Local Workstation** without external cloud dependencies.
-6. **Production Asset Immutability**: Historical evidence databases (`feature_recommendation_evidence.db`, `.lifecycle_registry.db`, `active_model.json`, `PL_0001`) remain 100% cryptographically protected.
+6. **Production Asset Immutability**: Historical evidence databases (`feature_recommendation_evidence.db`, `analysis.db`, `.active_model.json`, `PL_0001`) remain 100% cryptographically protected.
 
 ---
 

@@ -22,7 +22,7 @@ from chain_replay_ml.research_memory import (
     record_regime_evaluation,
     register_or_get_experiment,
 )
-from chain_replay_ml.training.lifecycle_store import set_champion_for_context
+from chain_replay_ml.research_memory.champion_history import set_champion_for_context
 from master_dataset_tk.model_research_leaderboard_panel import ModelResearchLeaderboardPanel
 
 
@@ -118,18 +118,8 @@ class TestModelResearchLeaderboardUI(unittest.TestCase):
         ranked_side = rank_models_in_context(self.tmp_dir, "NIFTY_3s_DIRECTION_CLASSIFIER_5m_R002", benchmark_run_id=self.run_side)
         persist_context_rankings(self.tmp_dir, benchmark_run_id=self.run_side, ranked_dossiers=ranked_side)
 
-        # Set Production Champion in lifecycle store
-        set_champion_for_context(self.tmp_dir, "NIFTY_3s_DIRECTION_CLASSIFIER_5m_R001", "DIR_TREND_PROD_OLD_v0")
-
-        # Record Champion History
-        record_champion_transition(
-            self.tmp_dir,
-            context_key="NIFTY_3s_DIRECTION_CLASSIFIER_5m_R001",
-            new_champion_name="DIR_TREND_PROD_OLD_v0",
-            new_robustness_score=75.0,
-            promoted_by="HUMAN_RESEARCHER",
-            promotion_reason="Initial baseline promotion",
-        )
+        # Set Context Champion in champion_history
+        set_champion_for_context(self.tmp_dir, "NIFTY_3s_DIRECTION_CLASSIFIER_5m_R001", "DIR_TREND_PROD_OLD_v0", robustness_score=75.0, promotion_reason="Initial baseline promotion")
 
     def tearDown(self):
         shutil.rmtree(self.tmp_dir, ignore_errors=True)

@@ -22,7 +22,7 @@ from chain_replay_ml.model_taxonomy import (
     list_regimes,
     resolve_model_metadata_or_legacy,
 )
-from chain_replay_ml.training.lifecycle_store import (
+from chain_replay_ml.research_memory.champion_history import (
     get_champion_for_context,
     set_champion_for_context,
 )

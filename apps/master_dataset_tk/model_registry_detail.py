@@ -1104,7 +1104,7 @@ def render_overview(
     chall_for_ctx = "—"
     try:
         from chain_replay_ml.model_taxonomy import format_model_taxonomy_display
-        from chain_replay_ml.training.lifecycle_store import get_champion_for_context
+        from chain_replay_ml.research_memory.champion_history import get_champion_for_context
         data_source_dir = chart_dir or (doc.get("data_dir") if isinstance(doc.get("data_dir"), str) else "")
         tax_info = format_model_taxonomy_display(row or meta or cfg or doc)
         if data_source_dir and tax_info.get("context_key"):

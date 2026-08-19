@@ -192,7 +192,7 @@ Model identity is **multidimensional and cryptographically anchored**. The platf
 ### Phase 4C — Model Taxonomy & Regime Architecture `[IMPLEMENTED & VERIFIED]`
 - **4C.1: Model Taxonomy Foundation `[IMPLEMENTED & VERIFIED]`**: Enums, dataclasses, and canonical context keys:
   $$\mathbf{K}_{\text{context}} = (\text{Market}, \text{Interval}, \text{Task Type}, \text{Prediction Horizon}, \text{Regime ID})$$
-- **4C.2: Model Registry Extension `[IMPLEMENTED & VERIFIED]`**: Additive SQLite schema updates in `.lifecycle_registry.db`, context-scoped champion governance, and package metadata taxonomy stamping.
+- **4C.2: Model Registry Extension `[IMPLEMENTED & VERIFIED]`**: Additive SQLite schema updates in `analysis.db (champion_history)`, context-scoped champion governance, and package metadata taxonomy stamping.
 - **4C.3: Regime Registry (`regime_registry_store.json`) `[IMPLEMENTED & VERIFIED]`**: Authoritative JSON catalog storing declarative regime definitions, parent/child hierarchy, required features, and immutable versioning with canonical `definition_hash`.
 - **4C.4: Model Research Lab Population Awareness `[IMPLEMENTED & VERIFIED]`**: 4-dimensional faceted filtering toolbar, Treeview taxonomy columns, Population badges, and context-scoped champion display.
 
@@ -212,7 +212,7 @@ Model identity is **multidimensional and cryptographically anchored**. The platf
 
 ### Phase 4E — Automated Project Recommendations `[COMPLETE & VERIFIED / ADVISORY ONLY]`
 - **Purpose**: Transform accumulated research evidence into intelligent, prioritized recommendations for research exploration while strictly preserving human governance.
-- **Boundary**: **Strictly Advisory**. Zero automated mutation of `PL_0001`, `feature_registry_store.json`, `.lifecycle_registry.db`, or live trading configurations.
+- **Boundary**: **Strictly Advisory**. Zero automated mutation of `PL_0001`, `feature_registry_store.json`, `analysis.db (champion_history)`, or live trading configurations.
 - **4E.1: Context Coverage & Evidence Density Analyzer `[IMPLEMENTED & VERIFIED]`**: Operational coverage matrix across canonical `ModelContextKey` dimensions, safe bounded evidence density scores ($0.0 \dots 100.0$), and deterministic coverage classification.
 - **4E.2: Production Champion Vulnerability & Challenger Gap Auditor `[IMPLEMENTED & VERIFIED]`**: Fragility detection, cross-regime degradation, calibration (ECE) deficits, staleness auditing, and challenger gap analysis with strictly read-only production governance.
 - **4E.3: Empirical Feature Affinity & Interaction Recommender `[IMPLEMENTED & VERIFIED]`**: Multi-source empirical feature scoring ($0.0 \dots 100.0$), disaggregated confidence scaling, pairwise interaction synergy modeling, deprecated feature quarantining, and missing champion opportunity detection.
