@@ -2,9 +2,9 @@
 ## Technical Architectural Specification: Task Taxonomy, Regime Taxonomy, Multi-Dimensional Identity & Research Factory Topology
 
 > **Document Number**: `Doc 13`  
-> **Document Status**: `AUTHORITATIVE SPECIFICATION (Phase 4C & Phase 4D COMPLETE & VERIFIED — 328/328 Tests Passing; Phase 4E+ PLANNED)`  
-> **Operational Baseline**: Phases 1–3D, Phase 4C Complete, Phase 4D Complete & Verified (**328/328 Tests Passing**), Docs 00–13  
-> **Implementing Modules**: `apps/chain_replay_ml/model_taxonomy/`, `apps/chain_replay_ml/research_memory/` (`analysis.db`, `schema.py`, `db.py`, `signature.py`, `benchmarks.py`, `feature_comp.py`, `regime_eval.py`, `ranking.py`, `campaigns.py`, `champion_history.py`), `apps/chain_replay_ml/training/lifecycle_store.py`, `apps/chain_replay_ml/training/registry.py`, `apps/chain_replay_ml/training/artifacts.py`, `apps/master_dataset_tk/model_registry_panel.py`, `apps/master_dataset_tk/model_registry_detail.py`, `apps/master_dataset_tk/model_research_leaderboard_panel.py`  
+> **Document Status**: `AUTHORITATIVE SPECIFICATION (Phase 4C, Phase 4D & Phase 4E COMPLETE & VERIFIED — 472/472 Tests Passing; Phase 4F+ PLANNED)`  
+> **Operational Baseline**: Phases 1–3D, Phase 4C Complete, Phase 4D Complete, Phase 4E Complete (**472/472 Tests Passing**), Docs 00–13  
+> **Implementing Modules**: `apps/chain_replay_ml/model_taxonomy/`, `apps/chain_replay_ml/research_memory/`, `apps/chain_replay_ml/research_recommendations/` (`coverage.py`, `vulnerability.py`, `feature_affinity.py`, `negative_pruning.py`, `priority_scoring.py`, `dossier.py`), `apps/chain_replay_ml/training/lifecycle_store.py`, `apps/chain_replay_ml/training/registry.py`, `apps/chain_replay_ml/training/artifacts.py`, `apps/master_dataset_tk/model_registry_panel.py`, `apps/master_dataset_tk/model_registry_detail.py`, `apps/master_dataset_tk/model_research_leaderboard_panel.py`  
 > **Hardware Constraint**: Designed for a **16 GB RAM Local Workstation** without external cloud dependencies.
 
 ---

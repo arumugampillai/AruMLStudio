@@ -35,6 +35,10 @@ from chain_replay_ml.research_memory import (
     rank_models_in_context,
 )
 from chain_replay_ml.training.lifecycle_store import get_champion_for_context
+from chain_replay_ml.research_recommendations import (
+    RecommendationDossier,
+    generate_context_recommendation_dossiers,
+)
 
 from .build_service import chart_data_dir
 from .model_registry_widgets import (
@@ -265,14 +269,15 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._detail_nb = ttk.Notebook(detail_outer)
         self._detail_nb.pack(fill="both", expand=True)
 
-        # Tabs
         self._tab_dossier = ScrollableFrame(self._detail_nb)
+        self._tab_recommendations = ScrollableFrame(self._detail_nb)
         self._tab_regimes = ScrollableFrame(self._detail_nb)
         self._tab_features = ScrollableFrame(self._detail_nb)
         self._tab_lineage = ScrollableFrame(self._detail_nb)
         self._tab_history = ScrollableFrame(self._detail_nb)
 
         self._detail_nb.add(self._tab_dossier, text="Robustness Dossier")
+        self._detail_nb.add(self._tab_recommendations, text="Research Recommendations")
         self._detail_nb.add(self._tab_regimes, text="Cross-Regime Stress")
         self._detail_nb.add(self._tab_features, text="Feature Composition")
         self._detail_nb.add(self._tab_lineage, text="Research Lineage")
@@ -321,6 +326,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         if not dossiers:
             self._render_empty_detail("No benchmarked models found for this context key.")
             self._render_champion_history_tab()
+            self._render_recommendations_tab()
             return
 
         self._item_dossier_map: dict[str, dict[str, Any]] = {}
@@ -369,6 +375,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             self._load_dossier_detail(first_dossier)
 
         self._render_champion_history_tab()
+        self._render_recommendations_tab()
 
     def _on_tree_select(self, _event: tk.Event) -> None:
         sel = self.leaderboard_tree.selection()
@@ -591,3 +598,92 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             )
         else:
             ttk.Label(tab5, text="No champion transitions recorded for this ModelContextKey yet.", font=("TkDefaultFont", 9, "italic"), foreground=COL_MUTED).pack(pady=12)
+
+    def _render_recommendations_tab(self) -> None:
+        """Render ranked research recommendation dossiers for the active context key."""
+        tab = self._tab_recommendations.inner
+        clear_children(tab)
+        ctx_key = self._context_key_var.get()
+        data_dir = self._data_dir()
+
+        section_title(tab, f"Automated Research Recommendations & Opportunity Agenda: {ctx_key}")
+        section_desc(tab, "Deterministic multi-objective research agenda synthesized from Coverage, Vulnerability, Feature Affinity, and Pruning.")
+
+        disclaimer_lbl = ttk.Label(
+            tab,
+            text="⚠️ RESEARCH RECOMMENDATION — HUMAN DECISION REQUIRED (Strictly advisory; no automated execution or promotion).",
+            font=("TkDefaultFont", 9, "bold"),
+            foreground="#d84315",
+        )
+        disclaimer_lbl.pack(anchor="w", pady=(0, 8))
+
+        try:
+            dossiers = generate_context_recommendation_dossiers(data_dir, ctx_key)
+        except Exception:
+            dossiers = []
+
+        if not dossiers:
+            ttk.Label(tab, text="No research opportunities identified for this context key.", font=("TkDefaultFont", 9, "italic"), foreground=COL_MUTED).pack(pady=12)
+            return
+
+        opp_rows = []
+        for idx, d in enumerate(dossiers, start=1):
+            feats_str = ", ".join(d.candidate_features[:4]) + ("..." if len(d.candidate_features) > 4 else "")
+            opp_rows.append((
+                str(idx),
+                d.priority_class.value,
+                f"{d.priority_score:.2f}",
+                d.opportunity_type.value,
+                d.evidence_confidence.value,
+                d.target_algorithm,
+                f"[{feats_str}]",
+                d.exclusion_verdict.value,
+                d.why_recommended[:80] + ("..." if len(d.why_recommended) > 80 else ""),
+            ))
+
+        data_table(
+            tab,
+            [
+                ("rank", "#", 35),
+                ("prio_class", "Priority", 95),
+                ("score", "Score", 65),
+                ("type", "Opportunity Type", 190),
+                ("conf", "Confidence", 95),
+                ("algo", "Algo", 75),
+                ("features", "Candidate Features", 180),
+                ("status", "Status", 75),
+                ("rationale", "Primary Rationale", 260),
+            ],
+            opp_rows,
+        )
+
+        # Render detail for top recommendation
+        top_d = dossiers[0]
+        kv_block(
+            tab,
+            f"Top Priority Opportunity Dossier: {top_d.opportunity_id}",
+            [
+                ("Opportunity Type", top_d.opportunity_type.value),
+                ("Priority Score", f"{top_d.priority_score:.2f} ({top_d.priority_class.value})"),
+                ("Evidence Confidence", f"{top_d.evidence_confidence.value} ({top_d.confidence_value:.4f})"),
+                ("Target Algorithm", top_d.target_algorithm),
+                ("Candidate Features", ", ".join(top_d.candidate_features)),
+                ("Why Recommended", top_d.why_recommended),
+                ("Missing Evidence", top_d.missing_evidence_summary),
+                ("Caution Warnings", "; ".join(top_d.caution_warnings) if top_d.caution_warnings else "None"),
+            ],
+        )
+
+        breakdown_rows = [
+            ("Champion Vulnerability Contribution (30%)", f"{top_d.champion_vulnerability_contrib:.2f} pts"),
+            ("Challenger Gap Contribution (25%)", f"{top_d.challenger_gap_contrib:.2f} pts"),
+            ("Feature Affinity Contribution (20%)", f"{top_d.feature_affinity_contrib:.2f} pts"),
+            ("Coverage Gap Contribution (15%)", f"{top_d.coverage_gap_contrib:.2f} pts"),
+            ("Interaction Synergy Contribution (10%)", f"{top_d.interaction_synergy_contrib:.2f} pts"),
+            ("Caution Penalty", f"{top_d.caution_penalty:.2f} pts"),
+        ]
+        kv_block(tab, "Multi-Objective Score Component Decomposition", breakdown_rows)
+
+        steps_rows = [(f"Step {i}", step) for i, step in enumerate(top_d.suggested_next_steps, start=1)]
+        kv_block(tab, "Suggested Next Research Directions", steps_rows)
+
