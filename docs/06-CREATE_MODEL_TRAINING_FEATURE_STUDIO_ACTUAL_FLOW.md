@@ -330,16 +330,13 @@ models/Future_LTP_5m_WF_1168f_XGB_2243_14/
 4. **Post-Training Pipeline**: Automatically runs Importance &rarr; Distribution &rarr; Drift &rarr; Diagnostics studios sequentially without blocking package saving if any studio fails.
 5. **Feature Studio**: Loads pre-computed JSON artifacts in milliseconds via `feature_studio_pipeline.py`.
 6. **Production Validation**: Preserves parent model lineage (`feature_project_id`, `pipeline_id`, `pipeline_snapshot_id`) and hashes them into an 8-character identity hash to resolve or generate the exact matching `unseen_*` Parquet dataset.
+7. **Feature Recommendation & Governance (Phases 1–3D)**: Closed-loop Evidence DB, Recommendation-to-Training Decision Engine, and Governed Feature Promotion/Graduation into Registry and Base Pipeline (PL_0001).
+8. **Model Taxonomy Foundation (Phase 4C.1)**: Canonical 4-dimensional taxonomy (`apps/chain_replay_ml/model_taxonomy/`) separating Task Type, Market Regime, Population Tier, and Lifecycle Status with full backward compatibility.
 
 ---
 
-### 11.2. NOT IMPLEMENTED / NOT FOUND
-1. **Automated Promotion Engine**: There is **no code** that automatically promotes Experimental Pipeline features (`PL_XXXX`) to Base Pipeline upon positive validation results.
-2. **Automatic Deletion on REMOVE**: Production Validation recommendations (`REMOVE`) update history in `feature_recommendation_history.json` but **do not delete or mutate any Registry or Pipeline code**.
-3. **Standalone Base Pipeline Generator**: Base Pipeline is currently a classification/export filter, not a standalone generator subsystem.
-
----
-
-### 11.3. OPEN ARCHITECTURE QUESTIONS
-1. **Feature Recommendation Scoring for Pipeline Features**: Currently, `feature_recommendation_history.json` tracks `remove_runs`, `keep_runs`, and `remove_models`. The exact mathematical formula for a unified composite "Pipeline Feature Score" and promotion threshold remains to be formalized in a separate architecture decision document.
-2. **Multi-Model Cross-Dataset Benchmarking**: While `MultiModelStudioPanel` enables pairwise model comparisons, cross-dataset multi-model aggregate benchmarking is currently computed in memory rather than persisted as a dedicated database entity.
+### 11.2. PLANNED SUBSYSTEMS (Future Phases)
+1. **Model Registry SQLite Extension & Regime Registry (Phases 4C.2–4C.3)**: Additive SQLite columns and `regime_registry_store.json`.
+2. **Model Research Lab Population Awareness & Faceted UI (Phase 4C.4)**: Multi-faceted UI filtering by Task, Regime, Population, and Status.
+3. **Persistent Multi-Model Benchmarking (Phase 4D)**: Research memory and cross-dataset leaderboards in `analysis.db`.
+4. **Autonomous Research Factory (Phase 5)**: Overnight automated feature, pipeline, model, and regime discovery loop.

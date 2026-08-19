@@ -283,12 +283,13 @@ An Analysis Dataset may contain **1,186 feature columns**, but a trained model m
 Population                 Feature Registry            Dataset Registry             Model Registry
 ------------------------------------------------------------------------------------------------------------------
 1. Feature Registry        Canonical Schema & FR ID    Materialized in Master DB    Selected in Model Tab 1
-2. Base Pipeline           (Future Promotion State)    Exported in Analysis DB      Selected in Model Tab 2
+2. Base Pipeline (PL_0001) Governed Standard Baseline  Exported in Analysis DB      Selected in Model Tab 2
 3. Selected Experimental   PL_0002+ in Pipeline Store  Exported in Analysis DB      Selected in Model Tab 3
 ```
 
-- **Base Pipeline Status**: Base Pipeline represents already accepted, core pipeline features. (It is not a separate generator family; automated promotion from Experimental &rarr; Base is not yet implemented).
-- **Selected Experimental Pipeline**: Candidate features tied to `pipeline_id` and immutable `pipeline_snapshot_id`.
+- **Base Pipeline (PL_0001)**: Governed production baseline containing approved deterministic baseline transformations, governed/graduated Feature Registry features, and features approved through Feature Promotion/Governance (Phase 3D).
+- **Selected Experimental Pipeline**: Candidate features tied to `pipeline_id` (PL_0002+) and immutable `pipeline_snapshot_id`.
+- **Model Taxonomy (Phase 4C.1 — IMPLEMENTED)**: Formal 4-dimensional classification (`apps/chain_replay_ml/model_taxonomy/`) separating Task Type, Market Regime (`R000`–`R007`), Model Population (`EXPERIMENTAL`, `VALIDATED`, `CHALLENGER`, `CHAMPION`), and Lifecycle Status (`CANDIDATE`, `ACTIVE`, `DEGRADED`, `DEPRECATED`, `RETIRED`).
 
 ---
 
@@ -346,6 +347,8 @@ Population                 Feature Registry            Dataset Registry         
 | `selected_features` (`features`)| None | None | **Owner** | Model `config.json` |
 | `hyperparameters` | None | None | **Owner** | Model `training_config.json` |
 | `validation_metrics` | None | None | **Owner** | Model `metrics.json` |
+| `regime_id` (`R000-R007+`) | None | Referenced | Referenced | Regime Registry Store (`regime_registry_store.json`) |
+| `regime_definition_hash` | None | None | Inherited | Regime Registry Store (`regime_registry_store.json`) |
 | `unseen_identity_hash` | None | Stored on Unseen | Evaluated | Production Validation |
 
 ---
@@ -373,9 +376,9 @@ Population                 Feature Registry            Dataset Registry         
 - **Writes**: Registers new datasets in SQLite.
 
 ### 9.3. Model Registry UI ([`model_registry_panel.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/master_dataset_tk/model_registry_panel.py))
-- **Reads**: `models/<model_name>/` package files (`config.json`, `metrics.json`).
-- **Actions**: Inspect out-of-fold metrics, feature importances, training monitor logs, set active model, launch Feature Studio.
-- **Writes**: Deletes unprotected models, sets active model in `.active_model.json`.
+- **Reads**: `models/<model_name>/` package files (`config.json`, `metrics.json`), `regime_registry_store.json`, and `.lifecycle_registry.db`.
+- **Actions**: Faceted filtering across 4 orthogonal dimensions (Task Type, Market Regime, Population Tier, Lifecycle Status), inspect out-of-fold metrics, feature importances, context-scoped Champion/Challenger badges (`👑 CHAMPION`, `⚔️ CHALLENGER`), set active model, launch Feature Studio.
+- **Writes**: Deletes unprotected models, sets context-scoped champion in `.lifecycle_registry.db` and active model in `.active_model.json`.
 
 ---
 

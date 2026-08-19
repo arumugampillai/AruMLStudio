@@ -118,12 +118,14 @@ def ensure_lifecycle_tables(conn: sqlite3.Connection) -> None:
             ON model_history(parent_model_name);
         """
     )
-    _ensure_history_premium_columns(conn)
+    migrate_lifecycle_schema_v2(conn)
     conn.commit()
 
 
-def _ensure_history_premium_columns(conn: sqlite3.Connection) -> None:
-    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(model_history)").fetchall()}
+def migrate_lifecycle_schema_v2(conn: sqlite3.Connection) -> None:
+    """Idempotently ensure Phase 4C.2 taxonomy columns and indexes in lifecycle registry."""
+    # 1. Premium columns in model_history (existing backward compatibility)
+    history_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(model_history)").fetchall()}
     for col in (
         "premium_mae_pct",
         "premium_rmse_pct",
@@ -132,8 +134,52 @@ def _ensure_history_premium_columns(conn: sqlite3.Connection) -> None:
         "prediction_bias",
         "prediction_bias_pct",
     ):
-        if col not in cols:
+        if col not in history_cols:
             conn.execute(f"ALTER TABLE model_history ADD COLUMN {col} REAL")
+
+    # 2. Phase 4C.2 Taxonomy columns in model_history
+    taxonomy_history_additions = [
+        ("task_type", "TEXT DEFAULT 'DIRECTION_CLASSIFIER'"),
+        ("regime_id", "TEXT DEFAULT 'R000'"),
+        ("regime_name", "TEXT DEFAULT 'ALL_REGIMES'"),
+        ("population", "TEXT DEFAULT 'EXPERIMENTAL'"),
+        ("status", "TEXT DEFAULT 'ACTIVE'"),
+        ("context_key", "TEXT"),
+        ("package_model_id", "TEXT"),
+        ("metadata_json", "TEXT"),
+    ]
+    for col_name, col_def in taxonomy_history_additions:
+        if col_name not in history_cols:
+            conn.execute(f"ALTER TABLE model_history ADD COLUMN {col_name} {col_def}")
+
+    # 3. Phase 4C.2 Taxonomy columns in model_registry
+    registry_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(model_registry)").fetchall()}
+    taxonomy_registry_additions = [
+        ("task_type", "TEXT DEFAULT 'DIRECTION_CLASSIFIER'"),
+        ("regime_id", "TEXT DEFAULT 'R000'"),
+        ("context_key", "TEXT"),
+        ("champion_model_name", "TEXT"),
+        ("challenger_model_name", "TEXT"),
+        ("regime_scope", "TEXT DEFAULT 'ALL_REGIMES'"),
+    ]
+    for col_name, col_def in taxonomy_registry_additions:
+        if col_name not in registry_cols:
+            conn.execute(f"ALTER TABLE model_registry ADD COLUMN {col_name} {col_def}")
+
+    # 4. Composite query indexes
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_history_context ON model_history(context_key, population, status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_history_regime ON model_history(regime_id, task_type)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_registry_context ON model_registry(context_key)"
+    )
+
+
+def _ensure_history_premium_columns(conn: sqlite3.Connection) -> None:
+    migrate_lifecycle_schema_v2(conn)
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -957,6 +1003,89 @@ def record_training_history(
     # Deprecated columns: always NULL / empty JSON (schema retained for compat).
     empty_metrics_json = "{}"
 
+    # Phase 4C.2: Model Taxonomy Resolution
+    from ..model_taxonomy import (
+        BASELINE_REGIME_CATALOG,
+        DEFAULT_REGIME_ID,
+        DEFAULT_REGIME_NAME,
+        ModelContextKey,
+        ModelLifecycleStatus,
+        ModelMetadata,
+        ModelPopulationTier,
+        RegimeScope,
+        RegimeSpec,
+        TaskSpec,
+        TaskType,
+        infer_task_type_from_target,
+    )
+
+    strat_id = str(getattr(config, "label_strategy", "") or getattr(config, "strategy_id", "") or "")
+    pred_type = str(getattr(config, "prediction_type", "") or "")
+    tt = infer_task_type_from_target(config.target, strategy_id=strat_id, prediction_type=pred_type)
+    task_type_str = tt.value
+
+    # Regime resolution priority:
+    # 1. Explicit training configuration regime_id
+    # 2. Dataset regime metadata
+    # 3. R000 / ALL_REGIMES fallback
+    lc_dict = config.lifecycle if isinstance(getattr(config, "lifecycle", None), dict) else {}
+    reg_id = str(lc_dict.get("regime_id") or "").strip()
+    if not reg_id:
+        ds_meta = getattr(config, "dataset_metadata", None)
+        if isinstance(ds_meta, dict):
+            reg_id = str(ds_meta.get("regime_id") or "").strip()
+    if not reg_id:
+        reg_id = DEFAULT_REGIME_ID
+
+    reg_name = str(lc_dict.get("regime_name") or "").strip()
+    if not reg_name and reg_id in BASELINE_REGIME_CATALOG:
+        reg_name = BASELINE_REGIME_CATALOG[reg_id]["name"]
+    elif not reg_name:
+        reg_name = DEFAULT_REGIME_NAME
+
+    pop_str = str(lc_dict.get("population") or (lineage or {}).get("population") or ModelPopulationTier.EXPERIMENTAL.value).strip().upper()
+    try:
+        pop_tier = ModelPopulationTier.from_str(pop_str)
+    except Exception:
+        pop_tier = ModelPopulationTier.EXPERIMENTAL
+
+    status_str = str(lc_dict.get("status") or "ACTIVE").strip().upper()
+    try:
+        lifecycle_status = ModelLifecycleStatus.from_str(status_str)
+    except Exception:
+        lifecycle_status = ModelLifecycleStatus.ACTIVE
+
+    market = str(getattr(config, "market", "") or lc_dict.get("market") or "NIFTY").upper().strip()
+    interval_sec = int(lc_dict.get("sampling_interval_sec") or 3)
+    horizon = str(lc_dict.get("prediction_horizon") or "5m").strip()
+    ctx_key = ModelContextKey(
+        market=market,
+        sampling_interval_sec=interval_sec,
+        task_type=tt,
+        prediction_horizon=horizon,
+        regime_id=reg_id,
+    )
+    context_key_str = ctx_key.canonical_key_str()
+    package_model_id = str((lineage or {}).get("package_model_id") or name).strip()
+
+    meta_obj = ModelMetadata(
+        model_id=package_model_id,
+        model_name=name,
+        version=version_number,
+        model_family_id=model_id,
+        task=TaskSpec(task_type=tt, target=config.target, prediction_horizon=horizon),
+        regime=RegimeSpec(regime_id=reg_id, regime_name=reg_name),
+        market_context={"market": market, "sampling_interval_sec": interval_sec},
+        population=pop_tier,
+        status=lifecycle_status,
+        algorithm=config.algorithm,
+        feature_count=feature_count,
+        lineage=dict(lineage or {}),
+        metrics_summary={},
+        registered_at=trained_at,
+    )
+    metadata_json_str = meta_obj.to_json(indent=None)
+
     with _connect(data_dir) as conn:
         conn.execute(
             """
@@ -967,8 +1096,10 @@ def record_training_history(
                 mae, rmse, directional_accuracy_pct, composite_score,
                 premium_mae_pct, premium_rmse_pct,
                 medae, p95_error, prediction_bias, prediction_bias_pct,
-                hpo_trials, parameters_changed, changes_json, metrics_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                hpo_trials, parameters_changed, changes_json, metrics_json,
+                task_type, regime_id, regime_name, population, status,
+                context_key, package_model_id, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 parent_history_id,
@@ -1000,6 +1131,14 @@ def record_training_history(
                 parameters_changed,
                 json.dumps(changes),
                 empty_metrics_json,
+                task_type_str,
+                reg_id,
+                reg_name,
+                pop_tier.value,
+                lifecycle_status.value,
+                context_key_str,
+                package_model_id,
+                metadata_json_str,
             ),
         )
         history_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
@@ -1008,6 +1147,7 @@ def record_training_history(
             "SELECT model_id FROM model_registry WHERE model_id = ?",
             (model_id,),
         ).fetchone()
+        regime_scope_val = RegimeScope.ALL_REGIMES.value if reg_id == DEFAULT_REGIME_ID else RegimeScope.SPECIALIZED.value
         if existing:
             family_display = str((lineage or {}).get("ancestor_model_id") or model_id).strip()
             conn.execute(
@@ -1018,10 +1158,30 @@ def record_training_history(
                     current_version_number = ?,
                     updated_on = ?,
                     current_metrics_json = ?,
-                    display_name = ?
+                    display_name = ?,
+                    task_type = ?,
+                    regime_id = ?,
+                    context_key = ?,
+                    champion_model_name = ?,
+                    challenger_model_name = ?,
+                    regime_scope = ?
                 WHERE model_id = ?
                 """,
-                (name, version_label, version_number, now, empty_metrics_json, family_display, model_id),
+                (
+                    name,
+                    version_label,
+                    version_number,
+                    now,
+                    empty_metrics_json,
+                    family_display,
+                    task_type_str,
+                    reg_id,
+                    context_key_str,
+                    name,
+                    parent_name,
+                    regime_scope_val,
+                    model_id,
+                ),
             )
         else:
             family_display = str((lineage or {}).get("ancestor_model_id") or model_id).strip()
@@ -1029,10 +1189,26 @@ def record_training_history(
                 """
                 INSERT INTO model_registry (
                     model_id, display_name, current_model_name, current_version,
-                    current_version_number, status, created_on, updated_on, current_metrics_json
-                ) VALUES (?, ?, ?, ?, ?, 'ready', ?, ?, ?)
+                    current_version_number, status, created_on, updated_on, current_metrics_json,
+                    task_type, regime_id, context_key, champion_model_name, challenger_model_name, regime_scope
+                ) VALUES (?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (model_id, family_display, name, version_label, version_number, trained_at, now, empty_metrics_json),
+                (
+                    model_id,
+                    family_display,
+                    name,
+                    version_label,
+                    version_number,
+                    trained_at,
+                    now,
+                    empty_metrics_json,
+                    task_type_str,
+                    reg_id,
+                    context_key_str,
+                    name,
+                    parent_name,
+                    regime_scope_val,
+                ),
             )
         conn.commit()
 
@@ -1262,3 +1438,80 @@ def delete_history_for_model(data_dir: str, model_name: str) -> None:
         else:
             conn.execute("DELETE FROM model_registry WHERE model_id = ?", (model_id,))
         conn.commit()
+
+
+def get_champion_for_context(data_dir: str, context_key: Any) -> dict[str, Any] | None:
+    """Look up the active champion model package for a specific canonical context key."""
+    key_str = context_key.canonical_key_str() if hasattr(context_key, "canonical_key_str") else str(context_key).strip()
+    with _connect(data_dir) as conn:
+        row = conn.execute(
+            "SELECT * FROM model_registry WHERE context_key = ? ORDER BY updated_on DESC LIMIT 1",
+            (key_str,),
+        ).fetchone()
+        if not row:
+            row = conn.execute(
+                "SELECT * FROM model_registry WHERE model_id = ? ORDER BY updated_on DESC LIMIT 1",
+                (key_str,),
+            ).fetchone()
+    if not row:
+        return None
+    doc = dict(row)
+    doc.pop("current_metrics_json", None)
+    return doc
+
+
+def set_champion_for_context(
+    data_dir: str,
+    context_key: Any,
+    champion_model_name: str,
+    challenger_model_name: str | None = None,
+) -> None:
+    """Set or update the champion and optional challenger for a canonical context key."""
+    key_str = context_key.canonical_key_str() if hasattr(context_key, "canonical_key_str") else str(context_key).strip()
+    champ_safe = safe_model_name(champion_model_name)
+    chall_safe = safe_model_name(challenger_model_name) if challenger_model_name else None
+    now = _utc_now()
+
+    with _connect(data_dir) as conn:
+        existing = conn.execute(
+            "SELECT model_id FROM model_registry WHERE context_key = ? OR model_id = ?",
+            (key_str, key_str),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE model_registry SET
+                    current_model_name = ?,
+                    champion_model_name = ?,
+                    challenger_model_name = ?,
+                    updated_on = ?
+                WHERE model_id = ?
+                """,
+                (champ_safe, champ_safe, chall_safe, now, existing[0]),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO model_registry (
+                    model_id, display_name, current_model_name, current_version,
+                    current_version_number, status, created_on, updated_on, current_metrics_json,
+                    context_key, champion_model_name, challenger_model_name
+                ) VALUES (?, ?, ?, 'v1', 1, 'ready', ?, ?, '{}', ?, ?, ?)
+                """,
+                (key_str, key_str, champ_safe, now, now, key_str, champ_safe, chall_safe),
+            )
+        conn.commit()
+
+
+def list_context_champions(data_dir: str) -> list[dict[str, Any]]:
+    """List all registered champions keyed by context and family."""
+    with _connect(data_dir) as conn:
+        rows = conn.execute(
+            "SELECT * FROM model_registry ORDER BY updated_on DESC",
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d.pop("current_metrics_json", None)
+        out.append(d)
+    return out

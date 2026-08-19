@@ -37,17 +37,18 @@ To ensure total architectural clarity, the subsystem status is defined as follow
 │ • Master Dataset Materialization: Materializes Feature Registry features into Master SQLite.    │
 │ • Experimental Transformations: Manual & Auto Candidate Generation engine.                      │
 │ • Pipeline Registry: Storage of experimental pipelines, candidate lists, and transform configs. │
-│ • Analysis Dataset Export: Parquet dataset creation (Registry + Experimental Candidates).       │
-│ • Model Builder Feature Selection: Selection of features across Registry & Experimental pools.  │
+│ • Analysis Dataset Export: Parquet dataset creation (Registry + Base PL_0001 + Experimental).    │
+│ • Model Builder Feature Selection: Selection across Registry, Base PL_0001, and Experimental.   │
 │ • Cryptographic Provenance: pipeline_snapshot_id for exact replay and unseen validation.        │
+│ • Governed Base Pipeline (PL_0001): Standard baseline transforms and promoted Registry features.│
+│ • Phase 3D Feature Promotion Governance: Governed promotion into Registry and Base Pipeline.    │
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                 FUTURE / NOT YET IMPLEMENTED                                    │
+│                                 PROHIBITED BY GOVERNANCE CONSTITUTION                           │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ • Promotion Engine: Automated workflow to promote validated experimental features to Base.      │
-│ • Base Pipeline Library: Dedicated, stabilized core pipeline feature catalog.                  │
-│ • Standalone Base Pipeline Generator: Dedicated engine for generating fixed Base transforms.    │
+│ • Autonomous Code Mutation: Direct un-governed code modification is strictly prohibited.       │
+│ • Automatic Deletion on REMOVE: Features are governed through formal lifecycle states.          │
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -64,15 +65,15 @@ To ensure total architectural clarity, the subsystem status is defined as follow
                      ┌─────────────────────────────────┼─────────────────────────────────┐
                      ▼                                 ▼                                 ▼
            ┌───────────────────┐             ┌───────────────────┐             ┌───────────────────┐
-           │ Feature Registry  │             │Selected Experim.  │             │   Base Pipeline   │
-           │ (Population 1)    │             │   (Population 2)  │             │ (Future State / 3)│
-           │   [IMPLEMENTED]   │             │   [IMPLEMENTED]   │             │ [NOT YET IMPL.]   │
+           │ Feature Registry  │             │   Base Pipeline   │             │Selected Experim.  │
+           │ (Population 1)    │             │   (Population 2)  │             │   (Population 3)  │
+           │   [IMPLEMENTED]   │             │   [IMPLEMENTED]   │             │   [IMPLEMENTED]   │
            └─────────┬─────────┘             └─────────┬─────────┘             └─────────┬─────────┘
                      │                                 │                                 │
-           • 206 Canonical Features          • Speculative Transforms          • Future Promotion Target
-           • 11 Financial Domains            • Manual & Auto Candidates        • Accepted Candidates
-           • Materialized in Master DB       • Generated in Analysis DB        • Stable Core Library
-           • Scoped by feature_project_id    • Scoped by pipeline_id           • (Promotion Engine Pending)
+           • 206 Canonical Features          • Standard Base Transforms        • Speculative Transforms
+           • 11 Financial Domains            • Governed Promoted Features      • Manual & Auto Candidates
+           • Materialized in Master DB       • Default PL_0001 Pipeline        • Generated in Analysis DB
+           • Scoped by feature_project_id    • Phase 3D.4A Base Promotion      • Scoped by pipeline_id
 ```
 
 ---
@@ -93,13 +94,29 @@ To ensure total architectural clarity, the subsystem status is defined as follow
 
 ---
 
-### 3.2. Population 2: Selected Experimental Pipeline Features (IMPLEMENTED)
+### 3.2. Population 2: Base Pipeline Features (IMPLEMENTED)
+
+| Attribute | Technical Specification |
+|---|---|
+| **What is it?** | Standard deterministic baseline transformations (`lag`, `diff`, `ret`, `interact`) and governed promoted features included in all pipeline-enabled datasets. |
+| **Why does it exist?** | Provides an authoritative, standard feature foundation across all models, ensuring baseline comparability and immunity from experimental candidate blocking. |
+| **Problem solved** | Eliminates redundant reconfiguration of standard lags and basis differences; serves as the permanent target for features promoted via Phase 3D.4A governance. |
+| **Source of Truth** | Base Pipeline record (`PL_0001`) in `pipeline_registry_store.json`. Runtime authority is governed by `pipelines.PL_0001.registry_feature_ids`. |
+| **Materialization** | **Generated dynamically during Analysis Dataset creation** using standard baseline definitions. |
+| **Scoping Mechanism** | Standardized globally under `PL_0001` across all dataset builds. |
+| **Model Selection** | Selected in Create Model **Tab 2: Base Pipeline**. |
+| **Governance & Promotion** | Governed by Phase 3D.4A (`execute_base_pipeline_promotion()`), which promotes graduated Registry features into `PL_0001` with Base Pipeline Immunity. |
+| **Real Examples** | `spot_lag1`, `futures_basis_diff5`, `spot_ret5`, `atm_iv_ce_lag1`, promoted canonical transforms. |
+
+---
+
+### 3.3. Population 3: Selected Experimental Pipeline Features (IMPLEMENTED)
 
 | Attribute | Technical Specification |
 |---|---|
 | **What is it?** | Novel, exploratory transformation features created via interactive Manual configuration or combinatorial Auto Candidate Generation. |
 | **Why does it exist?** | Machine learning research requires hypothesis testing across temporal lags, returns, rolling statistics, quantile buckets, and cross-feature interactions. |
-| **Problem solved** | Allows safe exploration of hundreds of speculative features without modifying the canonical Feature Registry. |
+| **Problem solved** | Allows safe exploration of hundreds of speculative features without modifying the canonical Feature Registry or Base Pipeline. |
 | **Source of Truth** | Experimental Pipeline records (`PL_0002+`) in `pipeline_registry_store.json`. |
 | **Materialization** | **Generated dynamically during Analysis Dataset creation** based on the pipeline's `transformation_config`. |
 | **Scoping Mechanism** | Scoped by **`pipeline_id`** (e.g. `PL_0005`), `pipeline_name`, and immutable **`pipeline_snapshot_id`**. |
@@ -107,16 +124,7 @@ To ensure total architectural clarity, the subsystem status is defined as follow
 | **Missing Handling** | If an experimental pipeline feature cannot be computed or is missing in unseen validation data, Production Validation flags a lineage mismatch. |
 | **Real Examples** | `spot_roll_mean_60`, `atm_iv_ce_zscore_120`, `spot_bucket_5`, `delta_spread_abs`, `pcr_oi_ema_300`. |
 
----
 
-### 3.3. Population 3: Base Pipeline Features (FUTURE / NOT YET IMPLEMENTED)
-
-| Attribute | Conceptual Specification |
-|---|---|
-| **What is it?** | A planned future catalog of accepted, stabilized transformation features that have passed rigorous validation and are promoted into a permanent core library. |
-| **Current Status** | **NOT IMPLEMENTED YET**. Currently exists as an architectural placeholder and UI tab concept. |
-| **Intended Role** | When implemented, high-performing experimental features will be promoted out of exploratory pipelines into the Base Pipeline library so that all models can reuse them as standard features. |
-| **What is NOT Present Today** | There is currently **no active Base Pipeline Generator**, no automated promotion engine, and no separate Base feature materializer. |
 
 ---
 
@@ -395,18 +403,20 @@ The classification engine in [`apps/chain_replay_ml/dataset_builder/feature_sour
 
 ---
 
-## 9. Feature Lifecycle
+## 9. Feature Lifecycle & Population Matrix
 
 ```
-Feature Stage        Feature Registry (IMPLEMENTED)     Selected Experimental (IMPLEMENTED)  Base Pipeline (FUTURE)
+Feature Stage        Feature Registry (Pop 1)           Base Pipeline (Pop 2)              Selected Experimental (Pop 3)
+                     [IMPLEMENTED & VERIFIED]           [IMPLEMENTED & VERIFIED]           [IMPLEMENTED & VERIFIED]
 ----------------------------------------------------------------------------------------------------------------------
-1. Definition        schema_feature_meta.py             Auto / Manual Transform Builder      Promotion from validated candidate
-2. Scoping           feature_project_id                 pipeline_registry_store record       Core library inclusion
-3. Materialization   Master Dataset (SQLite)            Analysis Dataset (Parquet)           (Future core materialization)
-4. Model Selection   Model Builder Tab 1                Model Builder Tab 3                  (Future Model Builder Tab 2)
-5. Model Training    XGBoost Feature Matrix             XGBoost Feature Matrix               XGBoost Feature Matrix
-6. Profiling         Feature Studio Diagnostics         Feature Studio Diagnostics           Feature Studio Diagnostics
-7. Validation        Unseen Dataset Hash Match          Unseen Dataset Hash Match            Unseen Dataset Hash Match
+1. Definition        schema_feature_meta.py             pipeline_registry_store (PL_0001)  Auto / Manual Transform Builder
+2. Scoping           feature_project_id                 Standard Global Baseline           pipeline_registry_store record
+3. Materialization   Master Dataset (SQLite)            Analysis Dataset (Parquet)         Analysis Dataset (Parquet)
+4. Model Selection   Model Builder Tab 1                Model Builder Tab 2                Model Builder Tab 3
+5. Model Training    Model Feature Matrix               Model Feature Matrix               Model Feature Matrix
+6. Profiling         Feature Studio Diagnostics         Feature Studio Diagnostics         Feature Studio Diagnostics
+7. Validation        Unseen Dataset Hash Match          Unseen Dataset Hash Match          Unseen Dataset Hash Match
+8. Governance        Canonical FRxxxx ID Allocation     Phase 3D.4A Governed Promotion     Phase 3A Qualification & 3D.3 Grad
 ```
 
 ---
@@ -442,21 +452,22 @@ Immutable:           FR IDs & Names      Project Identity    Master Schema      
 4. **Snapshot Immutability**: `pipeline_snapshot_id` represents an immutable cryptographic hash of an experimental pipeline definition.
 5. **Deterministic Classification**: Every model feature must belong to exactly one feature-source population.
 6. **Non-Destructive Recommendations**: Feature recommendations (`KEEP`, `WATCH`, `REMOVE`) write to an audit trail and never mutate or delete canonical definitions.
-7. **Base Pipeline Separation**: Base Pipeline is a future lifecycle promotion state, not an active feature generator today.
+7. **Governed Base Pipeline (PL_0001)**: `PL_0001` is the canonical governed production baseline. It contains approved deterministic baseline transforms and features graduated through Phase 3D governance; speculative research occurs outside `PL_0001` in experimental pipelines (`PL_0002+`).
 
 ---
 
 ## 12. Authoritative Comparison Table
 
-| Property | Feature Registry (IMPLEMENTED) | Selected Experimental (IMPLEMENTED) | Base Pipeline (FUTURE / NOT YET IMPL.) |
+| Property | Feature Registry (Pop 1) | Base Pipeline (Pop 2) | Selected Experimental (Pop 3) |
 |---|---|---|---|
-| **Purpose** | Core market state & Greek representation | Exploratory hypothesis testing & research | Accepted, stabilized core library |
-| **Status** | **CURRENT / IMPLEMENTED** | **CURRENT / IMPLEMENTED** | **FUTURE LIFECYCLE TARGET** |
-| **Source of Truth** | Canonical Registry (`schema_feature_meta.py`) | `pipeline_registry_store.json` (`PL_0002+`) | (Future Promoted Catalog) |
-| **Created By** | System Engine / Quant Extractor | Manual Builder / Auto Combinatorial Batch | Promotion from validated experimental |
-| **Scoping Key** | `feature_project_id` | `pipeline_id` + `pipeline_snapshot_id` | Core platform inclusion |
-| **Snapshot Hash** | None (Static Schema) | Cryptographic SHA256 (`pipeline_snapshot_id`) | Immutable Library Version |
+| **Purpose** | Canonical market state & Greek representation | Standard baseline & governed promoted assets | Exploratory hypothesis testing & research |
+| **Status** | **IMPLEMENTED & VERIFIED** | **IMPLEMENTED & VERIFIED** | **IMPLEMENTED & VERIFIED** |
+| **Source of Truth** | Canonical Schema (`schema_feature_meta.py`) | `pipeline_registry_store.json` (`PL_0001`) | `pipeline_registry_store.json` (`PL_0002+`) |
+| **Created By** | System Engine / Quant Extractor | Default Baseline + Phase 3D.4A Promotion | Manual Builder / Auto Combinatorial Batch |
+| **Scoping Key** | `feature_project_id` | Standard Global Baseline (`PL_0001`) | `pipeline_id` + `pipeline_snapshot_id` |
+| **Snapshot Hash** | None (Static Schema) | Governed Baseline Version | Cryptographic SHA256 (`pipeline_snapshot_id`) |
 | **Stored in Master DB** | **YES (SQLite Table)** | **NO** | **NO** |
-| **Generated in Analysis**| Read from Master SQLite | **YES (Generated in Parquet)** | (Future standard inclusion) |
-| **Model Selection** | Model Builder Tab 1 | Model Builder Tab 3 | (Future Model Builder Tab 2) |
-| **Representative Example**| `atm_iv_ce` | `spot_roll_mean_60` | (Promoted candidate feature) |
+| **Generated in Analysis**| Read from Master SQLite | **YES (Generated in Parquet)** | **YES (Generated in Parquet)** |
+| **Model Selection** | Model Builder Tab 1 | Model Builder Tab 2 | Model Builder Tab 3 |
+| **Governance Boundary** | Canonical FRxxxx ID Allocation | Phase 3D.4A Governed Promotion | Phase 3A Qualification & 3D.3 Graduation |
+| **Representative Example**| `atm_iv_ce` | `spot_lag1`, `futures_basis_diff5` | `spot_roll_mean_60`, `spot_bucket_5` |

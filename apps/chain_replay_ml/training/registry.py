@@ -1261,6 +1261,25 @@ def _table_row(data_dir: str, entry: str, pkg: str) -> dict[str, Any]:
         "experiment_id": doc.get("experiment_id") or config.get("experiment_id"),
     }
     row["registry_family"] = resolve_model_registry_family(row)
+    # Phase 4C.2: Model Taxonomy Resolution (zero package JSON mutations)
+    try:
+        from ..model_taxonomy import resolve_model_metadata_or_legacy
+        meta_obj = resolve_model_metadata_or_legacy(doc, fallback_model_name=str(model_name))
+        row["task_type"] = meta_obj.task.task_type.value
+        row["regime_id"] = meta_obj.regime.regime_id
+        row["regime_name"] = meta_obj.regime.regime_name
+        row["population"] = meta_obj.population.value
+        row["lifecycle_status"] = meta_obj.status.value
+        row["context_key"] = meta_obj.context_key.canonical_key_str()
+        row["package_model_id"] = meta_obj.model_id
+    except Exception:
+        row["task_type"] = "DIRECTION_CLASSIFIER" if "label" in str(doc.get("target") or "") else "REGRESSION"
+        row["regime_id"] = "R000"
+        row["regime_name"] = "ALL_REGIMES"
+        row["population"] = "EXPERIMENTAL"
+        row["lifecycle_status"] = "ACTIVE"
+        row["context_key"] = f"NIFTY_3s_{row['task_type']}_5m_R000"
+        row["package_model_id"] = str(model_name)
     # Phase X — live disk status (models remain listed if sources deleted).
     ds_name = str(row.get("dataset") or "").strip()
     run_id = str(row.get("label_run_id") or "").strip()

@@ -1,12 +1,16 @@
 # AruMLStudio Feature Recommendation Lifecycle & Evidence Subsystem
-## Master Architectural & Technical Reference (Phase 1 + Phase 2A + Phase 2B)
+## Master Architectural & Technical Reference (Phases 1, 2A, 2B, 3A, 3B, 3C, 3D)
 
 > **Document Status**: AUTHORITATIVE MASTER LIFECYCLE SPECIFICATION  
-> **Target Subsystem**: Feature Recommendation Lifecycle & Evidence Subsystem  
-> **Subsystems Implemented & Verified**:  
+> **Target Subsystem**: Feature Recommendation Lifecycle, Decision Engine & Governance Subsystem  
+> **Subsystems Implemented & Verified (210/210 Tests Passing)**:  
 > - **Phase 1**: SQLite Evidence DB, Bounded Evidence Scoring, Dual Projections, Candidate Elimination Gate, Configurable Policy Settings, Versioning & Rollback  
 > - **Phase 2A**: Evidence Intelligence (Confidence Saturation, Multi-Model Consensus, Strict SPLIT Tie Handling, Validation Freshness, Operational Priority Score, Advisory Rank)  
 > - **Phase 2B**: Behavioral Stability (Score Volatility $\sigma_S$, Score Range Spread $\Delta S$, Direction Flips $D_{\text{flips}}$), Level-1 Cross-Context Generalization Index ($G$), Explicit Risk Badges (`[DEGRADED]`, `[SPLIT]`, `[STALE]`, `[UNSTABLE]`)  
+> - **Phase 3A**: Recommendation-to-Training Decision Engine (`training_decision_engine.py`, 4-state qualification `TRAIN_CANDIDATE`, `REVIEW`, `NEW_UNSEEN`, `EXCLUDE`, and `[PROMOTION]` qualification)  
+> - **Phase 3B**: Evidence Studio UI Integration (Decision column, Reason Inspector dialog, badge styling)  
+> - **Phase 3C**: Model Builder Preset Handoff & Closed-Loop Training Provenance (`model_builder_handoff.py`, `training_provenance_meta.json`)  
+> - **Phase 3D**: Feature Promotion, Graduation & Deprecation Governance (Dossier compilation 3D.1, Governance UI 3D.2, Atomic Registry Graduation 3D.3, Base Pipeline Promotion 3D.4A, Feature Deprecation 3D.4B, Multi-Mode Governance UI 3D.4C)  
 >
 > **Master Documentation Architecture**:
 > ```
@@ -14,9 +18,10 @@
 >   ├── 8.1 — Scoring & Lifecycle Policy (docs/08.1-FEATURE_RECOMMENDATION_SCORING_LIFECYCLE_POLICY.md)
 >   ├── 8.2 — Policy Settings & Versioning (docs/08.2-FEATURE_RECOMMENDATION_POLICY_SETTINGS.md)
 >   ├── 8.3 — Phase 2A — Evidence Intelligence (docs/08.3-FEATURE_RECOMMENDATION_PHASE_2A_EVIDENCE_INTELLIGENCE.md)
->   └── 8.4 — Phase 2B — Stability, Risk & Generalization (docs/08.4-FEATURE_RECOMMENDATION_PHASE_2B_STABILITY_RISK_GENERALIZATION.md)
+>   ├── 8.4 — Phase 2B — Stability, Risk & Generalization (docs/08.4-FEATURE_RECOMMENDATION_PHASE_2B_STABILITY_RISK_GENERALIZATION.md)
+>   ├── 8.5 — Phase 3A/3B/3C — Decision Engine & Training Handoff (docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md)
+>   └── 8.6 — Phase 3D — Feature Promotion, Graduation & Governance (docs/08.6-FEATURE_PROMOTION_GRADUATION_GOVERNANCE.md)
 > ```
-> **Future Subsystems**: Phase 3 (Recommendation-to-Training Decision Engine) is documented separately in [`docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md) as a PROPOSED architectural design.
 
 ---
 
@@ -319,15 +324,19 @@ Verified through read-only mathematical consistency audits against the SQLite Ev
 │ Phase 1 (Evidence DB, Policy Settings & Gating)        │ ✅ IMPLEMENTED & VERIFIED     │
 │ Phase 2A (Evidence Intelligence & Dual Ranking)        │ ✅ IMPLEMENTED & VERIFIED     │
 │ Phase 2B (Stability, Risk Badges & Level-1 Gen Index)  │ ✅ IMPLEMENTED & VERIFIED     │
-│ Phase 3 (Recommendation-to-Training Decision Engine)   │ 🔵 FUTURE / PROPOSED ONLY     │
+│ Phase 3A (Recommendation-to-Training Decision Engine)   │ ✅ IMPLEMENTED & VERIFIED     │
+│ Phase 3B (Evidence Studio UI & Reason Inspector)       │ ✅ IMPLEMENTED & VERIFIED     │
+│ Phase 3C (Model Builder Handoff & Provenance Tracking) │ ✅ IMPLEMENTED & VERIFIED     │
+│ Phase 3D (Promotion, Graduation & Deprecation Gov)     │ ✅ IMPLEMENTED & VERIFIED     │
 └────────────────────────────────────────────────────────┴───────────────────────────────┘
 ```
 
 ---
 
-## 14. Phase 3 Placeholder: Recommendation-to-Training Decision Engine `[FUTURE / PROPOSED]`
+## 14. Phase 3 & Phase 3D Architecture: Decision Engine & Human Governance `[IMPLEMENTED & VERIFIED]`
 
 > [!NOTE]
-> **Phase 3 Scope**: The Recommendation-to-Training Decision Engine is an architectural design for automated training candidate qualification (`TRAIN_CANDIDATE`, `REVIEW`, `EXCLUDE`), `NEW / UNSEEN` candidate lifecycle handling, and direct Model Builder preset handoff.
+> **Phase 3 & Phase 3D Scope**: The Recommendation-to-Training Decision Engine and Promotion/Graduation Governance subsystems are fully implemented and verified across the codebase with **210/210 passing tests**.
 > 
-> Phase 3 is **NOT implemented** in the current operational codebase and is documented in full in [`docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md).
+> - **Phase 3A/3B/3C**: Fully documented in [`docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.5-RECOMMENDATION_TO_TRAINING_DECISION_ENGINE.md). Provides context-scoped 4-state qualification (`TRAIN_CANDIDATE`, `REVIEW`, `NEW_UNSEEN`, `EXCLUDE`), Reason Inspector UI, and Model Builder preset export (`save_feature_preset()`).
+> - **Phase 3D**: Fully documented in [`docs/08.6-FEATURE_PROMOTION_GRADUATION_GOVERNANCE.md`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/08.6-FEATURE_PROMOTION_GRADUATION_GOVERNANCE.md). Provides evidence dossier compilation, human governance review dialog, atomic Registry Graduation (`FRxxxx`), Base Pipeline Promotion (`PL_0001`), and feature deprecation governance.

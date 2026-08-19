@@ -1098,9 +1098,33 @@ def render_overview(
     nb.add(tab_features, text="Top 20 Features")
     nb.add(tab_fp, text="Pipeline Fingerprint")
 
+    # Phase 4C.4: Taxonomy & Context Champion Resolution
+    tax_info = {}
+    champ_for_ctx = "—"
+    chall_for_ctx = "—"
+    try:
+        from chain_replay_ml.model_taxonomy import format_model_taxonomy_display
+        from chain_replay_ml.training.lifecycle_store import get_champion_for_context
+        data_source_dir = chart_dir or (doc.get("data_dir") if isinstance(doc.get("data_dir"), str) else "")
+        tax_info = format_model_taxonomy_display(row or meta or cfg or doc)
+        if data_source_dir and tax_info.get("context_key"):
+            champ_doc = get_champion_for_context(data_source_dir, tax_info["context_key"])
+            if champ_doc:
+                champ_for_ctx = str(champ_doc.get("champion_model_name") or champ_doc.get("current_model_name") or "—")
+                chall_for_ctx = str(champ_doc.get("challenger_model_name") or "—")
+    except Exception:
+        tax_info = {}
+
     inline_spec_rows(
         tab_summary,
         [
+            ("Task Type", tax_info.get("task_label") or meta.get("task_type") or "Regression"),
+            ("Market Regime", tax_info.get("regime_display") or "R000 — ALL_REGIMES"),
+            ("Population Tier", tax_info.get("population_badge") or "EXPERIMENTAL"),
+            ("Lifecycle Status", tax_info.get("lifecycle_label") or row.get("status") or "Active"),
+            ("Context Key", tax_info.get("context_key") or "—"),
+            ("Context Champion", champ_for_ctx),
+            ("Context Challenger", chall_for_ctx),
             ("Validation strategy", _strat_label(doc)),
             ("Algorithm", meta.get("algorithm") or cfg.get("algorithm_label") or cfg.get("algorithm")),
             ("Dataset", meta.get("dataset") or cfg.get("dataset") or row.get("dataset")),
@@ -2376,6 +2400,53 @@ def render_model_research(
             ("Best PF", fmt_num(portfolio.get("best_pf"))),
             ("Certification", str(portfolio.get("certification") or "-")),
         ])
+
+    # Phase 4D: Persistent Research Memory & Multi-Model Robustness Scorecard
+    try:
+        from chain_replay_ml.research_memory.db import connect_analysis_db
+        from chain_replay_ml.research_memory.ranking import rank_models_in_context
+
+        conn = connect_analysis_db(data_dir)
+        try:
+            bm_row = conn.execute(
+                "SELECT * FROM model_benchmarks WHERE model_name = ? ORDER BY created_at DESC LIMIT 1;",
+                (model_name,),
+            ).fetchone()
+            if bm_row:
+                sig_hash = bm_row["signature_hash"]
+                ctx_key = bm_row["context_key"]
+                section_title(parent, "Phase 4D Research Memory & Robustness Scorecard")
+                dossiers = rank_models_in_context(data_dir, ctx_key)
+                target_d = next((d for d in dossiers if d["signature_hash"] == sig_hash), None)
+                if target_d:
+                    score = target_d.get("robustness_score", 0.0)
+                    p_rank = target_d.get("pareto_rank", 1)
+                    kv_block(parent, "Robustness Summary", [
+                        ("Context Key", ctx_key),
+                        ("Robustness Score", f"{score:.2f} / 100.00"),
+                        ("Pareto Rank", f"Tier {p_rank}"),
+                        ("Recommendation", target_d.get("recommendation_status", "VALIDATED")),
+                        ("Policy", target_d.get("ranking_policy_version", "ROB_POLICY_v1.0")),
+                    ])
+                    breakdown = target_d.get("score_breakdown", {})
+                    p_rows = [
+                        ("Base Performance", f"+{breakdown.get('base_performance_contribution', 0.0):.2f} pts"),
+                        ("Fold Variance Penalty", f"{breakdown.get('fold_variance_penalty', 0.0):.2f} pts"),
+                        ("Worst Fold Drawdown Penalty", f"{breakdown.get('worst_fold_penalty', 0.0):.2f} pts"),
+                        ("Calibration (ECE) Penalty", f"{breakdown.get('calibration_penalty', 0.0):.2f} pts"),
+                        ("Regime Degradation Penalty", f"{breakdown.get('regime_degradation_penalty', 0.0):.2f} pts"),
+                        ("Experimental Risk Penalty", f"{breakdown.get('experimental_risk_penalty', 0.0):.2f} pts"),
+                        ("Parsimony Penalty", f"{breakdown.get('parsimony_penalty', 0.0):.2f} pts"),
+                    ]
+                    data_table(
+                        parent,
+                        [("dim", "Evaluation Dimension", 240), ("impact", "Score Impact", 160)],
+                        p_rows,
+                    )
+        finally:
+            conn.close()
+    except Exception:
+        pass
 
 
 def _holdout_feature_mean(val: Any) -> str:

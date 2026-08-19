@@ -36,8 +36,8 @@ open_model_lab_window()  [apps/master_dataset_tk/model_lab_window.py#L8566]
 ModelLabWindow.__init__() ──► ModelLabWindow._begin_async_open(ensure_lab=True)
                                    │
                                    ▼
-                   ModelLabStore.open() / ensure_schema()
-             (Connects to D:\data\model_research\model_lab_<name>_v1.db)
+                    ModelLabStore.open() / ensure_schema()
+              (Connects to <data_dir>/model_research/model_lab_<name>_v1.db)
 ```
 
 ---
@@ -46,8 +46,8 @@ ModelLabWindow.__init__() ──► ModelLabWindow._begin_async_open(ensure_lab=
 
 Every model opened in Research Lab is assigned a dedicated, isolated SQLite database file:
 
-- **Database Path**: `<model_research_dir>/model_lab_{safe_model_name(model_name)}_v{version}.db`
-- **Default Location**: `D:\data\model_research\` (resolved via [`apps/chain_replay_ml/model_lab/paths.py#L44`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/model_lab/paths.py#L44)).
+- **Database Path**: `<data_dir>/model_research/model_lab_{safe_model_name(model_name)}_v{version}.db`
+- **Location Resolution**: Resolved dynamically via `resolve_model_research_dir(data_dir)` in [`apps/chain_replay_ml/model_lab/paths.py`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/apps/chain_replay_ml/model_lab/paths.py), pointing to `<data_dir>/model_research/` within the active workspace.
 - **Version Management**: `next_lab_version()` increments `_v1.db`, `_v2.db` if multiple research labs are created for the same parent model.
 
 ### 3.1. Metadata Read by Research Lab at Startup
@@ -258,7 +258,7 @@ Calculates predicted_future_ltp, actual_future_ltp, MFE, MAE, time_to_target
 prediction_io.write_prediction_rows_chunk()  [prediction_io.py]
      │
      ▼
-Inserts rows into SQLite table: prediction_dataset (D:\data\model_research\model_lab_<name>_v1.db)
+Inserts rows into SQLite table: prediction_dataset (<data_dir>/model_research/model_lab_<name>_v1.db)
      │
      ▼
 Research Dashboard & Strategy Simulator query prediction_dataset to display live trade curves
@@ -266,21 +266,23 @@ Research Dashboard & Strategy Simulator query prediction_dataset to display live
 
 ---
 
-## 11. Current Implementation vs. Not Implemented vs. Open Questions
+## 11. Current Implementation vs. Future Roadmap
 
 ### 11.1. CURRENTLY IMPLEMENTED (Verified from Source)
 1. **Open Research Button**: Wired in `ModelRegistryPanel` to invoke `open_model_lab_window()` with `ensure_lab=True`.
-2. **Model Lab SQLite Workspace**: Automatically creates and maintains `D:\data\model_research\model_lab_<name>_v1.db`.
+2. **Model Lab SQLite Workspace**: Automatically creates and maintains `<data_dir>/model_research/model_lab_<name>_v1.db`.
 3. **Prediction Generation**: Parallel multi-worker batch inference generating tick-level predictions, `maximum_profit` (MFE), `maximum_drawdown` (MAE), `time_to_target`, `direction_correct`, and `rr_1_1_hit` through `rr_1_4_hit`.
 4. **Strategy Simulator & Confidence Builder**: Full interactive trade simulation, equity curve visualization, strike analysis, and secondary confidence classifier training.
+5. **Model Taxonomy Foundation (Phase 4C.1 — IMPLEMENTED)**: Canonical 4-dimensional taxonomy (`apps/chain_replay_ml/model_taxonomy/`) providing Task Type, Regime, Population Tier, and Lifecycle Status data contracts.
 
 ### 11.2. FEATURE STUDIO CONNECTIONS (Verified Findings)
 - **Direct Code Connection**: **NONE**. Neither subsystem imports or calls the other.
 - **Indirect Connection**: Both subsystems are consumers of the same parent model package (`models/<model_name>/`), reading `config.json` and selected feature column names.
 
-### 11.3. NOT CONNECTED / NOT IMPLEMENTED IN SOURCE
-1. **No Three-Source Feature Splitting**: Research Lab treats all selected features as a flat string list; it does not visually partition features into Feature Registry, Base Pipeline, or Selected Experimental.
-2. **No Production Validation Recommendations Feed**: Research Lab prediction results do not directly update `feature_recommendation_history.json` or assign `KEEP/WATCH/REMOVE` recommendations (which is strictly the domain of Production Validation).
+### 11.3. PLANNED SUBSYSTEMS (Future Phases)
+1. **Faceted Filtering & Population Awareness (Phase 4C.4 — PLANNED)**: Multi-dimensional filtering by Task Type, Regime, Population Tier, and Status in Model Registry and Research Lab.
+2. **Persistent Multi-Model Benchmarking (Phase 4D — PLANNED)**: Historical cross-model evaluations in `analysis.db`.
+3. **Strategy Evidence Bridge (Phase 4F — PLANNED)**: Isolated simulation performance ledger linked to research records.
 
-### 11.4. OPEN QUESTIONS
-1. **Storage Mode Transition**: The codebase supports both `FEATURE_STORAGE_REFERENCED` (`master_row_id` joined to Master DB) and legacy `FEATURE_STORAGE_EMBEDDED` (`sf_*` columns stored in `prediction_dataset`). Future dataset migrations may fully deprecate embedded mode to minimize disk usage.
+### 11.4. STORAGE MODE
+1. **Storage Mode**: The codebase supports both `FEATURE_STORAGE_REFERENCED` (`master_row_id` joined to Master DB) and legacy `FEATURE_STORAGE_EMBEDDED` (`sf_*` columns stored in `prediction_dataset`). Future dataset migrations may fully deprecate embedded mode to minimize disk usage.

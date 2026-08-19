@@ -36,19 +36,19 @@ AruMLStudio enforces a strict architectural decoupling between **Historical Life
 
 ---
 
-## 2. Distinction: Analysis Exclusion vs. Production Validation REMOVE vs. Historical BLOCKED
+## 2. Distinction: Local Analysis Selection vs. PV REMOVE vs. Phase 3A Context EXCLUDE
 
 The system maintains precise, non-overlapping semantic definitions across the lifecycle:
 
 $$\begin{aligned}
-\mathbf{Analysis\ EXCLUDED} &\ne \mathbf{Production\ Validation\ REMOVE} \ne \mathbf{Historical\ BLOCKED}
+\mathbf{Local\ Analysis\ Deselection} &\ne \mathbf{PV\ REMOVE} \ne \mathbf{Phase\ 3A\ Context\ EXCLUDE}
 \end{aligned}$$
 
 | State | Originating Subsystem | Meaning | Persistent Impact |
 |---|---|---|---|
-| **Analysis EXCLUDED** | Layer 2 — Feature Analysis Lab | Feature was omitted from the final model selection bundle (e.g. dropped due to pairwise correlation $\ge 0.95$ or superseded by a higher-scoring HCA family representative). | **None on Evidence DB**. Feature remains available in the Analysis Dataset and can be included in other models. Does **not** write to SQLite or emit recommendations. |
-| **PV REMOVE** | Production Validation | Feature exhibited severe rank collapse ($\Delta R \le -5$), large relative importance drop ($\ge 50\%$), and distribution drift ($\ge 1$) when forward-tested on **true unseen trading days**. | **Persisted to `recommendation_evidence`**. Contributes to accumulated negative evidence scores and streak counts. |
-| **Historical BLOCKED** | Layer 1 — Pre-Training Elimination Gate | An Experimental feature accumulated $\ge 2$ consecutive REMOVEs or $\ge 4$ total REMOVEs in `feature_context_summary`. | **Active Gate**. Automatically rejected during Auto Candidate Generation before expensive parquet materialization. |
+| **Local Model Deselection** (Analysis UI) | Layer 2 — Feature Analysis Lab | Feature was unchecked/omitted from a single model selection preset (e.g. dropped due to pairwise correlation $\ge 0.95$ or superseded by an HCA family representative). | **None on Evidence DB**. Feature remains available in the Analysis Dataset and can be included in other models. Does **not** write to SQLite or emit recommendations. |
+| **PV REMOVE** | Production Validation | Feature exhibited severe rank collapse ($\Delta R \le -5$), large relative importance drop ($\ge 50\%$), and distribution drift ($\ge 1$) when forward-tested on **true unseen trading days**. | **Persisted to `recommendation_evidence`**. Raw event contributing to accumulated negative evidence scores and streak counts. |
+| **Phase 3A Context EXCLUDE** (Elimination Gate) | Phase 3A Decision Engine | An Experimental feature accumulated persistent negative evidence ($S \le -40.0$, repeated REMOVEs, or deprecated status) in `feature_context_summary`. | **Active Context Gate**. Automatically rejected during Auto Candidate Generation and blocked from training candidate sets in that context. |
 
 ---
 

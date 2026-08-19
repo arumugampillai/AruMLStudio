@@ -359,8 +359,8 @@ The companion JSON metadata file (`analysis_*.json`) stores the complete lineage
 | `feature_project_id` | `str` | Master Dataset / Config | Model Builder, Unseen Verifier |
 | `registry_export_features` | `list[str]` | Master Registry Export | Feature Classification Engine |
 | `registry_export_count` | `int` | Master Registry Export | UI Header & Stats |
-| `base_pipeline_export_features` | `list[str]` | Base Pipeline Generator | Feature Sources Catalog |
-| `base_pipeline_export_count` | `int` | Base Pipeline Generator | UI Header & Stats |
+| `base_pipeline_export_features` | `list[str]` | Base Pipeline (`PL_0001`) Engine | Feature Sources Catalog |
+| `base_pipeline_export_count` | `int` | Base Pipeline (`PL_0001`) Engine | UI Header & Stats |
 | `pipeline_id` | `str` | Selected Experimental Pipeline | Training Engine, Lineage Verifier |
 | `pipeline_name` | `str` | Pipeline Registry | Display Headers |
 | `pipeline_snapshot_id` | `str` | `build_pipeline_snapshot` | Unseen Dataset Generator |

@@ -25,6 +25,7 @@ from .model_registry_detail import (
 )
 from .lazy_panel import LazyLoadMixin
 from .model_registry_strategy import ModelRegistryStrategyPanel
+from .model_research_leaderboard_panel import ModelResearchLeaderboardPanel
 from .model_registry_widgets import ACCENT, COL_MUTED, COL_WARN, ScrollableFrame, fmt_num, fmt_pct, section_desc, section_title
 from .ui_state import get_ui_state_manager
 from chain_replay_ml.dataset_builder.expected_spec import format_sampling_interval_label
@@ -251,6 +252,72 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         if self._on_compare_models:
             self._compare_btn = ttk.Button(toolbar_right, text="Compare", command=self._open_compare)
 
+        # Phase 4C.4: Faceted Taxonomy & Population Filter Bar
+        facet_bar = ttk.LabelFrame(self, text="Taxonomy & Population Filters", padding=(6, 4))
+        facet_bar.pack(fill="x", padx=8, pady=(0, 4))
+
+        # Task Type Filter
+        ttk.Label(facet_bar, text="Task:").pack(side="left", padx=(2, 2))
+        self._filter_task_var = tk.StringVar(value="All Tasks")
+        self._task_combo = ttk.Combobox(
+            facet_bar,
+            textvariable=self._filter_task_var,
+            state="readonly",
+            width=18,
+            values=[
+                "All Tasks",
+                "DIRECTION_CLASSIFIER",
+                "REGIME_CLASSIFIER",
+                "REGRESSION",
+                "TRIPLE_BARRIER",
+                "CONFIDENCE_CLASSIFIER",
+                "VOLATILITY_ESTIMATOR",
+            ],
+        )
+        self._task_combo.pack(side="left", padx=(0, 6))
+        self._task_combo.bind("<<ComboboxSelected>>", lambda _e: self._populate_models_tree())
+
+        # Regime Filter
+        ttk.Label(facet_bar, text="Regime:").pack(side="left", padx=(2, 2))
+        self._filter_regime_var = tk.StringVar(value="All Regimes")
+        self._regime_combo = ttk.Combobox(
+            facet_bar,
+            textvariable=self._filter_regime_var,
+            state="readonly",
+            width=22,
+            values=self._get_regime_filter_options(),
+        )
+        self._regime_combo.pack(side="left", padx=(0, 6))
+        self._regime_combo.bind("<<ComboboxSelected>>", lambda _e: self._populate_models_tree())
+
+        # Population Filter
+        ttk.Label(facet_bar, text="Population:").pack(side="left", padx=(2, 2))
+        self._filter_pop_var = tk.StringVar(value="All Populations")
+        self._pop_combo = ttk.Combobox(
+            facet_bar,
+            textvariable=self._filter_pop_var,
+            state="readonly",
+            width=15,
+            values=["All Populations", "CHAMPION", "CHALLENGER", "VALIDATED", "EXPERIMENTAL"],
+        )
+        self._pop_combo.pack(side="left", padx=(0, 6))
+        self._pop_combo.bind("<<ComboboxSelected>>", lambda _e: self._populate_models_tree())
+
+        # Lifecycle Filter
+        ttk.Label(facet_bar, text="Lifecycle:").pack(side="left", padx=(2, 2))
+        self._filter_lc_var = tk.StringVar(value="All Statuses")
+        self._lc_combo = ttk.Combobox(
+            facet_bar,
+            textvariable=self._filter_lc_var,
+            state="readonly",
+            width=12,
+            values=["All Statuses", "ACTIVE", "CANDIDATE", "DEGRADED", "DEPRECATED", "RETIRED"],
+        )
+        self._lc_combo.pack(side="left", padx=(0, 6))
+        self._lc_combo.bind("<<ComboboxSelected>>", lambda _e: self._populate_models_tree())
+
+        ttk.Button(facet_bar, text="Reset", command=self._reset_filters).pack(side="right", padx=2)
+
         paned = ttk.Panedwindow(self, orient=tk.VERTICAL)
         paned.pack(fill="both", expand=True, padx=8, pady=4)
 
@@ -264,6 +331,7 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
             (
                 ("regression", "Regression"),
                 ("triple_barrier", "Triple Barrier"),
+                ("research_leaderboard", "Research Leaderboard"),
             )
         ):
             frame = ttk.Frame(self._models_family_nb)
@@ -271,10 +339,15 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
             self._models_family_tab_ids[key] = idx
         self._models_family_nb.bind("<<NotebookTabChanged>>", self._on_models_family_tab_changed)
 
-        tree_host = ttk.Frame(table_frame)
-        tree_host.pack(fill="both", expand=True)
+        self._tree_host = ttk.Frame(table_frame)
+        self._tree_host.pack(fill="both", expand=True)
+        self._leaderboard_panel = ModelResearchLeaderboardPanel(table_frame, chart_dir=self.chart_dir, on_select_model=self.select_model)
+        tree_host = self._tree_host
         cols = (
             "name",
+            "task",
+            "regime",
+            "pop",
             "strategy",
             "dataset",
             "ds_st",
@@ -299,20 +372,23 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
             selectmode="extended",
         )
         for c, w, label in (
-            ("name", 180, "Model"),
-            ("strategy", 72, "Valid"),
-            ("dataset", 280, "Dataset"),
-            ("ds_st", 64, "DS"),
-            ("label_run", 120, "Label Run"),
-            ("lab_st", 64, "Label"),
+            ("name", 160, "Model"),
+            ("task", 75, "Task"),
+            ("regime", 90, "Regime"),
+            ("pop", 100, "Population"),
+            ("strategy", 65, "Valid"),
+            ("dataset", 220, "Dataset"),
+            ("ds_st", 50, "DS"),
+            ("label_run", 100, "Label Run"),
+            ("lab_st", 50, "Label"),
             ("target", 56, "Trgt"),
             ("fc", 40, "FC"),
-            ("interval", 52, "Interval"),
-            ("m1", 72, "MAE"),
+            ("interval", 48, "Interval"),
+            ("m1", 64, "MAE"),
             ("m2", 64, "RMSE"),
             ("m3", 64, "Dir %"),
             ("m4", 72, "ROC-AUC"),
-            ("size", 56, "Size"),
+            ("size", 52, "Size"),
             ("research", 64, "Research"),
             ("delete", 52, "Delete"),
         ):
@@ -390,8 +466,15 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
 
     def _on_models_family_tab_changed(self, _event: object | None = None) -> None:
         self._models_family = self._models_family_from_notebook()
-        self._sync_models_metric_columns()
-        self._populate_models_tree(select_first=False)
+        if self._models_family == "research_leaderboard":
+            self._tree_host.pack_forget()
+            self._leaderboard_panel.pack(fill="both", expand=True)
+            self._leaderboard_panel.refresh_leaderboard()
+        else:
+            self._leaderboard_panel.pack_forget()
+            self._tree_host.pack(fill="both", expand=True)
+            self._sync_models_metric_columns()
+            self._populate_models_tree(select_first=False)
 
     def _sync_models_metric_columns(self) -> None:
         """Swap list metric headers / visible columns for Regression vs Triple Barrier."""
@@ -406,6 +489,9 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
             # TB: drop Dataset / Target / Label status — Label Run stays.
             display = (
                 "name",
+                "task",
+                "regime",
+                "pop",
                 "strategy",
                 "ds_st",
                 "label_run",
@@ -419,7 +505,7 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
                 "research",
                 "delete",
             )
-            name_width = 212  # prior TB 184 +15%
+            name_width = 180
         else:
             headings = (
                 ("m1", 64, "MAE"),
@@ -430,6 +516,9 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
             # Label Run / DS status columns are OLE/TB-focused — hide on Regression.
             display = (
                 "name",
+                "task",
+                "regime",
+                "pop",
                 "strategy",
                 "dataset",
                 "target",
@@ -442,7 +531,7 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
                 "research",
                 "delete",
             )
-            name_width = 238  # prior Regression 207 +15%
+            name_width = 180
         for cid, width, label in headings:
             self.models_tree.heading(cid, text=label)
             self.models_tree.column(
@@ -453,17 +542,58 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
                 stretch=False,
             )
         self.models_tree.column("name", width=name_width, anchor="w", stretch=True)
+        self.models_tree.heading("task", text="Task")
+        self.models_tree.column("task", width=75, anchor="center", stretch=False)
+        self.models_tree.heading("regime", text="Regime")
+        self.models_tree.column("regime", width=85, anchor="center", stretch=False)
+        self.models_tree.heading("pop", text="Population")
+        self.models_tree.column("pop", width=105, anchor="center", stretch=False)
         self.models_tree.heading("strategy", text="Valid")
-        self.models_tree.column("strategy", width=72, anchor="center", stretch=False)
+        self.models_tree.column("strategy", width=65, anchor="center", stretch=False)
         self.models_tree.heading("target", text="Trgt")
         self.models_tree.column("target", width=56, anchor="w", stretch=False)
         # Dataset needs room for full names (e.g. analysis_206r_193p_3s_…).
         if not is_tb:
-            self.models_tree.column("dataset", width=280, minwidth=200, anchor="w", stretch=False)
+            self.models_tree.column("dataset", width=240, minwidth=180, anchor="w", stretch=False)
         try:
             self.models_tree.configure(displaycolumns=display)
         except tk.TclError:
             pass
+
+    def _get_regime_filter_options(self) -> list[str]:
+        options = ["All Regimes"]
+        try:
+            from chain_replay_ml.model_taxonomy import list_regimes
+            data_dir = self._data_dir()
+            if data_dir:
+                regs = list_regimes(data_dir, include_retired=True)
+                for r in regs:
+                    options.append(f"{r['regime_id']} — {r['regime_name']}")
+        except Exception:
+            pass
+        if len(options) == 1:
+            options.extend([
+                "R000 — ALL_REGIMES",
+                "R001 — TREND",
+                "R002 — SIDEWAYS",
+                "R003 — HIGH_VOLATILITY",
+                "R004 — LOW_VOLATILITY",
+                "R005 — BREAKOUT",
+                "R006 — REVERSAL",
+                "R007 — EXPIRY_PINNING",
+            ])
+        return options
+
+    def _reset_filters(self) -> None:
+        if hasattr(self, "_filter_task_var"):
+            self._filter_task_var.set("All Tasks")
+        if hasattr(self, "_filter_regime_var"):
+            self._filter_regime_var.set("All Regimes")
+        if hasattr(self, "_filter_pop_var"):
+            self._filter_pop_var.set("All Populations")
+        if hasattr(self, "_filter_lc_var"):
+            self._filter_lc_var.set("All Statuses")
+        self._populate_models_tree()
 
     def _fit_dataset_column(self, rows: list[dict[str, Any]]) -> None:
         """Size Dataset column so the longest name fits without ellipsis."""
@@ -484,10 +614,31 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         self.models_tree.column("dataset", width=width, minwidth=width, anchor="w", stretch=False)
 
     def _filtered_model_rows(self) -> list[dict[str, Any]]:
+        from chain_replay_ml.model_taxonomy import filter_model_records
         from chain_replay_ml.training.registry import resolve_model_registry_family
 
         family = self._models_family or "regression"
-        return [r for r in self._rows if resolve_model_registry_family(r) == family]
+        rows = [r for r in self._rows if resolve_model_registry_family(r) == family]
+
+        # Faceted filter inputs
+        t_val = getattr(self, "_filter_task_var", None)
+        r_val = getattr(self, "_filter_regime_var", None)
+        p_val = getattr(self, "_filter_pop_var", None)
+        l_val = getattr(self, "_filter_lc_var", None)
+
+        task_str = t_val.get() if t_val else None
+        regime_str = r_val.get() if r_val else None
+        pop_str = p_val.get() if p_val else None
+        lc_str = l_val.get() if l_val else None
+
+        filtered = filter_model_records(
+            rows,
+            task_type=task_str,
+            regime_id=regime_str,
+            population=pop_str,
+            lifecycle_status=lc_str,
+        )
+        return filtered
 
     def _build_prediction_runs_tab(self) -> None:
         frame = self._tab_frames[self._TAB_PREDICTION_RUNS]
@@ -1010,11 +1161,16 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         filtered = self._filtered_model_rows()
         is_tb = (self._models_family or "regression") == "triple_barrier"
         self._fit_dataset_column(filtered)
+        from chain_replay_ml.model_taxonomy import format_model_taxonomy_display, get_context_champions_map
+        champions_map = get_context_champions_map(self._data_dir())
+
         for r in filtered:
             name = str(r.get("model_name") or r.get("name") or "")
             if not name:
                 continue
             prod = r.get("production_metrics") or {}
+            tax = format_model_taxonomy_display(r, champions_map=champions_map)
+
             def _st(key: str) -> str:
                 v = str(r.get(key) or "").strip().lower()
                 if v == "available":
@@ -1042,6 +1198,9 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
                 iid=name,
                 values=(
                     name,
+                    tax["task_type"][:4],
+                    tax["regime_id"],
+                    tax["population_badge"],
                     _fmt_validation_strategy(r.get("validation_strategy")),
                     r.get("dataset") or "—",
                     _st("dataset_status"),
@@ -1248,7 +1407,24 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
             self._detail_doc = doc
             doc["_data_dir"] = data_dir
             strat = doc.get("table_row", {}).get("validation_strategy") or _strat_from_doc(doc)
-            self._header_var.set(f"{name}  ·  {strat}")
+
+            # Phase 4C.4: Multi-dimensional Taxonomy & Context Champion Header
+            try:
+                from chain_replay_ml.model_taxonomy import format_model_taxonomy_display
+                from chain_replay_ml.training.lifecycle_store import get_champion_for_context
+
+                row = doc.get("table_row") or {}
+                tax = format_model_taxonomy_display(row or doc)
+                champ_doc = get_champion_for_context(data_dir, tax["context_key"])
+                champ_name = str((champ_doc or {}).get("champion_model_name") or (champ_doc or {}).get("current_model_name") or "—")
+                chall_name = str((champ_doc or {}).get("challenger_model_name") or "—")
+                self._header_var.set(
+                    f"{name}  [{tax['population_badge']}]  ·  {tax['task_label']}  ·  {tax['regime_display']}\n"
+                    f"Context: {tax['context_key']}  |  Champion: {champ_name}  |  Challenger: {chall_name}  ·  ({strat})"
+                )
+            except Exception:
+                self._header_var.set(f"{name}  ·  {strat}")
+
             timing = doc.get("_timing") if isinstance(doc.get("_timing"), dict) else {}
             total_ms = timing.get("total_ms")
             if total_ms is not None:

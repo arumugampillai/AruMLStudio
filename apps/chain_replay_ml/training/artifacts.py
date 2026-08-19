@@ -437,6 +437,44 @@ def save_model_package(
 
     elimination = build_feature_elimination_doc(config=config, walk_forward_summary=walk_forward_summary)
 
+    # Phase 4C.2: Model Taxonomy Stamping
+    try:
+        from ..model_taxonomy import (
+            BASELINE_REGIME_CATALOG,
+            DEFAULT_REGIME_ID,
+            DEFAULT_REGIME_NAME,
+            RegimeSpec,
+            TaskSpec,
+            infer_task_type_from_target,
+        )
+        strat_id = str(getattr(config, "label_strategy", "") or getattr(config, "strategy_id", "") or "")
+        pred_type = str(getattr(config, "prediction_type", "") or "")
+        tt = infer_task_type_from_target(config.target, strategy_id=strat_id, prediction_type=pred_type)
+
+        lc_dict = config.lifecycle if isinstance(getattr(config, "lifecycle", None), dict) else {}
+        reg_id = str(lc_dict.get("regime_id") or "").strip()
+        if not reg_id:
+            ds_meta = getattr(config, "dataset_metadata", None)
+            if isinstance(ds_meta, dict):
+                reg_id = str(ds_meta.get("regime_id") or "").strip()
+        if not reg_id:
+            reg_id = DEFAULT_REGIME_ID
+
+        reg_name = str(lc_dict.get("regime_name") or "").strip()
+        if not reg_name and reg_id in BASELINE_REGIME_CATALOG:
+            reg_name = BASELINE_REGIME_CATALOG[reg_id]["name"]
+        elif not reg_name:
+            reg_name = DEFAULT_REGIME_NAME
+
+        horizon = str(lc_dict.get("prediction_horizon") or "5m").strip()
+        task_spec = TaskSpec(task_type=tt, target=config.target, prediction_horizon=horizon)
+        regime_spec = RegimeSpec(regime_id=reg_id, regime_name=reg_name)
+
+        config_doc["task"] = task_spec.to_dict()
+        config_doc["regime"] = regime_spec.to_dict()
+    except Exception:
+        pass
+
     with open(paths["config_json"], "w", encoding="utf-8") as fh:
         json.dump(config_doc, fh, indent=2)
 
@@ -451,6 +489,8 @@ def save_model_package(
         "prediction_type": config.prediction_type,
         "model_version": config.model_version,
         "model_description": config.model_description,
+        "task": config_doc.get("task"),
+        "regime": config_doc.get("regime"),
         "feature_count": len(config.features),
         "feature_selection_method": elimination.get("method"),
         "feature_selection_method_label": elimination.get("method_label"),
