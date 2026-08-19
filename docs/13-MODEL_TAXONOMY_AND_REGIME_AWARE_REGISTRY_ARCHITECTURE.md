@@ -11,7 +11,12 @@
 
 ## 1. Executive Summary & Architectural Motivation
 
-The overarching strategic destination of **AruMLStudio** (as formalized in [`Doc 12: Ultimate Vision`](file:///c:/Users/admin/PycharmProjects/AruMLStudio/docs/12-ARUMLSTUDIO_ULTIMATE_VISION_AND_AUTONOMOUS_RESEARCH_ARCHITECTURE.md)) is to transform into a continuous, autonomous quantitative research factory.
+### Ultimate Practical Purpose
+**AruMLStudio** is the **research, machine-learning, validation, evidence, and fine-tuning platform** that researches, tests, calibrates, and governs the decision models and policies used by the **TWO PRODUCTION TRADING ENGINES**:
+1. **Strategy Allocation Engine** (Pre-Entry Decision Engine)
+2. **Averaging Engine** (Post-Entry Position Management Engine)
+
+AruMLStudio is **NOT** the live execution engine. The two production engines are the **products** being continuously improved.
 
 The central research hypothesis is that **no single universal predictive model dominates financial markets across all temporal conditions**. Financial markets undergo structural macro and micro changes (volatility expansion, momentum trending, mean-reverting chop, liquidity vacuums, expiry gamma pinning). Consequently, maximum out-of-sample edge requires **specialized, regime-aware predictive models governed within an explicit regime taxonomy**.
 

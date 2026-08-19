@@ -1,31 +1,74 @@
 # AruMLStudio Phase 4 Master Roadmap & Step-by-Step Implementation Directive
-## Authoritative Engineering Specification: Advanced Quantitative Calculus, Model Taxonomy, Regime Registry, Persistent Benchmarking & Autonomous Research Factory
+## Authoritative Engineering Specification: Advanced Quantitative Calculus, Model Taxonomy, Regime Registry, Persistent Benchmarking & Automated Model Discovery
 
 > **Document Number**: `Doc 11`  
 > **Document Type**: AUTHORITATIVE MASTER ROADMAP & STEP-BY-STEP IMPLEMENTATION DIRECTIVE  
-> **Operational Baseline**: Phases 1–3D Verified & Operational (**210/210 Tests Passing**), Docs 00–13  
-> **Status**: **AUTHORITATIVE ROADMAP SPECIFICATION** (Phases 4A–4H & Phase 5: `PLANNED / NOT IMPLEMENTED`)  
+> **Operational Baseline**: Phases 1–4E Verified & Operational (**472/472 Tests Passing across 33 Test Modules**), Docs 00–15  
+> **Status**: **AUTHORITATIVE ROADMAP SPECIFICATION** (Phases 1–4E: `IMPLEMENTED & VERIFIED`; Phase 4F: `PLANNED / IMMEDIATE NEXT`; Phase 4G–4H, Phase 5A–5B: `PLANNED`; Phase 6: `STRATEGIC DESTINATION`)  
 > **Hardware Constraint**: Designed strictly for a **16 GB RAM Local Workstation** (Zero cloud dependencies)
 
 ---
 
 ## 1. Executive Summary & Strategic Context
 
-The ultimate mission of **AruMLStudio** is to transform from an interactive, human-driven machine learning studio into a **continuous, local, autonomous quantitative research factory**:
+### Ultimate Practical Purpose
+**AruMLStudio** is the **research, machine-learning, validation, evidence, and fine-tuning platform** whose primary purpose is to continuously discover, validate, stress-test, calibrate, and govern the decision models and complete policies used by the **TWO PRODUCTION TRADING ENGINES**:
+1. **Strategy Allocation Engine** (Pre-Entry Decision Engine)
+2. **Averaging Engine** (Post-Entry Position Management Engine)
 
-$$\boxed{\mathbf{Q}^*: \text{For each market regime } R, \text{ discover, validate, and govern the most robust predictive model or ensemble } \mathcal{M}^*_{R}}$$
+AruMLStudio is **NOT** the live trading engine and does **NOT** place broker orders. The two production trading engines are the **products** being continuously improved.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    THE OVERNIGHT ONE-BUTTON EXPERIENCE                                  │
-├─────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 1. Researcher configures parameters or presses "Start Overnight Campaign" before sleep.                 │
-│ 2. AruMLStudio autonomously explores: Features → Pipelines → Datasets → Models → Regimes.               │
-│ 3. Prunes non-viable branches via Phase 1–3A Decision Engine gates to prevent combinatorial explosion.  │
-│ 4. Benchmarks candidates out-of-sample across market regimes within strict 16 GB RAM memory budgets.    │
-│ 5. Researcher wakes up to an Executive Morning Research Report detailing discovered champion models.    │
-│ 6. Human governance explicitly reviews and approves production promotions (Phase 3D boundary).          │
-└─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+$$\boxed{\mathbf{Q}^*: \text{For each market context and regime } R, \text{ discover, validate, and govern the most robust complete trading policies for Strategy Allocation and Averaging}}$$
+
+```text
+                    ARUMLSTUDIO
+          RESEARCH + FINE-TUNING PLATFORM
+                       │
+        ┌──────────────┴──────────────┐
+        ↓                             ↓
+STRATEGY ALLOCATION              AVERAGING
+RESEARCH                          RESEARCH
+        │                             │
+        ↓                             ↓
+Direction/Regime/              Recovery/Target/
+Strategy/Capital               Add/Stop classifiers
+classifiers                          │
+        │                             │
+        ↓                             ↓
+Meta Confidence                 Meta Confidence
+        │                             │
+        ↓                             ↓
+Complete Allocation             Complete Averaging
+Policy Research                 Policy Research
+        │                             │
+        └──────────────┬──────────────┘
+                       ↓
+             COMPLETE POLICY SIMULATION
+                       ↓
+             WALK-FORWARD VALIDATION
+                       ↓
+              REGIME STRESS TESTING
+                       ↓
+                 RISK ANALYSIS
+                       ↓
+               HUMAN GOVERNANCE
+                       ↓
+             APPROVED POLICY PACKAGE
+                       ↓
+             PRODUCTION TRADING SYSTEM
+                       │
+        ┌──────────────┴──────────────┐
+        ↓                             ↓
+Strategy Allocation              Averaging Engine
+     Engine                           │
+        │                             │
+        └──────────────┬──────────────┘
+                       ↓
+              LIVE ORDER/EXECUTION
+                       ↓
+                    TELEMETRY
+                       ↓
+                  ARUMLSTUDIO
 ```
 
 ---
@@ -37,7 +80,7 @@ To ensure complete architectural clarity across all documentation and tools, eve
 | Status Key | Technical Definition | Active Codebase Meaning |
 |---|---|---|
 | **`IMPLEMENTED`** | Source code is fully written, integrated, and functioning in the active repository. | Exists in `apps/` or `src/`. |
-| **`VERIFIED`** | Code has passed all unit, integration, and regression test suites with 100% assertions met. | 210/210 regression tests passing. |
+| **`VERIFIED`** | Code has passed all unit, integration, and regression test suites with 100% assertions met. | 472/472 regression tests passing. |
 | **`PLANNED`** | Formally specified in the authoritative roadmap; awaiting explicit implementation turn. | Architectural design finalized. |
 | **`PROPOSED`** | Early architectural hypothesis or concept under pre-implementation design review. | Non-binding technical draft. |
 | **`DEFERRED`** | Intentionally postponed until dependent prerequisite subsystems are hardened. | Explicitly queued for later phase. |
@@ -64,17 +107,17 @@ To ensure complete architectural clarity across all documentation and tools, eve
 ├──────────────┼──────────────────────────────────────────┼─────────────────────────────┼─────────────────────┤
 │ Phase 4A     │ Higher-Order Option Surface Engine       │ Advanced Surface Calculus   │ 🔵 PLANNED          │
 │ Phase 4B     │ Composite Non-Linear Feature Selection   │ Attributions & Pruning      │ 🔵 PLANNED          │
-│ Phase 4C.1   │ Model Taxonomy Foundation                │ 4-Dimensional Meta Schema   │ ✅ IMPLEMENTED / VER│
-│ Phase 4C.2   │ Model Registry Extension                 │ SQLite & Metadata Sync      │ 🔵 PLANNED          │
-│ Phase 4C.3   │ Regime Registry (`regime_registry_store`)│ Market Regime Catalog       │ 🔵 PLANNED          │
-│ Phase 4C.4   │ Model Lab Population Awareness           │ Faceted Research UI         │ 🔵 PLANNED          │
-│ Phase 4D     │ Persistent Multi-Model Benchmarking      │ Research Memory (`analysis`)│ 🔵 PLANNED          │
-│ Phase 4E     │ Automated Project Recommendations        │ Advisory Grouping Engine    │ 🔵 PLANNED (Advisory│
-│ Phase 4F     │ Strategy Evidence Bridge                 │ Isolated Simulation Ledger  │ 🔵 PLANNED          │
+│ Phase 4C     │ Model Taxonomy & Regime Architecture     │ 4-Dimensional Meta Schema   │ ✅ IMPLEMENTED / VER│
+│ Phase 4D     │ Persistent Multi-Model Benchmarking      │ Research Memory (`analysis`)│ ✅ IMPLEMENTED / VER│
+│ Phase 4E     │ Automated Project Recommendations        │ Advisory Dossier Engine     │ ✅ IMPLEMENTED / VER│
+│ Phase 4F     │ Automated Model Discovery & Fine-Tuning  │ Candidate Discovery & Tuning│ 🔵 PLANNED / NEXT   │
 │ Phase 4G     │ Lineage & Registry Integrity Auditor     │ Deterministic Read-Only Aud │ 🔵 PLANNED          │
 │ Phase 4H     │ Optional Continuous Registry Watcher     │ Passive Real-Time Drift Mon │ 🔵 PLANNED (Passive)│
 ├──────────────┼──────────────────────────────────────────┼─────────────────────────────┼─────────────────────┤
-│ Phase 5      │ Autonomous Quantitative Research Factory │ Overnight Autonomous Engine │ 🌟 STRATEGIC DEST.  │
+│ Phase 5A     │ Production Trading Engine Evidence Bridge│ Model-to-Policy Bridge      │ 🔵 PLANNED (Moved)  │
+│ Phase 5B     │ Production Strategy & Averaging Engines  │ Engine Implementation & Live│ 🔵 PLANNED          │
+├──────────────┼──────────────────────────────────────────┼─────────────────────────────┼─────────────────────┤
+│ Phase 6      │ Autonomous Quantitative Research Factory │ Overnight Autonomous Engine │ 🌟 STRATEGIC DEST.  │
 └──────────────┴──────────────────────────────────────────┴─────────────────────────────┴─────────────────────┘
 ```
 
@@ -103,17 +146,20 @@ Model identity is **multidimensional and cryptographically anchored**. The platf
 ### 4.1. Dimension 1: Task Type Enum (Mathematical Formulation)
 - **`DIRECTION_CLASSIFIER`**: Binary/ternary forward sign prediction ($\{-1, 0, +1\}$).
 - **`REGIME_CLASSIFIER`**: Multi-class environmental state categorization ($\{R_1, \dots, R_K\}$).
-- **`REGRESSION`**: Continuous value estimation (e.g. forward price difference, return in points).
-- **`TRIPLE_BARRIER`**: Path-dependent outcome classification ($\{TP, SL, TIME\}$).
+- **`STRATEGY_SUITABILITY`**: Discrete option strategy suitability classification.
+- **`RECOVERY_CLASSIFIER`**: Discrete position recovery probability classification.
+- **`TARGET_CLASS_CLASSIFIER`**: Discrete basket recovery target class selection.
+- **`ACTION_CLASSIFIER`**: Discrete position management action recommendation (`HOLD`, `ADD_1_LOT`, `ADD_2_LOTS`, `ADD_4_LOTS`, `STOP`, `EXIT`).
+- **`CAPITAL_ALLOCATION_CLASSIFIER`**: Pre-entry initial capital sizing classification (`CONSERVATIVE`, `NORMAL`, `AGGRESSIVE`).
 - **`CONFIDENCE_CLASSIFIER`**: Conditional win probability / calibration filter ($[0.0, 1.0]$).
-- **`VOLATILITY_ESTIMATOR`**: Continuous forward realized variance estimation ($\mathbb{R}^+$).
+- **`VOLATILITY_ESTIMATOR`**: Discrete volatility state classification.
 
 > [!IMPORTANT]
 > **Extensibility Invariant**: "Trend" and "Sideways" are **NEVER** Task Types. Task Type is strictly invariant to market conditions; a `DIRECTION_CLASSIFIER` remains a `DIRECTION_CLASSIFIER` across all market regimes.
 
 ### 4.2. Dimension 2: Market Regime Taxonomy
 - **Baseline Regimes**: `R000` (`ALL_REGIMES`), `R001` (`TREND`), `R002` (`SIDEWAYS`), `R003` (`HIGH_VOLATILITY`), `R004` (`LOW_VOLATILITY`), `R005` (`BREAKOUT`), `R006` (`REVERSAL`), `R007` (`EXPIRY_PINNING`).
-- **Discovered Regimes**: Supports empirical micro-clusters (e.g. `R017`: *"High IV expansion + accelerating gamma + abnormal volume"*) registered dynamically in `regime_registry_store.json`.
+- **Discovered Regimes**: Supports empirical micro-clusters registered dynamically in `regime_registry_store.json`.
 
 ### 4.3. Dimension 3: Model Population Tier (Governance Standing)
 - **`EXPERIMENTAL`**: Speculative models from parameter sweeps or novel feature sets.
@@ -126,7 +172,7 @@ Model identity is **multidimensional and cryptographically anchored**. The platf
 
 ---
 
-## 5. Subsystem Detailed Specifications (Phase 4A through Phase 5)
+## 5. Subsystem Detailed Specifications (Phase 4A through Phase 6)
 
 ---
 
@@ -138,8 +184,7 @@ Model identity is **multidimensional and cryptographically anchored**. The platf
 ---
 
 ### Phase 4B — Composite Non-Linear Feature Selection `[PLANNED]`
-- **Purpose**: Combine TreeSHAP, Mutual Information entropy, and Permutation Importance into a normalized composite importance score:
-  $$\text{CompositeScore}_j = w_{\text{shap}} \cdot \widetilde{\text{SHAP}}_j + w_{\text{mi}} \cdot \widetilde{\text{MI}}_j + w_{\text{perm}} \cdot \widetilde{\text{Perm}}_j$$
+- **Purpose**: Combine TreeSHAP, Mutual Information entropy, and Permutation Importance into a normalized composite importance score.
 - **Safety**: Strictly contained inside walk-forward training folds; row-group subsampled ($N \le 10,000$) for 16 GB RAM safety.
 
 ---
@@ -147,28 +192,28 @@ Model identity is **multidimensional and cryptographically anchored**. The platf
 ### Phase 4C — Model Taxonomy & Regime Architecture `[IMPLEMENTED & VERIFIED]`
 - **4C.1: Model Taxonomy Foundation `[IMPLEMENTED & VERIFIED]`**: Enums, dataclasses, and canonical context keys:
   $$\mathbf{K}_{\text{context}} = (\text{Market}, \text{Interval}, \text{Task Type}, \text{Prediction Horizon}, \text{Regime ID})$$
-- **4C.2: Model Registry Extension `[IMPLEMENTED & VERIFIED]`**: Additive SQLite schema updates in `.lifecycle_registry.db` (`task_type`, `regime_id`, `context_key`, `champion_model_name`, `challenger_model_name`, `regime_scope`, `metadata_json`), context-scoped champion governance, and package metadata taxonomy stamping.
+- **4C.2: Model Registry Extension `[IMPLEMENTED & VERIFIED]`**: Additive SQLite schema updates in `.lifecycle_registry.db`, context-scoped champion governance, and package metadata taxonomy stamping.
 - **4C.3: Regime Registry (`regime_registry_store.json`) `[IMPLEMENTED & VERIFIED]`**: Authoritative JSON catalog storing declarative regime definitions, parent/child hierarchy, required features, and immutable versioning with canonical `definition_hash`.
-- **4C.4: Model Research Lab Population Awareness `[IMPLEMENTED & VERIFIED]`**: 4-dimensional faceted filtering toolbar (Task, Regime, Population, Lifecycle), Treeview taxonomy columns, Population badges (`👑 CHAMPION`, `⚔️ CHALLENGER`, `VALIDATED`, `EXPERIMENTAL`), and context-scoped champion display.
+- **4C.4: Model Research Lab Population Awareness `[IMPLEMENTED & VERIFIED]`**: 4-dimensional faceted filtering toolbar, Treeview taxonomy columns, Population badges, and context-scoped champion display.
 
 ---
 
 ### Phase 4D — Persistent Research Memory & Multi-Model Benchmarking `[COMPLETED & VERIFIED]`
-- **4D.1: Research Memory Schema & DB Initialization `[IMPLEMENTED & VERIFIED]`**: `<data_dir>/analysis.db` SQLite connection management, WAL mode, foreign keys, and complete 9-table schema (`research_campaigns`, `experiment_signatures`, `campaign_experiments`, `benchmark_runs`, `model_benchmarks`, `benchmark_metrics`, `regime_evaluations`, `feature_set_evaluations`, `champion_history`).
-- **4D.2: Experiment Identity & Canonical Deduplication `[IMPLEMENTED & VERIFIED]`**: Pure deterministic canonicalization, 6-decimal float quantization, SHA-256 experiment signature hashing, atomic check-and-register concurrency gate in `analysis.db`.
-- **4D.3: Model Benchmark & Metrics Persistence `[IMPLEMENTED & VERIFIED]`**: Persistent benchmark run evaluation events, model benchmark scorecards, and extensible normalized granular metrics (`benchmark_metrics`) in `analysis.db`.
-- **4D.4: Regime & Feature Composition Evaluation `[IMPLEMENTED & VERIFIED]`**: Authoritative feature population categorization (Base PL_0001, Canonical Registry, Experimental PL_0002+, Deprecated, Unknown), experimental dependency ratios, cross-regime degradation scoring, and empirical regime-feature affinity summaries in `analysis.db`.
-- **4D.5: Robustness Ranking Policy Engine `[IMPLEMENTED & VERIFIED]`**: Multi-factor penalty scoring (`ROB_POLICY_v1.0`), Pareto non-dominated multi-objective frontier calculation, 5-level deterministic tie-breaking, context-scoped candidate ranking, and explainable Ranking Dossiers in `analysis.db`.
-- **4D.6: Research Campaign Lifecycle & Champion History `[IMPLEMENTED & VERIFIED]`**: Campaign state machine (`CREATED` -> `RUNNING` -> `PAUSED` -> `COMPLETED`/`FAILED`/`CANCELLED`), atomic single-statement quota allocation (`UPDATE RETURNING`), experiment trial linking, and immutable, context-scoped champion transition audit trail with time-travel query support in `analysis.db`.
-- **4D.7: Model Research Lab Leaderboard UI `[IMPLEMENTED & VERIFIED]`**: Context-isolated multi-model research leaderboard, canonical context key resolver, production champion vs. research candidate distinction, multi-tab empirical evidence dossiers (Robustness breakdown, Pareto optimality, Cross-Regime stress matrix, Feature composition governance, Campaign lineage, Champion transition history) in Tkinter desktop UI.
-- **4D.8: Full Regression & Lineage Verification `[IMPLEMENTED & VERIFIED]`**: Comprehensive end-to-end lineage integration tests, 4-dimensional orthogonality verification (Task != Regime != Population != Lifecycle), multi-threaded quota concurrency tests, and cryptographic immutability assertions across all production databases.
+- **4D.1: Research Memory Schema & DB Initialization `[IMPLEMENTED & VERIFIED]`**: `<data_dir>/analysis.db` SQLite connection management, WAL mode, foreign keys, and complete 9-table schema.
+- **4D.2: Experiment Identity & Canonical Deduplication `[IMPLEMENTED & VERIFIED]`**: Pure deterministic canonicalization, 6-decimal float quantization, SHA-256 experiment signature hashing, check-and-register concurrency gate.
+- **4D.3: Model Benchmark & Metrics Persistence `[IMPLEMENTED & VERIFIED]`**: Persistent benchmark run evaluation events, model benchmark scorecards, and extensible normalized granular metrics.
+- **4D.4: Regime & Feature Composition Evaluation `[IMPLEMENTED & VERIFIED]`**: Authoritative feature population categorization, experimental dependency ratios, cross-regime degradation scoring, and empirical regime-feature affinity summaries.
+- **4D.5: Robustness Ranking Policy Engine `[IMPLEMENTED & VERIFIED]`**: Multi-factor penalty scoring (`ROB_POLICY_v1.0`), Pareto non-dominated multi-objective frontier calculation, 5-level deterministic tie-breaking, context-scoped candidate ranking, and explainable Ranking Dossiers.
+- **4D.6: Research Campaign Lifecycle & Champion History `[IMPLEMENTED & VERIFIED]`**: Campaign state machine, atomic single-statement quota allocation (`UPDATE RETURNING`), experiment trial linking, and immutable champion audit trail.
+- **4D.7: Model Research Lab Leaderboard UI `[IMPLEMENTED & VERIFIED]`**: Context-isolated multi-model research leaderboard, canonical context key resolver, multi-tab empirical evidence dossiers in Tkinter desktop UI.
+- **4D.8: Full Regression & Lineage Verification `[IMPLEMENTED & VERIFIED]`**: Comprehensive end-to-end lineage integration tests, 4-dimensional orthogonality verification, and cryptographic immutability assertions.
 
 ---
 
 ### Phase 4E — Automated Project Recommendations `[COMPLETE & VERIFIED / ADVISORY ONLY]`
 - **Purpose**: Transform accumulated research evidence into intelligent, prioritized recommendations for research exploration while strictly preserving human governance.
 - **Boundary**: **Strictly Advisory**. Zero automated mutation of `PL_0001`, `feature_registry_store.json`, `.lifecycle_registry.db`, or live trading configurations.
-- **4E.1: Context Coverage & Evidence Density Analyzer `[IMPLEMENTED & VERIFIED]`**: Operational coverage matrix across canonical `ModelContextKey` dimensions, safe bounded evidence density scores ($0.0 \dots 100.0$), and deterministic coverage classification (`COLD_START`, `SPARSE`, `DEVELOPING`, `MATURE`).
+- **4E.1: Context Coverage & Evidence Density Analyzer `[IMPLEMENTED & VERIFIED]`**: Operational coverage matrix across canonical `ModelContextKey` dimensions, safe bounded evidence density scores ($0.0 \dots 100.0$), and deterministic coverage classification.
 - **4E.2: Production Champion Vulnerability & Challenger Gap Auditor `[IMPLEMENTED & VERIFIED]`**: Fragility detection, cross-regime degradation, calibration (ECE) deficits, staleness auditing, and challenger gap analysis with strictly read-only production governance.
 - **4E.3: Empirical Feature Affinity & Interaction Recommender `[IMPLEMENTED & VERIFIED]`**: Multi-source empirical feature scoring ($0.0 \dots 100.0$), disaggregated confidence scaling, pairwise interaction synergy modeling, deprecated feature quarantining, and missing champion opportunity detection.
 - **4E.4: Negative Evidence Pruning & Search Space Exclusion Engine `[IMPLEMENTED & VERIFIED]`**: Authoritative deduplication suppression, deprecated feature exclusion, chronic low-robustness detection ($\ge 3$ trials $< 40.0$), extreme cross-regime fragility alerts ($> 30\%$), and severe miscalibration warnings ($\text{ECE} \ge 0.10$).
@@ -177,9 +222,107 @@ Model identity is **multidimensional and cryptographically anchored**. The platf
 
 ---
 
-### Phase 4F — Strategy Evidence Bridge `[PLANNED]`
-- **Purpose**: Record trading simulation performance (PnL, Sharpe, Profit Factor, Drawdown) in `analysis.db`.
-- **Isolation**: Strictly separated from statistical feature recommendation scoring.
+### Phase 4F — Automated Model Discovery, Strategy Validation & Fine-Tuning Loop `[PLANNED / IMMEDIATE NEXT]`
+
+> [!IMPORTANT]
+> **Phase 4F Purpose & Strategic Identity**:  
+> Phase 4F empowers AruMLStudio to **automatically discover, train, evaluate, strategy-validate, rank, reject, and fine-tune candidate models** in an unattended, autonomous loop.  
+> It is **MODEL-FIRST, NOT STRATEGY-FIRST**: The primary research object is the predictive ML model. The trading strategy is a simple, controlled, deterministic evaluation harness used to determine whether the model's predictions have practical trading value under realistic market conditions.
+
+```text
+    START CAMPAIGN (Unattended / Overnight Mode)
+          ↓
+    Generate Candidate (via Phase 4E Priority Dossiers & Lineage)
+          ↓
+    Train Candidate Model (Algorithms, Features, Hyperparams)
+          ↓
+    Evaluate Model (Statistical ROC-AUC, LogLoss, Brier, ECE)
+          ↓
+    Test Model through Simple Deterministic Strategy Evaluation Harness
+          ↓
+    Walk-Forward Validation (Zero Look-Ahead Leakage)
+          ↓
+    Regime / Stress Validation (R001–R007)
+          ↓
+    Robustness Evaluation (ROB_POLICY_v1.0 Multi-Objective Scorecard)
+          ↓
+    Rank Candidate vs Context Incumbent (Research Champion / Challenger)
+          ↓
+    Reject Weak Candidate OR Retain Promising Candidate
+          ↓
+    Fine-Tune / Generate Improved Descendant Candidate
+          ↓
+    Repeat Cycle Unattended (Until Budget / Resource / Plateau Stop Condition)
+          ↓
+    Generate Morning Executive Research Report
+```
+
+#### 12 Authoritative Architectural Specifications for Phase 4F:
+
+1. **Model-First Architecture (Not Strategy-First)**:
+   - The primary research object is the predictive machine learning model.
+   - The trading strategy is strictly an **Evaluation Harness / Strategy Replay Proxy** used to determine whether the model's predictions yield genuine trading edge.
+
+2. **Simple & Deterministic Strategy Evaluation Harness (Preventing Overfitting Traps)**:
+   - To prevent catastrophic combinatorial search explosion and overfitting, Phase 4F does **NOT** simultaneously optimize models, strategy rules, averaging sequences, target percentages, and lot sizing.
+   - The evaluation harness is **fixed, simple, and deterministic**, testing pure signal efficacy under controlled assumptions.
+
+3. **Classification-First Research Candidates**:
+   - Evaluates discrete candidate classification models:
+     - `Direction Classifier` (Up / Down / Sideways)
+     - `Regime Classifier` (`R001`–`R007`)
+     - `2% Outcome Classifier` (Research Candidate Hypothesis)
+     - `3% Outcome Classifier` (Research Candidate Hypothesis)
+     - `4% Outcome Classifier` (Research Candidate Hypothesis)
+     - `Meta-Confidence Classifier` (Reliability & Calibration Gate)
+   - *Note: 2%, 3%, and 4% are empirical research candidate labels, NOT hardcoded production truth.*
+
+4. **Multi-Faceted Trading-Level Evidence Matrix**:
+   - The strategy evaluation harness produces comprehensive empirical trading telemetry:
+     - Signal accuracy, precision, recall, and F1 score
+     - Confidence calibration (ECE & reliability diagrams)
+     - Total signal frequency, profitable signals vs losing signals, and overall win rate
+     - Maximum Favorable Excursion (MFE) and Maximum Adverse Excursion (MAE)
+     - Maximum drawdown, consecutive losing streaks, and drawdown duration
+     - Time-to-target and time-to-failure distributions
+     - Temporal stability across trading sessions and cross-regime robustness
+
+5. **Multi-Objective Model Selection (No Single-Metric Traps)**:
+   - Candidates are evaluated using the complete Phase 4D/4E evidence infrastructure (`ROB_POLICY_v1.0` penalty scoring, Pareto non-dominated frontiers, cross-regime degradation) **plus** trading-evaluation evidence.
+   - A model with slightly lower ROC-AUC will be favored over an overfitted high-AUC model if it produces superior out-of-sample trading stability and drawdown control.
+
+6. **Strict Zero Data Leakage & Out-of-Sample Integrity**:
+   - Strategy replay and validation operate strictly on **out-of-fold / out-of-sample predictions**.
+   - Training fold data is cryptographically isolated and can never influence evaluation or ranking metrics.
+
+7. **Cryptographic Fine-Tuning Lineage**:
+   - Fine-tuning creates an immutable parent-child lineage relationship:
+     $$\boxed{\text{Parent Model} \longrightarrow \text{Experiment} \longrightarrow \text{Modified Feature / Hyperparam / Target} \longrightarrow \text{Child Model} \longrightarrow \text{Evaluation} \longrightarrow \text{Comparison with Parent} \longrightarrow \text{Keep / Reject}}$$
+
+8. **Unattended Overnight Research Loop**:
+   - Supports autonomous execution: Researcher configures campaign quota/budget $\to$ Engine explores, trains, evaluates, replays, and tunes $\to$ Synthesizes Executive Morning Research Report detailing top candidates, rejected trials, lineage graphs, and recommended next steps.
+
+9. **Deterministic Research Stop Conditions**:
+   - The autonomous loop stops cleanly when:
+     - Experiment quota or trial budget is exhausted
+     - Time limit is reached
+     - No promising candidate hypotheses remain in the search queue
+     - Repeated descendant generations plateau with zero statistically significant improvement ($< 0.5\%$ gain over 5 generations)
+     - Negative evidence pruning excludes remaining branches
+     - Workstation memory/resource ceilings are approached ($> 12.0$ GB RAM)
+
+10. **Absolute No Production Promotion (Human Governance Boundary)**:
+    - Phase 4F is strictly advisory and research-scoped.
+    - May identify and register a **Research Champion** or Challenger in `analysis.db`.
+    - **Never** modifies `active_model.json`, never alters production champion state, never modifies `PL_0001`, never sends broker orders, and never activates live trading. Production promotion remains 100% human-governed.
+
+11. **Strict Subsystem Boundary (No Live Engines in 4F)**:
+    - Phase 4F does **NOT** build or implement the live production Strategy Allocation Engine or Averaging Engine. Those belong to Phase 5.
+    - Phase 4F discovers and validates the **decision models** that will feed those production engines.
+
+12. **Zero Regression Dependency in Trading Evaluation**:
+    - The evaluation harness uses discrete classification outputs, threshold triggers, and realized tick/candle market outcomes.
+    - Regression prediction of exact future option LTP or rupee P&L is **NOT** required or used.
 
 ---
 
@@ -194,8 +337,24 @@ Model identity is **multidimensional and cryptographically anchored**. The platf
 
 ---
 
-### Phase 5 — Autonomous Quantitative Research Factory `[STRATEGIC DESTINATION]`
-- **Purpose**: End-to-end overnight research engine executing automated feature exploration, pipeline generation (`PL_0002+`), dataset building, training, out-of-sample validation, regime evaluation, and Morning Report synthesis within 16 GB RAM workstation limits.
+### Phase 5A — Production Trading Engine Evidence Bridge `[PLANNED]`
+- **Purpose**: Formal evidence bridge connecting validated research models to complete production engine policies:
+  $$\boxed{\text{Model Evidence} \longrightarrow \text{Complete Engine Policy} \longrightarrow \text{Full Production Simulation} \longrightarrow \text{Walk-Forward Validation} \longrightarrow \text{Regime Stress} \longrightarrow \text{Risk Analysis} \longrightarrow \text{Policy Evidence} \longrightarrow \text{Human Governance}}$$
+- **Strategic Placement Rationale**: Moved from previous Phase 4F position. Establishes the formal evidence bridge *after* models are discovered and validated in Phase 4F, immediately preceding live engine implementation in Phase 5B.
+
+---
+
+### Phase 5B — Production Strategy Allocation & Averaging Engine Engineering `[PLANNED]`
+- **Purpose**: Implementation of the two live production trading engines and runtime execution components:
+  1. **Strategy Allocation Engine**: Pre-entry decision execution, strategy suitability, capital allocation, reserve contracts.
+  2. **Averaging Engine**: Post-entry position management, adverse move monitoring, lot progression ladders, basket recovery targeting.
+  3. **Runtime Execution Stack**: Position Manager (state tracking), Exit Engine (target/risk execution), and Order Execution Engine (broker routing & telemetry).
+- **Human Governance Boundary**: Strategy and averaging policies require explicit human governance approval before live production deployment.
+
+---
+
+### Phase 6 — Autonomous Quantitative Research Factory `[STRATEGIC DESTINATION]`
+- **Purpose**: Fully autonomous, continuous quantitative research factory synthesizing features, pipelines (`PL_0002+`), multi-regime ensembles, and morning executive dossiers within 16 GB RAM workstation limits.
 - **Human Governance Boundary**: Autonomous system discovers and proposes; **Human Governance retains 100% exclusive authority** over production asset promotion (`Phase 3D`).
 
 ---
@@ -221,79 +380,3 @@ Model identity is **multidimensional and cryptographically anchored**. The platf
 │                            │                             │ resumable at next session startup.           │
 └────────────────────────────┴─────────────────────────────┴──────────────────────────────────────────────┘
 ```
-
----
-
-## 7. Mandatory Step-by-Step Implementation Protocol
-
-For every subsequent phase, the following 7-step discipline is strictly enforced:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    7-STEP IMPLEMENTATION PROTOCOL                                       │
-├─────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ Step 1: Pre-Implementation Documentation & Code Inspection (Produce Gap Analysis & Affected Files).     │
-│ Step 2: Architecture Checkpoint & Safety Verification (Verify Phase 1–3D, PL_0001, and 16 GB RAM rules).│
-│ Step 3: Implement ONLY the Target Sub-Phase (No creeping scope; zero modification of future phases).   │
-│ Step 4: Add & Run Comprehensive Tests (Unit, integration, and full 210+ regression suite).              │
-│ Step 5: Immediate Documentation Reconciliation (Synchronize all affected markdown files under /docs).   │
-│ Step 6: Full Read-Only Audit (Reconcile Code ↔ Docs ↔ DB ↔ Tests ↔ Registry).                          │
-│ Step 7: STOP & Report (Provide phase completion report and await explicit user instruction).             │
-└─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 8. Master Dependency Graph & Execution Sequence
-
-```
-                        [ PHASE 4A ]               [ PHASE 4B ]
-                   Higher-Order Surfaces       Composite Feature Sel.
-                   (Quantitative Engine)       (Importance Pruning)
-                            │                           │
-                            └─────────────┬─────────────┘
-                                          │ (Independent Capabilities)
-                                          ▼
-                                    [ PHASE 4C.1 ]
-                               Model Taxonomy Foundation
-                                          │
-                                          ▼
-                                    [ PHASE 4C.2 ]
-                               Model Registry Extension
-                                          │
-                                          ▼
-                                    [ PHASE 4C.3 ]
-                                    Regime Registry
-                                          │
-                                          ▼
-                                    [ PHASE 4C.4 ]
-                           Model Lab Population Awareness
-                                          │
-                                          ▼
-                                     [ PHASE 4D ]
-                         Persistent Multi-Model Benchmarking
-                                          │
-                  ┌───────────────────────┼───────────────────────┐
-                  ▼                       ▼                       ▼
-             [ PHASE 4E ]            [ PHASE 4F ]            [ PHASE 4G ]
-          Project Recommend.      Strategy Evidence       Lineage Integrity
-             (Advisory)                Bridge                  Auditor
-                  │                       │                       │
-                  └───────────────────────┼───────────────────────┘
-                                          ▼
-                                     [ PHASE 4H ]
-                             Continuous Registry Watcher
-                                          │
-                                          ▼
-                                     [ PHASE 5 ]
-                            AUTONOMOUS RESEARCH FACTORY
-```
-
----
-
-## 9. Protected Architecture & Non-Negotiable Boundaries
-
-1. **`PL_0001` is strictly the Base Pipeline**: Contains only approved, governed baseline transformations and graduated Registry features. Speculative exploration occurs strictly in `PL_0002+`.
-2. **Phase 1–3D Decisions are Immutable**: Scoring formulas, intelligence metrics, stability filters, candidate qualification gates, and governance state machines remain authoritative.
-3. **Evidence DB Immutability**: Historical rows in `feature_recommendation_evidence.db` are append-only (SHA-256 intact).
-4. **Human Governance Boundary**: Machine learning models and autonomous factory engines propose; human researchers govern production assets.
