@@ -1,10 +1,63 @@
-"""Master dataset file naming — {market}_master_{interval}s_atm{band}.db."""
-
 from __future__ import annotations
 
 import json
 import os
 import re
+from typing import Any
+
+# Authoritative supported sampling intervals across Master Dataset, Research Leaderboard, and Models
+MASTER_DATASET_INTERVALS_SEC: tuple[int, ...] = (3, 6, 9, 10, 15, 30, 60)
+MASTER_DATASET_INTERVAL_LABELS: tuple[str, ...] = ("3s", "6s", "9s", "10s", "15s", "30s", "1m")
+MASTER_DATASET_INTERVAL_LABEL_TO_SEC: dict[str, int] = {
+    "3s": 3,
+    "6s": 6,
+    "9s": 9,
+    "10s": 10,
+    "15s": 15,
+    "30s": 30,
+    "1m": 60,
+    "60s": 60,
+}
+MASTER_DATASET_INTERVAL_SEC_TO_LABEL: dict[int, str] = {
+    3: "3s",
+    6: "6s",
+    9: "9s",
+    10: "10s",
+    15: "15s",
+    30: "30s",
+    60: "1m",
+}
+
+
+def parse_sampling_interval_sec(v: Any, default: int = 6) -> int:
+    """Parse sampling interval from int, str ('3s', '6s', '1m', 60) to seconds."""
+    if v is None:
+        return default
+    if isinstance(v, (int, float)):
+        iv = int(v)
+        return iv if iv in MASTER_DATASET_INTERVAL_SEC_TO_LABEL else iv
+    s = str(v).strip().lower()
+    if s in MASTER_DATASET_INTERVAL_LABEL_TO_SEC:
+        return MASTER_DATASET_INTERVAL_LABEL_TO_SEC[s]
+    if s.endswith("s"):
+        try:
+            return int(s[:-1])
+        except ValueError:
+            pass
+    if s.endswith("m"):
+        try:
+            return int(s[:-1]) * 60
+        except ValueError:
+            pass
+    try:
+        return int(s)
+    except ValueError:
+        return default
+
+
+def format_sampling_interval_label(sec: int) -> str:
+    """Format sampling interval in seconds to standard label ('3s', '6s', ..., '1m')."""
+    return MASTER_DATASET_INTERVAL_SEC_TO_LABEL.get(int(sec), f"{int(sec)}s")
 
 
 def normalize_market_slug(market: str) -> str:

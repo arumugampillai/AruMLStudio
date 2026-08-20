@@ -5,7 +5,7 @@
 > **Document Type**: STRATEGIC NORTH-STAR ARCHITECTURAL VISION  
 > **Target Audience**: Quantitative Researchers, Platform Architects, Machine Learning Engineers, and Coding Agents  
 > **Authority**: Permanent High-Level Strategic Destination Document (Non-Implementation Specification)  
-> **Operational Prerequisite Baseline**: Phases 1–3D Verified & Operational (**210/210 Tests Passing**)  
+> **Operational Prerequisite Baseline**: Phases 1–4F Verified & Operational (**629/629 Tests Passing across 40 Test Modules**)  
 > **Execution Constraint**: Designed for a **16 GB RAM Local Workstation** without external cloud dependencies.
 
 ---
@@ -379,7 +379,7 @@ AruMLStudio enforces a strict separation between **Autonomous Research** and **P
 │ • Phase 4C: Model Lab Population Awareness (Base / Registry / Experimental Breakdowns) │
 │ • Phase 4D: Persistent Multi-Model Benchmarking (analysis.db Cross-Model Ledger)       │
 │ • Phase 4E: Automated Project Recommendations (Hypothesis Grouping Assistant)          │
-│ • Phase 4F: Strategy Evidence Bridge (Independent PnL / Simulation Evidence Ledger)    │
+│ • Phase 4F: Automated Model Discovery & Fine-Tuning (Complete 4F.1–4F.6 & UI Verified)  │
 │ • Phase 4G: Lineage & Registry Integrity Auditor (Deterministic System Validator)     │
 │ • Phase 4H: Optional Continuous Registry Watcher (Passive File Drift Monitor)          │
 ├────────────────────────────────────────────────────────────────────────────────────────┤

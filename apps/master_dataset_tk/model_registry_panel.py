@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Any, Callable
+
 
 from .build_service import chart_data_dir
 from .model_registry_detail import (
@@ -35,8 +37,17 @@ def _fmt_num(v: Any) -> str:
     return fmt_num(v)
 
 
-def _fmt_pct(v: Any) -> str:
-    return fmt_pct(v)
+def _fmt_pct(v: Any, digits: int = 2) -> str:
+    if v is None or v == "" or v == "—":
+        return "—"
+    try:
+        f = float(v)
+        if 0.0 < f <= 1.0:
+            f = f * 100.0
+        return f"{f:.{digits}f}%"
+    except (TypeError, ValueError):
+        return "—"
+
 
 
 def _fmt_roc_auc(v: Any) -> str:
@@ -184,7 +195,12 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         self._research_coordinator.subscribe(self._on_research_coordinator_update)
 
     def _data_dir(self) -> str:
+        if not self.chart_dir:
+            return ""
+        if os.path.exists(os.path.join(self.chart_dir, "analysis.db")):
+            return self.chart_dir
         return chart_data_dir(self.chart_dir)
+
 
     def _restore_selected_model(self) -> None:
         from chain_replay_ml.training.registry import get_active_model
@@ -324,12 +340,16 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         table_frame = ttk.Frame(paned)
         paned.add(table_frame, weight=2)
 
+        self._main_paned = paned
+        self._table_frame = table_frame
+
         self._models_family_nb = ttk.Notebook(table_frame)
         self._models_family_nb.pack(fill="x")
         self._models_family_tab_ids: dict[str, int] = {}
         for idx, (key, label) in enumerate(
             (
                 ("regression", "Regression"),
+                ("classifier", "Classifier"),
                 ("triple_barrier", "Triple Barrier"),
                 ("research_leaderboard", "Research Leaderboard"),
             )
@@ -368,7 +388,7 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
             tree_host,
             columns=cols,
             show="headings",
-            height=8,
+            height=16,
             selectmode="extended",
         )
         for c, w, label in (
@@ -406,6 +426,7 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         self.models_tree.bind("<Button-1>", self._on_models_tree_click)
 
         detail_outer = ttk.Frame(paned)
+        self._detail_outer = detail_outer
         paned.add(detail_outer, weight=3)
 
         header = ttk.Frame(detail_outer, padding=(4, 6))
@@ -468,43 +489,81 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         self._models_family = self._models_family_from_notebook()
         if self._models_family == "research_leaderboard":
             self._tree_host.pack_forget()
+            if hasattr(self, "_detail_outer") and hasattr(self, "_main_paned"):
+                try:
+                    if str(self._detail_outer) in [str(p) for p in self._main_paned.panes()]:
+                        self._main_paned.forget(self._detail_outer)
+                except Exception:
+                    pass
             self._leaderboard_panel.pack(fill="both", expand=True)
             self._leaderboard_panel.refresh_leaderboard()
         else:
             self._leaderboard_panel.pack_forget()
+            if hasattr(self, "_detail_outer") and hasattr(self, "_main_paned"):
+                try:
+                    if str(self._detail_outer) not in [str(p) for p in self._main_paned.panes()]:
+                        self._main_paned.add(self._detail_outer, weight=3)
+                except Exception:
+                    pass
             self._tree_host.pack(fill="both", expand=True)
             self._sync_models_metric_columns()
-            self._populate_models_tree(select_first=False)
+            self._populate_models_tree(select_first=True)
+
+
 
     def _sync_models_metric_columns(self) -> None:
-        """Swap list metric headers / visible columns for Regression vs Triple Barrier."""
-        is_tb = (self._models_family or "regression") == "triple_barrier"
-        if is_tb:
+        """Swap list metric headers / visible columns for Regression vs Classifier vs Triple Barrier."""
+        family = self._models_family or "regression"
+        is_tb = family == "triple_barrier"
+        is_cls = family == "classifier"
+
+        if is_tb or is_cls:
             headings = (
                 ("m1", 72, "Precision"),
                 ("m2", 64, "Recall"),
                 ("m3", 56, "F1"),
                 ("m4", 72, "ROC-AUC"),
             )
-            # TB: drop Dataset / Target / Label status — Label Run stays.
-            display = (
-                "name",
-                "task",
-                "regime",
-                "pop",
-                "strategy",
-                "ds_st",
-                "label_run",
-                "fc",
-                "interval",
-                "m1",
-                "m2",
-                "m3",
-                "m4",
-                "size",
-                "research",
-                "delete",
-            )
+            if is_tb:
+                # TB: drop Dataset / Target / Label status — Label Run stays.
+                display = (
+                    "name",
+                    "task",
+                    "regime",
+                    "pop",
+                    "strategy",
+                    "ds_st",
+                    "label_run",
+                    "fc",
+                    "interval",
+                    "m1",
+                    "m2",
+                    "m3",
+                    "m4",
+                    "size",
+                    "research",
+                    "delete",
+                )
+            else:
+                # Classifier: show dataset, target, fc, interval, m1..m4
+                display = (
+                    "name",
+                    "task",
+                    "regime",
+                    "pop",
+                    "strategy",
+                    "dataset",
+                    "target",
+                    "fc",
+                    "interval",
+                    "m1",
+                    "m2",
+                    "m3",
+                    "m4",
+                    "size",
+                    "research",
+                    "delete",
+                )
             name_width = 180
         else:
             headings = (
@@ -532,6 +591,7 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
                 "delete",
             )
             name_width = 180
+
         for cid, width, label in headings:
             self.models_tree.heading(cid, text=label)
             self.models_tree.column(
@@ -1135,25 +1195,36 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         self._apply_models(rows, select_first=select_first)
 
     def _fetch_models(self) -> list[dict[str, Any]]:
+        import os
         from chain_replay_ml.training.prediction_packages import package_registry_rows
         from .selection_lists import get_sorted_models
 
-        rows = get_sorted_models(self._data_dir(), lightweight=False)
+        d_dir = self._data_dir()
+        rows = get_sorted_models(d_dir, lightweight=False)
+        seen_names = {str(r.get("model_name") or r.get("name") or "") for r in rows}
+
+        candidates: list[str] = []
+        if self.chart_dir:
+            candidates.append(self.chart_dir)
+            candidates.append(chart_data_dir(self.chart_dir))
+        for alt_dir in candidates:
+            if alt_dir and os.path.isdir(alt_dir) and os.path.abspath(alt_dir) != os.path.abspath(d_dir):
+                if os.path.isdir(os.path.join(alt_dir, "models")):
+                    extra_rows = get_sorted_models(alt_dir, lightweight=False)
+                    for er in extra_rows:
+                        m_name = str(er.get("model_name") or er.get("name") or "")
+                        if m_name and m_name not in seen_names:
+                            rows.append(er)
+                            seen_names.add(m_name)
+
         return package_registry_rows(rows)
+
 
     def _apply_models(self, rows: list[dict[str, Any]], *, select_first: bool = False) -> None:
         self._rows = rows
-        # If a selected model exists, prefer its family tab.
-        if self._selected_name:
-            for r in self._rows:
-                if str(r.get("model_name") or r.get("name") or "") == self._selected_name:
-                    from chain_replay_ml.training.registry import resolve_model_registry_family
-
-                    self._set_models_family_tab(resolve_model_registry_family(r))
-                    break
-        else:
-            self._models_family = self._models_family_from_notebook()
+        self._models_family = self._models_family_from_notebook()
         self._populate_models_tree(select_first=select_first)
+
 
     def _populate_models_tree(self, *, select_first: bool = False) -> None:
         self._sync_models_metric_columns()
@@ -1181,11 +1252,13 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
                     return "—"
                 return v[:6]
 
-            if is_tb:
-                m1 = _fmt_pct(prod.get("precision_pct"))
-                m2 = _fmt_pct(prod.get("recall_pct"))
-                m3 = _fmt_pct(prod.get("f1_pct"))
-                m4 = _fmt_roc_auc(prod.get("roc_auc"))
+            if is_tb or self._models_family == "classifier":
+                m_metrics = r.get("metrics") if isinstance(r.get("metrics"), dict) else {}
+                m1 = _fmt_pct(prod.get("precision_pct") or prod.get("precision") or m_metrics.get("precision_pct") or m_metrics.get("precision") or r.get("precision_pct") or r.get("precision"))
+                m2 = _fmt_pct(prod.get("recall_pct") or prod.get("recall") or m_metrics.get("recall_pct") or m_metrics.get("recall") or r.get("recall_pct") or r.get("recall"))
+                m3 = _fmt_pct(prod.get("f1_pct") or prod.get("f1") or m_metrics.get("f1_pct") or m_metrics.get("f1") or r.get("f1_pct") or r.get("f1"))
+                m4 = _fmt_roc_auc(prod.get("roc_auc") or m_metrics.get("roc_auc") or r.get("roc_auc"))
+
             else:
                 m1 = _fmt_num(prod.get("mae"))
                 m2 = _fmt_num(prod.get("rmse"))
@@ -1218,31 +1291,44 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
                     "—" if r.get("protected") else "Delete",
                 ),
             )
-        family_label = (
-            "Triple Barrier" if self._models_family == "triple_barrier" else "Regression"
-        )
+        if self._models_family == "triple_barrier":
+            family_label = "Triple Barrier"
+        elif self._models_family == "classifier":
+            family_label = "Classifier"
+        else:
+            family_label = "Regression"
+
         n_family = len(filtered)
         n_all = len(self._rows)
         # Keep tab titles in sync with counts.
         from chain_replay_ml.training.registry import resolve_model_registry_family
 
         n_reg = sum(1 for r in self._rows if resolve_model_registry_family(r) == "regression")
+        n_cls = sum(1 for r in self._rows if resolve_model_registry_family(r) == "classifier")
         n_tb = sum(1 for r in self._rows if resolve_model_registry_family(r) == "triple_barrier")
         try:
-            self._models_family_nb.tab(
-                self._models_family_tab_ids["regression"],
-                text=f"Regression ({n_reg})",
-            )
-            self._models_family_nb.tab(
-                self._models_family_tab_ids["triple_barrier"],
-                text=f"Triple Barrier ({n_tb})",
-            )
-        except tk.TclError:
+            if "regression" in self._models_family_tab_ids:
+                self._models_family_nb.tab(
+                    self._models_family_tab_ids["regression"],
+                    text=f"Regression ({n_reg})",
+                )
+            if "classifier" in self._models_family_tab_ids:
+                self._models_family_nb.tab(
+                    self._models_family_tab_ids["classifier"],
+                    text=f"Classifier ({n_cls})",
+                )
+            if "triple_barrier" in self._models_family_tab_ids:
+                self._models_family_nb.tab(
+                    self._models_family_tab_ids["triple_barrier"],
+                    text=f"Triple Barrier ({n_tb})",
+                )
+        except (KeyError, tk.TclError):
             pass
         self._status_var.set(
             f"{n_family} {family_label} model(s) · {n_all} total · "
             "research Exp_* packages live in Analysis Lab"
         )
+
         children = self.models_tree.get_children()
         if not children:
             if not (

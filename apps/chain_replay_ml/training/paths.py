@@ -20,7 +20,25 @@ def safe_model_name(name: str) -> str:
 
 
 def model_package_dir(data_dir: str, model_name: str) -> str:
-    return os.path.join(models_dir(data_dir), safe_model_name(model_name))
+    safe = safe_model_name(model_name)
+    direct = os.path.join(models_dir(data_dir), safe)
+    if os.path.isdir(direct):
+        return direct
+
+    candidates = [
+        os.path.join(data_dir, "models", safe),
+        os.path.join(data_dir, "data", "models", safe),
+    ]
+    if os.path.basename(os.path.normpath(data_dir)).lower() == "data":
+        candidates.append(os.path.join(os.path.dirname(os.path.normpath(data_dir)), "models", safe))
+    elif os.path.isdir(os.path.join(data_dir, "data")):
+        candidates.append(os.path.join(data_dir, "data", "models", safe))
+
+    for cand in candidates:
+        if os.path.isdir(cand):
+            return cand
+    return direct
+
 
 
 def model_artifact_paths(data_dir: str, model_name: str) -> dict[str, str]:

@@ -235,27 +235,42 @@ def _has_any_metric(doc: dict[str, Any] | None) -> bool:
     return any(_num_or_none(doc.get(k)) is not None for k in keys)
 
 
+def _pct_val(raw: dict[str, Any], *keys: str) -> float | None:
+    for k in keys:
+        v = raw.get(k)
+        if v is not None and v != "":
+            try:
+                num = float(v)
+                if 0.0 < num <= 1.0:
+                    return round(num * 100.0, 2)
+                return round(num, 2)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
 def _classification_fields_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
     """Pull classification metrics from a metrics blob or WF mean_* aggregate."""
     out: dict[str, Any] = {
-        "accuracy_pct": _first_num(raw.get("accuracy_pct"), raw.get("mean_accuracy_pct")),
-        "precision_pct": _first_num(raw.get("precision_pct"), raw.get("mean_precision_pct")),
-        "recall_pct": _first_num(raw.get("recall_pct"), raw.get("mean_recall_pct")),
-        "specificity_pct": _first_num(raw.get("specificity_pct"), raw.get("mean_specificity_pct")),
-        "f1_pct": _first_num(raw.get("f1_pct"), raw.get("mean_f1_pct")),
+        "accuracy_pct": _pct_val(raw, "accuracy_pct", "mean_accuracy_pct", "accuracy", "mean_accuracy"),
+        "precision_pct": _pct_val(raw, "precision_pct", "mean_precision_pct", "precision", "mean_precision"),
+        "recall_pct": _pct_val(raw, "recall_pct", "mean_recall_pct", "recall", "mean_recall"),
+        "specificity_pct": _pct_val(raw, "specificity_pct", "mean_specificity_pct", "specificity", "mean_specificity"),
+        "f1_pct": _pct_val(raw, "f1_pct", "mean_f1_pct", "f1", "mean_f1"),
         "roc_auc": _first_num(raw.get("roc_auc"), raw.get("mean_roc_auc")),
         "pr_auc": _first_num(raw.get("pr_auc"), raw.get("mean_pr_auc")),
         "brier_score": _first_num(raw.get("brier_score"), raw.get("mean_brier_score")),
         "threshold": _first_num(raw.get("threshold"), raw.get("decision_threshold")),
-        "positive_rate_pct": _first_num(
-            raw.get("positive_rate_pct"), raw.get("mean_positive_rate_pct")
+        "positive_rate_pct": _pct_val(
+            raw, "positive_rate_pct", "mean_positive_rate_pct"
         ),
-        "predicted_positive_rate_pct": _first_num(
-            raw.get("predicted_positive_rate_pct"),
-            raw.get("mean_predicted_positive_rate_pct"),
+        "predicted_positive_rate_pct": _pct_val(
+            raw,
+            "predicted_positive_rate_pct",
+            "mean_predicted_positive_rate_pct",
         ),
     }
-    conf = raw.get("confusion")
+    conf = raw.get("confusion") or raw.get("confusion_matrix")
     if isinstance(conf, dict) and any(k in conf for k in ("tp", "tn", "fp", "fn")):
         cleaned: dict[str, int] = {}
         for key in ("tn", "fp", "fn", "tp"):
@@ -285,6 +300,7 @@ def _classification_fields_from_raw(raw: dict[str, Any]) -> dict[str, Any]:
     if isinstance(ta, list) and ta:
         out["threshold_analysis"] = [dict(row) for row in ta if isinstance(row, dict)]
     return out
+
 
 
 def _build_production_metrics(
@@ -581,12 +597,47 @@ def _resolve_authoritative_metrics(
             prediction_type=prediction_type,
         )
 
+    # Direct production_metrics block in metrics.json (e.g. registered classifier packages)
+    prod_direct = metrics_doc.get("production_metrics") if isinstance(metrics_doc.get("production_metrics"), dict) else None
+    if prod_direct and _has_any_metric(prod_direct):
+        clf = _classification_fields_from_raw(prod_direct)
+        merged = dict(prod_direct)
+        merged.update(clf)
+        return _build_production_metrics(
+            stage_key="production_metrics",
+            stage_label="Production Metrics",
+            source_file="metrics.json",
+            source_path="$.production_metrics",
+            raw_metrics=merged,
+            prediction_type=prediction_type,
+        )
+
+    if _has_any_metric(metrics_doc):
+        clf = _classification_fields_from_raw(metrics_doc)
+        merged = dict(metrics_doc)
+        merged.update(clf)
+        if merged.get("composite_score") is None:
+            merged["composite_score"] = _derive_composite_score(
+                merged,
+                prediction_type=prediction_type,
+                score_refs=score_refs,
+            )
+        return _build_production_metrics(
+            stage_key="metrics_root",
+            stage_label="Production Metrics",
+            source_file="metrics.json",
+            source_path="$",
+            raw_metrics=merged,
+            prediction_type=prediction_type,
+        )
+
     return _build_production_metrics(
         stage_key="unknown",
         stage_label="Unknown",
         source_file="—",
         source_path="—",
         raw_metrics={},
+
         prediction_type=prediction_type,
     )
 
@@ -1154,9 +1205,9 @@ def _resolve_sampling_interval_sec(
 
 
 def resolve_model_registry_family(row: dict[str, Any] | None) -> str:
-    """Map a registry row to Model Registry list tab: ``regression`` | ``triple_barrier``.
+    """Map a registry row to Model Registry list tab: ``regression`` | ``classifier`` | ``triple_barrier``.
 
-    Prefer persisted ``label_strategy``; fall back to OLE primary target ``label_id``.
+    Prefer persisted ``label_strategy``; fall back to OLE primary target ``label_id`` or task_type.
     """
     data = row if isinstance(row, dict) else {}
     strat = str(
@@ -1169,7 +1220,16 @@ def resolve_model_registry_family(row: dict[str, Any] | None) -> str:
     target = str(data.get("target") or "").strip().lower()
     if target == "label_id":
         return "triple_barrier"
+    task_type = str(data.get("task_type") or "").strip().upper()
+    if task_type in ("DIRECTION_CLASSIFIER", "REGIME_CLASSIFIER", "CONFIDENCE_CLASSIFIER", "CLASSIFIER", "BINARY_CLASSIFICATION"):
+        return "classifier"
+    if target.startswith("label_up") or target.startswith("label_dir") or target.startswith("ormp_direction"):
+        return "classifier"
+    pred_type = str(data.get("prediction_type") or "").strip().lower()
+    if pred_type in ("classification", "binary", "multiclass"):
+        return "classifier"
     return "regression"
+
 
 
 def _table_row(data_dir: str, entry: str, pkg: str) -> dict[str, Any]:
@@ -1190,11 +1250,17 @@ def _table_row(data_dir: str, entry: str, pkg: str) -> dict[str, Any]:
     production = doc.get("production_metrics") or {}
     protected, reason = _protection_info(data_dir, doc)
     size_bytes = _folder_size_bytes(pkg)
-    feature_count = _feature_count_for_package(data_dir, entry)
-    note_doc = _load_model_note_doc(pkg)
-    note_text = str(note_doc.get("note") or "")
     meta_path = os.path.join(pkg, "metadata.json")
     meta_raw = _load_json(meta_path) if os.path.isfile(meta_path) else {}
+    summary = meta_raw.get("summary") if isinstance(meta_raw.get("summary"), dict) else {}
+    feature_count = (
+        _feature_count_for_package(data_dir, entry)
+        or (len(config["features"]) if isinstance(config.get("features"), list) else None)
+        or (int(meta_raw["feature_count"]) if meta_raw.get("feature_count") is not None else None)
+        or (int(doc["feature_count"]) if doc.get("feature_count") is not None else None)
+    )
+    note_doc = _load_model_note_doc(pkg)
+    note_text = str(note_doc.get("note") or "")
     lineage = meta_raw.get("lineage") if isinstance(meta_raw.get("lineage"), dict) else {}
     lifecycle_mode = str(lineage.get("lifecycle_mode") or "").strip().lower()
     model_name = doc.get("model_name") or entry
@@ -1214,14 +1280,34 @@ def _table_row(data_dir: str, entry: str, pkg: str) -> dict[str, Any]:
             else {}
         )
     )
+    ds_val = (
+        doc.get("dataset")
+        or config.get("dataset")
+        or (meta_raw.get("market_context") or {}).get("dataset")
+        or (summary.get("dataset") if isinstance(summary, dict) else None)
+        or "—"
+    )
+    tgt_val = (
+        doc.get("target")
+        or config.get("target")
+        or (meta_raw.get("task") or {}).get("target")
+        or (summary.get("target") if isinstance(summary, dict) else None)
+        or "—"
+    )
+    strat_val = (
+        doc.get("validation_strategy")
+        or config.get("validation_strategy")
+        or (summary.get("validation_strategy") if isinstance(summary, dict) else None)
+        or "—"
+    )
     row = {
         "model_name": model_name,
-        "algorithm": doc.get("algorithm") or "—",
-        "dataset": doc.get("dataset") or "—",
+        "algorithm": doc.get("algorithm") or config.get("algorithm") or "—",
+        "dataset": ds_val,
         "sampling_interval_sec": sampling_interval_sec,
-        "validation_strategy": doc.get("validation_strategy") or "—",
-        "target": doc.get("target") or "—",
-        "prediction_type": doc.get("prediction_type") or "regression",
+        "validation_strategy": strat_val,
+        "target": tgt_val,
+        "prediction_type": doc.get("prediction_type") or config.get("prediction_type") or "regression",
         "label_strategy": label_strategy,
         "label_strategy_params": dict(label_strategy_params or {}),
         "label_run_id": str(
@@ -1232,7 +1318,7 @@ def _table_row(data_dir: str, entry: str, pkg: str) -> dict[str, Any]:
         ).strip()
         or None,
         "package_anchor": doc.get("package_anchor") or doc.get("prediction_package_id"),
-        "rows": doc.get("rows"),
+        "rows": doc.get("rows") or (summary.get("rows") if isinstance(summary, dict) else None),
         "feature_count": feature_count,
         "lifecycle_mode": lifecycle_mode or None,
         "lineage": lineage or None,
@@ -1242,12 +1328,20 @@ def _table_row(data_dir: str, entry: str, pkg: str) -> dict[str, Any]:
         "note_preview": _note_preview(note_text),
         "has_note": bool(note_text.strip()),
         "note_updated_at": note_doc.get("updated_at"),
-        "trained_at": doc.get("trained_at"),
+        "trained_at": doc.get("trained_at") or config.get("trained_at"),
         "metrics": {
             "rmse": metrics.get("rmse"),
             "mae": metrics.get("mae"),
             "directional_accuracy_pct": metrics.get("directional_accuracy_pct"),
-            "composite_score": metrics.get("composite_score"),
+            "composite_score": metrics.get("composite_score") or production.get("composite_score"),
+            "precision_pct": metrics.get("precision_pct") or production.get("precision_pct") or _pct_val(metrics, "precision"),
+            "recall_pct": metrics.get("recall_pct") or production.get("recall_pct") or _pct_val(metrics, "recall"),
+            "f1_pct": metrics.get("f1_pct") or production.get("f1_pct") or _pct_val(metrics, "f1"),
+            "accuracy_pct": metrics.get("accuracy_pct") or production.get("accuracy_pct") or _pct_val(metrics, "accuracy"),
+            "roc_auc": metrics.get("roc_auc") or production.get("roc_auc"),
+            "pr_auc": metrics.get("pr_auc") or production.get("pr_auc"),
+            "brier_score": metrics.get("brier_score") or production.get("brier_score"),
+            "specificity_pct": metrics.get("specificity_pct") or production.get("specificity_pct"),
         },
         "production_metrics": production,
         "status": doc.get("status") or "ready",
@@ -1280,6 +1374,8 @@ def _table_row(data_dir: str, entry: str, pkg: str) -> dict[str, Any]:
         row["lifecycle_status"] = "ACTIVE"
         row["context_key"] = f"NIFTY_3s_{row['task_type']}_5m_R000"
         row["package_model_id"] = str(model_name)
+    row["registry_family"] = resolve_model_registry_family(row)
+
     # Phase X — live disk status (models remain listed if sources deleted).
     ds_name = str(row.get("dataset") or "").strip()
     run_id = str(row.get("label_run_id") or "").strip()
@@ -1315,47 +1411,57 @@ def list_trained_models(
     Model Registry only shows Create Model Builder / production candidates.
     Pass ``include_experiments=True`` for research lookups (SHAP, get-by-name).
     """
-    base = models_dir(data_dir)
-    if not os.path.isdir(base):
-        return []
+    search_dirs: list[str] = [models_dir(data_dir)]
+    if os.path.isdir(os.path.join(data_dir, "data", "models")):
+        search_dirs.append(os.path.join(data_dir, "data", "models"))
+    if os.path.basename(os.path.normpath(data_dir)).lower() == "data":
+        parent_models = os.path.join(os.path.dirname(os.path.normpath(data_dir)), "models")
+        if os.path.isdir(parent_models):
+            search_dirs.append(parent_models)
 
+    seen_names: set[str] = set()
     rows: list[dict[str, Any]] = []
-    for entry in sorted(os.listdir(base)):
-        if entry.startswith("."):
+
+    for base in search_dirs:
+        if not os.path.isdir(base):
             continue
-        pkg = os.path.join(base, entry)
-        if not os.path.isdir(pkg):
-            continue
-        try:
-            row = _table_row(data_dir, entry, pkg)
-        except Exception:
-            # Corrupt / truncated package JSON must not block Model Builder catalog load.
-            research = is_research_experiment_model(entry)
-            row = {
-                "model_name": entry,
-                "metrics": {
-                    "rmse": None,
-                    "mae": None,
-                    "directional_accuracy_pct": None,
-                    "composite_score": None,
-                },
-                "status": "corrupt",
-                "trained_at": None,
-                "is_research_experiment": research,
-                "registry_scope": "experiment" if research else "production",
-            }
-        if not include_experiments and row.get("is_research_experiment"):
-            continue
-        if lightweight:
-            row = {
-                "model_name": row["model_name"],
-                "metrics": row["metrics"],
-                "status": row["status"],
-                "trained_at": row["trained_at"],
-                "is_research_experiment": bool(row.get("is_research_experiment")),
-                "registry_scope": row.get("registry_scope") or "production",
-            }
-        rows.append(row)
+        for entry in sorted(os.listdir(base)):
+            if entry.startswith(".") or entry in seen_names:
+                continue
+            pkg = os.path.join(base, entry)
+            if not os.path.isdir(pkg):
+                continue
+            try:
+                row = _table_row(data_dir, entry, pkg)
+            except Exception:
+                # Corrupt / truncated package JSON must not block Model Builder catalog load.
+                research = is_research_experiment_model(entry)
+                row = {
+                    "model_name": entry,
+                    "metrics": {
+                        "rmse": None,
+                        "mae": None,
+                        "directional_accuracy_pct": None,
+                        "composite_score": None,
+                    },
+                    "status": "corrupt",
+                    "trained_at": None,
+                    "is_research_experiment": research,
+                    "registry_scope": "experiment" if research else "production",
+                }
+            if not include_experiments and row.get("is_research_experiment"):
+                continue
+            if lightweight:
+                row = {
+                    "model_name": row["model_name"],
+                    "metrics": row["metrics"],
+                    "status": row["status"],
+                    "trained_at": row["trained_at"],
+                    "is_research_experiment": bool(row.get("is_research_experiment")),
+                    "registry_scope": row.get("registry_scope") or "production",
+                }
+            seen_names.add(entry)
+            rows.append(row)
 
     rows.sort(key=lambda r: str(r.get("trained_at") or r.get("model_name") or ""), reverse=True)
     if not lightweight:
@@ -1394,6 +1500,7 @@ def _enrich_rows_with_lifecycle(data_dir: str, rows: list[dict[str, Any]]) -> No
             row["model_id"] = champ.get("model_id")
             row["current_version"] = champ.get("current_version")
             row["version_count"] = champ.get("current_version_number")
+
 
 
 def list_champion_models(data_dir: str) -> list[dict[str, Any]]:
@@ -1628,11 +1735,23 @@ def load_model_detail(data_dir: str, model_name: str) -> dict[str, Any]:
             imp = row.get("Importance") or row.get("importance_pct") or row.get("importance")
             if feat:
                 feature_importance.append({
-                    "feature": feat,
-                    "importance_pct": float(imp) if imp not in (None, "") else 0.0,
+                    "feature": str(feat),
+                    "importance_pct": float(imp) if imp not in (None, "") else None,
                 })
-        feature_importance.sort(key=lambda x: x.get("importance_pct") or 0.0, reverse=True)
+        if any(x.get("importance_pct") is not None for x in feature_importance):
+            feature_importance.sort(key=lambda x: float(x.get("importance_pct") or 0.0), reverse=True)
+    if not feature_importance:
+        feats = (
+            config_data.get("features")
+            or summary.get("feature_names")
+            or (metadata_art.get("data") if isinstance(metadata_art.get("data"), dict) else {}).get("features")
+            or []
+        )
+        for f in feats:
+            if f:
+                feature_importance.append({"feature": str(f), "importance_pct": None})
     _mark("feature_importance", t0)
+
 
     t0 = time.perf_counter()
     walk_forward = _load_walk_forward_artifacts(pkg, prediction_type=prediction_type)
@@ -1872,15 +1991,36 @@ def enrich_model_detail_heavy(data_dir: str, doc: dict[str, Any], *, need: str) 
 def delete_model(data_dir: str, model_name: str) -> dict[str, Any]:
     assert_model_deletable(data_dir, model_name)
     safe = safe_model_name(model_name)
-    pkg = model_artifact_paths(data_dir, model_name)["package_dir"]
-    if not os.path.isdir(pkg):
+    paths = model_artifact_paths(data_dir, model_name)
+    pkg = paths["package_dir"]
+
+    # Gather all candidate directories for complete deletion
+    targets: list[str] = []
+    if os.path.isdir(pkg):
+        targets.append(pkg)
+    cand1 = os.path.join(data_dir, "models", safe)
+    cand2 = os.path.join(data_dir, "data", "models", safe)
+    cand3 = (
+        os.path.join(os.path.dirname(os.path.normpath(data_dir)), "models", safe)
+        if os.path.basename(os.path.normpath(data_dir)).lower() == "data"
+        else None
+    )
+    for cand in (cand1, cand2, cand3):
+        if cand and os.path.isdir(cand):
+            targets.append(cand)
+
+    if not targets:
         raise FileNotFoundError(f"Model package not found: {safe}")
+
     from chain_replay_ml.replay_session_store import delete_replay_sessions_for_model
 
     # Clear selection before rmtree so a failed wipe still leaves no stale active pointer.
     clear_active_model_if(data_dir, model_name)
     replay_cleanup = delete_replay_sessions_for_model(data_dir, safe)
-    shutil.rmtree(pkg)
+
+    for t in set(targets):
+        shutil.rmtree(t, ignore_errors=True)
+
     try:
         from .lifecycle_store import delete_history_for_model
 
@@ -1892,6 +2032,7 @@ def delete_model(data_dir: str, model_name: str) -> dict[str, Any]:
         "model_name": safe,
         "replay_sessions_deleted": int(replay_cleanup.get("deleted_sessions") or 0),
     }
+
 
 
 from .default_model import resolve_default_model_name  # re-export for callers

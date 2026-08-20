@@ -1,6 +1,7 @@
 """Dossier generator & exporter for Phase 4F.6.
 
-Reads authoritative persisted records from analysis.db and generates comprehensive markdown & JSON dossiers.
+Reads authoritative persisted records from analysis.db and generates comprehensive markdown & JSON dossiers,
+including Discovered Feature Intelligence, Feature Synergy Discoveries, and Candidate Feature Mutation Drill-Downs.
 """
 
 from __future__ import annotations
@@ -12,10 +13,18 @@ from typing import Any
 
 from chain_replay_ml.fine_tuning.persistence import load_fine_tuning_records_for_context
 from chain_replay_ml.model_ranking.persistence import load_candidate_rankings_for_context
-from chain_replay_ml.overnight_campaign.persistence import load_campaign_state
+from chain_replay_ml.overnight_campaign.persistence import (
+    load_campaign_state,
+    load_candidate_specs_for_campaign,
+)
 from chain_replay_ml.overnight_campaign.types import CampaignStatus, CampaignStopReason
 from chain_replay_ml.research_memory.db import connect_analysis_db, init_analysis_db
+from .feature_intelligence import extract_discovered_feature_intelligence
 from .types import (
+    CandidateFeatureDeltaView,
+    DiscoveredFeatureRecord,
+    DiscoveredFeatureStatus,
+    DiscoveredFeatureSynergy,
     FeatureGovernanceAuditSummary,
     LineageNodeView,
     MorningResearchDossier,
@@ -44,7 +53,21 @@ def generate_morning_research_dossier(
     # 2. Load fine-tuning trials for this context
     fine_tuning_trials = load_fine_tuning_records_for_context(data_dir, target_context)
 
-    # 3. Build lineage nodes
+    # 3. Load persisted candidate specs (for exact feature subsets)
+    cand_specs = load_candidate_specs_for_campaign(data_dir, campaign_id=campaign_id, context_key=target_context)
+    if not cand_specs:
+        cand_specs = load_candidate_specs_for_campaign(data_dir, context_key=target_context)
+
+    # 4. Extract Discovered Feature Intelligence & Candidate Mutation Drill-Downs
+    discovered_feats, synergies, candidate_deltas = extract_discovered_feature_intelligence(
+        data_dir,
+        target_context,
+        ranked_candidates=ranked_candidates,
+        fine_tuning_trials=fine_tuning_trials,
+        candidate_specs=cand_specs,
+    )
+
+    # 5. Build lineage nodes
     lineage_nodes: list[LineageNodeView] = []
     trial_map = {t.child_candidate_id: t for t in fine_tuning_trials}
     score_map = {rc.candidate_id: rc.composite_score for rc in ranked_candidates}
@@ -64,6 +87,9 @@ def generate_morning_research_dossier(
         if delta_comp is None and parent_id is not None and parent_id in score_map:
             delta_comp = round(c.composite_score - score_map[parent_id], 4)
 
+        c_spec = cand_specs.get(c.candidate_id, {})
+        c_feats = c_spec.get("features", list(c.model_metrics.keys()))
+
         node = LineageNodeView(
             candidate_id=c.candidate_id,
             parent_candidate_id=parent_id,
@@ -76,15 +102,18 @@ def generate_morning_research_dossier(
             delta_vs_parent=delta_comp,
             decision_verdict=verdict,
             is_pruned=is_pruned,
-            features=list(c.model_metrics.keys()),
-            algorithm="xgboost",
+            features=c_feats,
+            algorithm=c_spec.get("algorithm", "xgboost"),
         )
         lineage_nodes.append(node)
 
-    # 4. Feature Governance Summary
+    # 6. Feature Governance Summary
     all_used_features: set[str] = set()
-    for c in ranked_candidates:
-        all_used_features.update(c.model_metrics.keys())
+    for f_rec in discovered_feats:
+        all_used_features.add(f_rec.feature_name)
+    if not all_used_features:
+        for c in ranked_candidates:
+            all_used_features.update(c.model_metrics.keys())
 
     feat_summary = FeatureGovernanceAuditSummary(
         total_features_evaluated=len(all_used_features),
@@ -94,7 +123,7 @@ def generate_morning_research_dossier(
         unknown_features_governed=[],
     )
 
-    # 5. Extract Best Metrics
+    # 7. Extract Best Metrics
     best_cand = ranked_candidates[0] if ranked_candidates else None
     best_id = best_cand.candidate_id if best_cand else (state.best_candidate_id if state else None)
     best_class = best_cand.recommendation_class.value if best_cand else None
@@ -108,7 +137,7 @@ def generate_morning_research_dossier(
     start_score = state.starting_best_score if state else (best_comp if best_cand else 0.0)
     total_lift = round(best_comp - start_score, 4)
 
-    # 6. Formulate Recommended Next Actions for Researcher
+    # 8. Formulate Recommended Next Actions for Researcher
     actions: list[str] = []
     if best_cand:
         if best_cand.recommendation_class.value == "CHAMPION_CANDIDATE":
@@ -153,6 +182,9 @@ def generate_morning_research_dossier(
         lineage_tree=lineage_nodes,
         feature_governance_summary=feat_summary,
         recommended_next_actions=actions,
+        discovered_features=discovered_feats,
+        discovered_synergies=synergies,
+        candidate_feature_deltas=candidate_deltas,
         warnings=state.warnings if state else [],
     )
 
@@ -184,8 +216,29 @@ def export_morning_dossier_markdown(dossier: MorningResearchDossier) -> str:
         md.append(f"- {act}")
     md.append("")
 
-    # 3. Model & Trading Leaderboard
-    md.append("## 3. Candidate Research Leaderboard (Top 10)")
+    # 3. Discovered Feature Intelligence
+    md.append("## 3. Discovered Feature Intelligence (⭐ TOP DISCOVERED FEATURES)")
+    md.append("| Category | Feature | Tested | Pos. Children | Best Score | Best Trading | Best Δ vs Parent | Phase 4E Evidence | Status / Recommendation |")
+    md.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+    for f in dossier.discovered_features:
+        icon = "🟢" if f.status == DiscoveredFeatureStatus.STRONG_DISCOVERED else ("🟡" if f.status == DiscoveredFeatureStatus.PROMISING else "🔴")
+        d_str = f"+{f.best_delta_vs_parent:.2f}" if f.best_delta_vs_parent >= 0 else f"{f.best_delta_vs_parent:.2f}"
+        md.append(f"| {icon} {f.status.value} | **`{f.feature_name}`** | {f.times_tested} | {f.positive_descendant_count} | `{f.best_composite_score:.2f}` | `{f.best_trading_score:.2f}` | **`{d_str}`** | `{f.phase4e_evidence_level}` | `{f.recommendation}` |")
+    md.append("")
+
+    # 4. Feature Synergy Discoveries
+    if dossier.discovered_synergies:
+        md.append("## 4. Feature Synergy Discoveries (⚡ PAIRWISE SYNERGIES)")
+        md.append("| Feature A | Feature B | Times Tested | Best Δ Composite | Best Δ Trading | Cross-Regime | Status |")
+        md.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+        for s in dossier.discovered_synergies[:15]:
+            d_comp = f"+{s.best_delta_composite:.2f}" if s.best_delta_composite >= 0 else f"{s.best_delta_composite:.2f}"
+            d_trade = f"+{s.best_delta_trading:.2f}" if s.best_delta_trading >= 0 else f"{s.best_delta_trading:.2f}"
+            md.append(f"| `{s.feature_a}` | `{s.feature_b}` | {s.times_tested} | **`{d_comp}`** | `{d_trade}` | `{s.cross_regime_evidence}` | `{s.status}` |")
+        md.append("")
+
+    # 5. Model & Trading Leaderboard
+    md.append("## 5. Candidate Research Leaderboard (Top 10)")
     md.append("| Rank | Candidate ID | Composite | Trading | Model | Win Rate | Profit Factor | Max DD | Class |")
     md.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
     for i, c in enumerate(dossier.ranked_candidates[:10], 1):
@@ -195,8 +248,20 @@ def export_morning_dossier_markdown(dossier: MorningResearchDossier) -> str:
         md.append(f"| **#{i}** | `{c.candidate_id}` | **`{c.composite_score:.2f}`** | `{c.trading_evidence_score:.2f}` | `{c.model_evidence_score:.2f}` | `{wr:.1f}%` | `{pf:.2f}` | `{dd:.1f}%` | `{c.recommendation_class.value}` |")
     md.append("")
 
-    # 4. Generational Lineage & Fine-Tuning Trials
-    md.append("## 4. Generational Lineage & Mutation Trials")
+    # 6. Candidate Feature Mutation Drill-Down (Top 5)
+    if dossier.candidate_feature_deltas:
+        md.append("## 6. Candidate Feature Mutation Drill-Down (Top 5)")
+        for v in dossier.candidate_feature_deltas[:5]:
+            d_comp_str = f"+{v.delta_composite:.2f}" if v.delta_composite >= 0 else f"{v.delta_composite:.2f}"
+            md.append(f"### Candidate `{v.candidate_id}` (Score: `{v.composite_score:.2f}`, ΔParent: `{d_comp_str}`)")
+            md.append(f"- **Parent Candidate**: `{v.parent_candidate_id or 'Root Initial Spec'}`")
+            md.append(f"- **Added Features**: `{', '.join(v.added_features) if v.added_features else 'None'}`")
+            md.append(f"- **Removed Features**: `{', '.join(v.removed_features) if v.removed_features else 'None'}`")
+            md.append(f"- **Child Features ({len(v.child_features)})**: `{', '.join(v.child_features)}`")
+            md.append(f"- **OOS Trading Metrics**: WinRate: `{v.win_rate_pct:.1f}%` | PF: `{v.profit_factor:.2f}` | MaxDD: `{v.max_drawdown_pct:.1f}%`\n")
+
+    # 7. Generational Lineage & Fine-Tuning Trials
+    md.append("## 7. Generational Lineage & Mutation Trials")
     md.append("| Generation | Child Candidate | Parent Candidate | Mutation Type | Delta Composite | Decision Verdict |")
     md.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
     for t in dossier.fine_tuning_trials:
@@ -204,8 +269,8 @@ def export_morning_dossier_markdown(dossier: MorningResearchDossier) -> str:
         md.append(f"| `Gen {t.generation_number}` | `{t.child_candidate_id}` | `{t.parent_candidate_id}` | `{t.mutation_type.value}` | **`{delta_str}`** | `{t.decision_verdict.value}` |")
     md.append("")
 
-    # 5. Feature Lifecycle Governance Summary
-    md.append("## 5. Feature Lifecycle Governance Audit")
+    # 8. Feature Lifecycle Governance Summary
+    md.append("## 8. Feature Lifecycle Governance Audit")
     md.append(f"- **Total Active Features Explored**: `{dossier.feature_governance_summary.total_features_evaluated}`")
     md.append(f"- **Features Used**: `{', '.join(dossier.feature_governance_summary.features_used[:15])}...`")
     md.append(f"- **Deprecated Features Blocked**: `{len(dossier.feature_governance_summary.deprecated_features_blocked)} (100% Excluded)`")

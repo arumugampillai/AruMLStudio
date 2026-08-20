@@ -303,7 +303,10 @@ def build_sample_csv_kwargs(
     return kwargs
 
 
-INTERVALS = (3, 6, 9, 10, 15, 30, 60)
+from chain_replay_ml.dataset_builder.master_naming import MASTER_DATASET_INTERVALS_SEC
+
+INTERVALS = MASTER_DATASET_INTERVALS_SEC
+
 
 
 def _fmt_num(n: Any) -> str:

@@ -57,8 +57,18 @@ from chain_replay_ml.research_recommendations.priority_scoring import (
 from .persistence import (
     init_campaign_tables,
     load_campaign_state,
+    persist_campaign_event,
     persist_campaign_state,
+    persist_candidate_specs,
 )
+from chain_replay_ml.model_taxonomy import ModelContextKey
+from chain_replay_ml.dataset_builder.master_naming import (
+    master_dataset_slug,
+    resolve_master_db_path,
+)
+import os
+import sqlite3
+
 from .types import (
     CampaignConfig,
     CampaignState,
@@ -119,12 +129,29 @@ class OvernightCampaignRunner:
         self.config = config
         self.evaluator_fn = evaluator_fn or _default_synthetic_evaluator
         self.schema = schema
+        self._cancel_requested = False
         init_campaign_tables(self.data_dir)
 
-    def run(self) -> OvernightCampaignReport:
+    def cancel(self) -> None:
+        """Thread-safe request to gracefully cancel campaign execution after the current candidate."""
+        self._cancel_requested = True
+
+    def run(
+        self,
+        *,
+        progress_callback: Callable[[CampaignState, str], None] | None = None,
+    ) -> OvernightCampaignReport:
         """Execute the autonomous overnight research campaign."""
         start_ts = time.time()
         start_iso = _utc_now_iso()
+        self._cancel_requested = False
+
+        def _notify(st: CampaignState, msg: str) -> None:
+            if progress_callback is not None:
+                try:
+                    progress_callback(st, msg)
+                except Exception:
+                    pass
 
         # Check for existing state (idempotency / recovery)
         _, existing_state = load_campaign_state(self.data_dir, self.config.campaign_id)
@@ -140,6 +167,9 @@ class OvernightCampaignRunner:
             last_update_iso=start_iso,
         )
 
+        # 1. Persist campaign row into overnight_campaigns FIRST (ensures foreign-key constraint is satisfied)
+        persist_campaign_state(self.data_dir, self.config, state)
+
         all_candidate_specs_by_id: dict[str, CandidateSpec] = {}
         all_ranked_scores_by_sig: dict[str, CandidateEvidenceScore] = {}
         all_ranked_scores: list[CandidateEvidenceScore] = []
@@ -152,25 +182,101 @@ class OvernightCampaignRunner:
             )
         )
 
+        # 2. Log CAMPAIGN_STARTED audit event using authoritative master_status resolver
+        from chain_replay_ml.dataset_builder.master_status import read_master_dataset_status
+
+        ctx_str = self.config.context_keys[0] if self.config.context_keys else "NIFTY_6s_DIRECTION_CLASSIFIER_5m_R001"
+        ctx_obj = ModelContextKey.from_key_str(ctx_str)
+        market = str(ctx_obj.market).upper()
+        int_sec = int(ctx_obj.sampling_interval_sec)
+        ds_slug = master_dataset_slug(market=market, sampling_interval_sec=int_sec)
+
+        status_info = read_master_dataset_status(
+            self.data_dir,
+            market=market,
+            interval_sec=int_sec,
+        )
+        db_exists = bool(status_info.get("exists"))
+        master_db = status_info.get("master_db_abs") or resolve_master_db_path(self.data_dir, market=market, sampling_interval_sec=int_sec)
+        master_rows = int(status_info.get("row_count") or 0)
+        trading_days_list = list(status_info.get("days_in_master") or [])
+        schema_hash_val = status_info.get("dataset_fingerprint") or (status_info.get("master_meta") or {}).get("schema_hash")
+
+        persist_campaign_event(
+            self.data_dir,
+            campaign_id=self.config.campaign_id,
+            generation_number=0,
+            event_type="CAMPAIGN_STARTED",
+            message=f"Campaign {self.config.campaign_id} started for {ctx_str} on {ds_slug}.db ({master_rows:,} rows · {len(trading_days_list)} days).",
+            details={
+                "campaign_id": self.config.campaign_id,
+                "context_key": ctx_str,
+                "market": market,
+                "sampling_interval_sec": int_sec,
+                "task_type": ctx_obj.task_type.value,
+                "prediction_horizon": ctx_obj.prediction_horizon,
+                "regime_id": ctx_obj.regime_id,
+                "master_db_path": master_db,
+                "master_db_exists": db_exists,
+                "row_count": master_rows,
+                "trading_days": trading_days_list,
+                "trading_day_count": len(trading_days_list),
+                "schema_hash": schema_hash_val,
+                "max_generations": self.config.max_generations,
+                "max_candidates": self.config.max_candidates_total,
+                "max_hours": self.config.max_duration_hours,
+                "plateau_enabled": self.config.plateau_enabled,
+                "plateau_patience": self.config.plateau_patience_generations,
+                "plateau_min_lift": self.config.plateau_min_lift,
+            },
+        )
+
+
         try:
             # Loop across generations: Generation 0 (Seed/Phase 4E) -> Generation 1..N (Fine-Tuning)
             for gen in range(state.current_generation, self.config.max_generations):
+                if self._cancel_requested:
+                    state.status = CampaignStatus.CAMPAIGN_STOPPED
+                    state.stop_reason = CampaignStopReason.USER_CANCELLED
+                    _notify(state, "Campaign cancellation requested by user.")
+                    persist_campaign_event(
+                        self.data_dir,
+                        campaign_id=self.config.campaign_id,
+                        generation_number=gen,
+                        event_type="CAMPAIGN_STOPPED",
+                        message="Campaign cancellation requested by user.",
+                        details={"generation": gen},
+                    )
+                    break
+
                 state.current_generation = gen
                 state.status = CampaignStatus.GENERATING_CANDIDATES
                 state.last_update_iso = _utc_now_iso()
                 persist_campaign_state(self.data_dir, self.config, state)
+                _notify(state, f"Generation {gen}: Generating candidate specifications...")
+
+                persist_campaign_event(
+                    self.data_dir,
+                    campaign_id=self.config.campaign_id,
+                    generation_number=gen,
+                    event_type="GENERATION_STARTED",
+                    message=f"Generation {gen} initialized. Generating candidate specifications...",
+                    details={"generation": gen, "max_generations": self.config.max_generations},
+                )
 
                 # Check duration stop condition
                 elapsed_hours = (time.time() - start_ts) / 3600.0
                 if elapsed_hours >= self.config.max_duration_hours:
                     state.status = CampaignStatus.COMPLETED
                     state.stop_reason = CampaignStopReason.MAX_DURATION_EXCEEDED
+                    _notify(state, "Duration limit reached.")
                     break
 
                 # Check candidate budget stop condition
                 if state.total_candidates_trained >= self.config.max_candidates_total:
                     state.status = CampaignStatus.COMPLETED
                     state.stop_reason = CampaignStopReason.MAX_CANDIDATES_REACHED
+                    _notify(state, "Maximum candidate budget reached.")
                     break
 
                 # 1. Generate Candidates for this Generation
@@ -221,14 +327,37 @@ class OvernightCampaignRunner:
 
                 for c in gen_candidates:
                     all_candidate_specs_by_id[c.candidate_id] = c
+                    persist_campaign_event(
+                        self.data_dir,
+                        campaign_id=self.config.campaign_id,
+                        generation_number=gen,
+                        event_type="CANDIDATE_CREATED",
+                        candidate_id=c.candidate_id,
+                        message=f"Created candidate {c.candidate_id} ({c.algorithm}, {len(c.features)} features).",
+                        details={
+                            "candidate_id": c.candidate_id,
+                            "signature_hash": c.signature_hash,
+                            "parent_candidate_id": c.lineage.parent_candidate_id if c.lineage else None,
+                            "generation": gen,
+                            "mutation_type": c.lineage.mutation_type.value if c.lineage else "INITIAL_SPEC",
+                            "mutation_description": c.lineage.mutation_description if c.lineage else "",
+                            "algorithm": c.algorithm,
+                            "features": list(c.features),
+                            "feature_count": len(c.features),
+                            "hyperparameters": dict(c.hyperparameters),
+                            "eligibility": c.eligibility.value,
+                        },
+                    )
 
                 state.total_candidates_generated += len(gen_candidates)
+                persist_candidate_specs(self.data_dir, gen_candidates, campaign_id=self.config.campaign_id)
 
                 # Filter eligible candidates for training
                 trainable_candidates = [c for c in gen_candidates if c.eligibility != CandidateEligibility.EXCLUDED]
-                if not trainable_candidates and gen == 0:
+                if not trainable_candidates:
                     state.status = CampaignStatus.COMPLETED
                     state.stop_reason = CampaignStopReason.NO_ELIGIBLE_CANDIDATES
+                    _notify(state, f"Generation {gen}: No eligible candidates discovered.")
                     break
 
                 # 2. Train & Evaluate Candidates
@@ -239,11 +368,35 @@ class OvernightCampaignRunner:
                 gen_scores: list[CandidateEvidenceScore] = []
                 budget_exhausted = False
                 for cand in trainable_candidates:
+                    if self._cancel_requested:
+                        state.status = CampaignStatus.CAMPAIGN_STOPPED
+                        state.stop_reason = CampaignStopReason.USER_CANCELLED
+                        _notify(state, "Campaign cancellation requested by user.")
+                        break
+
                     if state.total_candidates_trained >= self.config.max_candidates_total:
                         budget_exhausted = True
                         break
                     try:
                         state.status = CampaignStatus.OOS_EVALUATION
+                        _notify(state, f"Evaluating candidate {cand.candidate_id} ({state.total_candidates_trained + 1}/{self.config.max_candidates_total})...")
+
+                        persist_campaign_event(
+                            self.data_dir,
+                            campaign_id=self.config.campaign_id,
+                            generation_number=gen,
+                            event_type="CANDIDATE_EVAL_START",
+                            candidate_id=cand.candidate_id,
+                            message=f"Evaluating candidate {cand.candidate_id} across 5 walk-forward folds...",
+                            details={
+                                "candidate_id": cand.candidate_id,
+                                "algorithm": cand.algorithm,
+                                "features": list(cand.features),
+                                "feature_count": len(cand.features),
+                                "validation_strategy": "Walk Forward (5 folds)",
+                            },
+                        )
+
                         m_metrics, t_metrics = self.evaluator_fn(self.data_dir, cand)
                         state.status = CampaignStatus.TRADING_EVALUATION
 
@@ -260,20 +413,67 @@ class OvernightCampaignRunner:
                         state.total_candidates_trained += 1
                         state.total_candidates_evaluated += 1
                         state.consecutive_failures = 0
+
+                        persist_campaign_event(
+                            self.data_dir,
+                            campaign_id=self.config.campaign_id,
+                            generation_number=gen,
+                            event_type="CANDIDATE_EVAL_DONE",
+                            candidate_id=cand.candidate_id,
+                            message=f"Candidate {cand.candidate_id} evaluated: Composite {ev_score.composite_score:.2f} pts (Model {ev_score.model_evidence_score:.2f}, Trading {ev_score.trading_evidence_score:.2f}, AUC {m_metrics.get('roc_auc', 0.0):.4f}, WinRate {t_metrics.get('win_rate_pct', 0.0):.1f}%).",
+                            details={
+                                "candidate_id": cand.candidate_id,
+                                "composite_score": ev_score.composite_score,
+                                "model_evidence_score": ev_score.model_evidence_score,
+                                "trading_evidence_score": ev_score.trading_evidence_score,
+                                "risk_penalty": ev_score.risk_penalty,
+                                "model_metrics": dict(m_metrics),
+                                "trading_metrics": dict(t_metrics),
+                                "recommendation_class": ev_score.recommendation_class.value,
+                                "warnings": list(ev_score.warnings),
+                            },
+                        )
+
+                        persist_campaign_event(
+                            self.data_dir,
+                            campaign_id=self.config.campaign_id,
+                            generation_number=gen,
+                            event_type="CANDIDATE_VERDICT",
+                            candidate_id=cand.candidate_id,
+                            message=f"Candidate {cand.candidate_id} verdict: {ev_score.recommendation_class.value} (Score: {ev_score.composite_score:.2f} pts).",
+                            details={
+                                "candidate_id": cand.candidate_id,
+                                "verdict": ev_score.recommendation_class.value,
+                                "composite_score": ev_score.composite_score,
+                                "warnings": list(ev_score.warnings),
+                            },
+                        )
+
                     except Exception as e:
                         state.total_failures += 1
                         state.consecutive_failures += 1
                         state.warnings.append(f"CANDIDATE_EVAL_ERROR_{cand.candidate_id}: {str(e)}")
+                        persist_campaign_event(
+                            self.data_dir,
+                            campaign_id=self.config.campaign_id,
+                            generation_number=gen,
+                            event_type="CANDIDATE_EVAL_ERROR",
+                            candidate_id=cand.candidate_id,
+                            message=f"⚠️ Candidate {cand.candidate_id} evaluation failed: {str(e)}",
+                            details={"candidate_id": cand.candidate_id, "error": str(e)},
+                        )
                         if state.consecutive_failures >= self.config.max_consecutive_failures:
                             state.status = CampaignStatus.CAMPAIGN_FAILED
                             state.stop_reason = CampaignStopReason.EXCESSIVE_FAILURES
+                            _notify(state, "Campaign halted: Excessive candidate failures.")
                             break
 
-                if state.status == CampaignStatus.CAMPAIGN_FAILED:
+                if state.status in (CampaignStatus.CAMPAIGN_FAILED, CampaignStatus.CAMPAIGN_STOPPED):
                     break
 
                 # 3. Rank Candidates in Context
                 state.status = CampaignStatus.RANKING
+                _notify(state, f"Generation {gen}: Ranking candidates...")
                 for s in gen_scores:
                     all_ranked_scores_by_sig[s.signature_hash] = s
                 all_ranked_scores = list(all_ranked_scores_by_sig.values())
@@ -299,6 +499,7 @@ class OvernightCampaignRunner:
 
                 # Update best score and candidate
                 prev_best = state.best_composite_score
+                prev_best_id = state.best_candidate_id
                 for r in context_reports:
                     if r.top_candidate and r.top_candidate.composite_score > state.best_composite_score:
                         state.best_candidate_id = r.top_candidate.candidate_id
@@ -310,8 +511,44 @@ class OvernightCampaignRunner:
                 if gen == 0:
                     state.starting_best_score = state.best_composite_score
 
+                # Log generation champion & global champion transition
+                if context_reports and context_reports[0].top_candidate:
+                    gen_top = context_reports[0].top_candidate
+                    persist_campaign_event(
+                        self.data_dir,
+                        campaign_id=self.config.campaign_id,
+                        generation_number=gen,
+                        event_type="GEN_CHAMPION_ELECTED",
+                        candidate_id=gen_top.candidate_id,
+                        message=f"Generation {gen} Champion: {gen_top.candidate_id} (Score: {gen_top.composite_score:.2f} pts).",
+                        details={
+                            "generation": gen,
+                            "top_candidate_id": gen_top.candidate_id,
+                            "composite_score": gen_top.composite_score,
+                            "model_score": gen_top.model_evidence_score,
+                            "trading_score": gen_top.trading_evidence_score,
+                        },
+                    )
+
+                if prev_best_id != state.best_candidate_id:
+                    persist_campaign_event(
+                        self.data_dir,
+                        campaign_id=self.config.campaign_id,
+                        generation_number=gen,
+                        event_type="GLOBAL_CHAMP_UPDATED",
+                        candidate_id=state.best_candidate_id,
+                        message=f"👑 New Global Champion: {state.best_candidate_id} (Score: {state.best_composite_score:.2f} pts, Lift: +{state.best_composite_score - state.starting_best_score:.2f}).",
+                        details={
+                            "new_champion_id": state.best_candidate_id,
+                            "previous_champion_id": prev_best_id,
+                            "composite_score": state.best_composite_score,
+                            "lift": state.best_composite_score - state.starting_best_score,
+                        },
+                    )
+
                 # 4. Fine-Tuning Evaluation & Plateau Check
                 state.status = CampaignStatus.FINE_TUNING
+                _notify(state, f"Generation {gen}: Performing fine-tuning mutation analysis...")
                 if gen > 0 and gen_scores:
                     score_lookup = {s.candidate_id: s for s in all_ranked_scores}
                     camp_res = ft_controller.evaluate_and_record_campaign(
@@ -324,30 +561,83 @@ class OvernightCampaignRunner:
                     persist_fine_tuning_records(self.data_dir, camp_res.trial_records)
                     state.total_candidates_pruned += camp_res.pruned_paths_count
 
-                    # Plateau check
-                    lift = state.best_composite_score - prev_best
-                    if lift < self.config.plateau_min_lift:
-                        state.consecutive_plateau_generations += 1
-                        if state.consecutive_plateau_generations >= self.config.plateau_patience_generations and not budget_exhausted:
-                            state.status = CampaignStatus.COMPLETED
-                            state.stop_reason = CampaignStopReason.PLATEAU_DETECTED
-                            break
-                    else:
-                        state.consecutive_plateau_generations = 0
+                    # Plateau check (only if plateau detection is enabled and beyond minimum warm-up generations)
+                    if self.config.plateau_enabled and gen >= self.config.min_generations_before_plateau:
+                        lift = state.best_composite_score - prev_best
+                        if lift < self.config.plateau_min_lift:
+                            state.consecutive_plateau_generations += 1
+                            persist_campaign_event(
+                                self.data_dir,
+                                campaign_id=self.config.campaign_id,
+                                generation_number=gen,
+                                event_type="PLATEAU_CHECK",
+                                message=f"Plateau check at Gen {gen}: Score lift {lift:.2f} pts vs min {self.config.plateau_min_lift:.2f} pts (Patience: {state.consecutive_plateau_generations}/{self.config.plateau_patience_generations}).",
+                                details={
+                                    "generation": gen,
+                                    "score_lift": lift,
+                                    "plateau_min_lift": self.config.plateau_min_lift,
+                                    "patience_count": state.consecutive_plateau_generations,
+                                    "max_patience": self.config.plateau_patience_generations,
+                                    "plateau_detected": state.consecutive_plateau_generations >= self.config.plateau_patience_generations,
+                                },
+                            )
+                            if state.consecutive_plateau_generations >= self.config.plateau_patience_generations and not budget_exhausted:
+                                state.status = CampaignStatus.COMPLETED
+                                state.stop_reason = CampaignStopReason.PLATEAU_DETECTED
+                                _notify(state, f"Research plateau detected: No lift >= {self.config.plateau_min_lift:.2f} pts over {self.config.plateau_patience_generations} consecutive generations.")
+                                break
+                        else:
+                            state.consecutive_plateau_generations = 0
 
                 if budget_exhausted:
                     state.status = CampaignStatus.COMPLETED
                     state.stop_reason = CampaignStopReason.MAX_CANDIDATES_REACHED
+                    _notify(state, "Candidate budget reached.")
                     break
 
             # End of campaign
-            if state.status not in (CampaignStatus.COMPLETED, CampaignStatus.CAMPAIGN_FAILED):
+            if state.status not in (CampaignStatus.COMPLETED, CampaignStatus.CAMPAIGN_FAILED, CampaignStatus.CAMPAIGN_STOPPED):
                 state.status = CampaignStatus.COMPLETED
                 state.stop_reason = CampaignStopReason.MAX_GENERATIONS_REACHED
+                _notify(state, "Maximum generations completed.")
 
         except Exception as ex:
             state.status = CampaignStatus.CAMPAIGN_FAILED
             state.warnings.append(f"UNHANDLED_CAMPAIGN_EXCEPTION: {str(ex)}")
+            persist_campaign_event(
+                self.data_dir,
+                campaign_id=self.config.campaign_id,
+                generation_number=state.current_generation,
+                event_type="CAMPAIGN_FAILED",
+                message=f"Campaign failed with exception: {str(ex)}",
+                details={"error": str(ex)},
+            )
+
+        state.end_time_iso = _utc_now_iso()
+        state.last_update_iso = _utc_now_iso()
+        persist_campaign_state(self.data_dir, self.config, state)
+
+        persist_campaign_event(
+            self.data_dir,
+            campaign_id=self.config.campaign_id,
+            generation_number=state.current_generation,
+            event_type="CAMPAIGN_COMPLETED",
+            candidate_id=state.best_candidate_id,
+            message=f"Campaign {self.config.campaign_id} {state.status.value}: {state.stop_reason.value if state.stop_reason else 'Finished'}. Winning Candidate: {state.best_candidate_id} ({state.best_composite_score:.2f} pts).",
+            details={
+                "campaign_id": self.config.campaign_id,
+                "status": state.status.value,
+                "stop_reason": state.stop_reason.value if state.stop_reason else "COMPLETED",
+                "total_generations": state.current_generation + 1,
+                "total_candidates_trained": state.total_candidates_trained,
+                "total_candidates_pruned": state.total_candidates_pruned,
+                "best_candidate_id": state.best_candidate_id,
+                "best_composite_score": state.best_composite_score,
+                "total_lift": state.best_composite_score - state.starting_best_score,
+                "duration_seconds": round(time.time() - start_ts, 2),
+            },
+        )
+
 
         state.end_time_iso = _utc_now_iso()
         state.last_update_iso = _utc_now_iso()

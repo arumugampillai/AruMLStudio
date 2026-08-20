@@ -16,13 +16,28 @@ Invariants:
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import os
+import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, simpledialog, ttk
 from typing import Any, Callable
 
 from chain_replay_ml.model_taxonomy import ModelContextKey, BASELINE_REGIME_CATALOG
+from chain_replay_ml.morning_dossier import (
+    MorningResearchDossier,
+    export_morning_dossier_markdown,
+    generate_morning_research_dossier,
+)
+from chain_replay_ml.overnight_campaign import (
+    CampaignConfig,
+    CampaignState,
+    CampaignStatus,
+    CampaignStopReason,
+    OvernightCampaignReport,
+    OvernightCampaignRunner,
+)
 from chain_replay_ml.research_memory import (
     get_benchmark_metrics,
     get_benchmark_run,
@@ -74,12 +89,38 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._on_select_model = on_select_model
 
         # Context selection state
+        from chain_replay_ml.dataset_builder.master_naming import (
+            MASTER_DATASET_INTERVAL_LABELS,
+            format_sampling_interval_label,
+            master_dataset_slug,
+            parse_sampling_interval_sec,
+            resolve_master_db_path,
+        )
+
         self._market_var = tk.StringVar(value="NIFTY")
-        self._sampling_var = tk.StringVar(value="3s")
+        self._sampling_var = tk.StringVar(value="6s")
         self._task_var = tk.StringVar(value="DIRECTION_CLASSIFIER")
         self._horizon_var = tk.StringVar(value="5m")
         self._regime_var = tk.StringVar(value="R001")
         self._context_key_var = tk.StringVar(value="")
+        self._dataset_status_var = tk.StringVar(value="")
+        self._dataset_available: bool = False
+
+        # Research Campaign Budget Settings (Sensible overnight defaults)
+        self._cfg_max_gen = tk.IntVar(value=10)
+        self._cfg_max_cands = tk.IntVar(value=100)
+        self._cfg_max_hours = tk.DoubleVar(value=8.0)
+        self._cfg_plateau_enabled = tk.BooleanVar(value=True)
+        self._cfg_plateau_patience = tk.IntVar(value=3)
+        self._cfg_plateau_min_lift = tk.DoubleVar(value=0.5)
+        self._cfg_min_gen_before_plateau = tk.IntVar(value=3)
+        self._campaign_start_ts: float = 0.0
+
+        # Autonomous Campaign Runner state
+        self._active_runner: OvernightCampaignRunner | None = None
+        self._is_running: bool = False
+        self._worker_thread: threading.Thread | None = None
+        self._last_campaign_id: str | None = None
 
         self._ranked_dossiers: list[dict[str, Any]] = []
         self._selected_dossier: dict[str, Any] | None = None
@@ -95,22 +136,24 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         return chart_data_dir(self.chart_dir)
 
     def _update_resolved_context_key(self) -> None:
-        """Resolve dropdown values into canonical ModelContextKey string."""
-        interval_str = self._sampling_var.get().replace("s", "").replace("sec", "").strip()
-        try:
-            interval_sec = int(interval_str)
-        except ValueError:
-            interval_sec = 3
+        """Resolve dropdown values into canonical ModelContextKey string and verify real Master Dataset."""
+        from chain_replay_ml.dataset_builder.master_naming import (
+            master_dataset_slug,
+            parse_sampling_interval_sec,
+            resolve_master_db_path,
+        )
+        from chain_replay_ml.model_taxonomy import TaskType
+
+        market = self._market_var.get() or "NIFTY"
+        interval_sec = parse_sampling_interval_sec(self._sampling_var.get(), default=6)
 
         # Extract clean regime ID from combo text (e.g. 'R001 - TREND' -> 'R001')
         reg_raw = self._regime_var.get().split()[0].split("-")[0].strip()
         if not reg_raw:
             reg_raw = "R001"
 
-        from chain_replay_ml.model_taxonomy import TaskType
-
         ctx = ModelContextKey(
-            market=self._market_var.get(),
+            market=market,
             sampling_interval_sec=interval_sec,
             task_type=TaskType.from_str(self._task_var.get()),
             prediction_horizon=self._horizon_var.get(),
@@ -118,7 +161,45 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         )
         self._context_key_var.set(ctx.canonical_key_str())
 
+        # Authoritative Master Dataset resolution using existing master_status service
+        from chain_replay_ml.dataset_builder.master_status import read_master_dataset_status
+
+        data_dir = self._data_dir()
+        slug = master_dataset_slug(market=market, sampling_interval_sec=interval_sec)
+
+        try:
+            status = read_master_dataset_status(
+                data_dir,
+                market=market,
+                interval_sec=interval_sec,
+            )
+            if status.get("exists"):
+                row_count = int(status.get("row_count") or 0)
+                days_count = len(status.get("days_in_master") or [])
+                self._dataset_available = True
+                self._dataset_status_var.set(
+                    f"🟢 Master DB: {slug}.db ({row_count:,} rows · {days_count} days · Ready)"
+                )
+                if hasattr(self, "_lbl_dataset_status"):
+                    self._lbl_dataset_status.config(foreground=COL_OK)
+            else:
+                self._dataset_available = False
+                self._dataset_status_var.set(
+                    f"⚠️ Master DB: {slug}.db (Unavailable — not built from tick DB)"
+                )
+                if hasattr(self, "_lbl_dataset_status"):
+                    self._lbl_dataset_status.config(foreground=COL_WARN)
+        except Exception as ex:
+            self._dataset_available = False
+            self._dataset_status_var.set(f"⚠️ Master DB: {slug}.db (Status error: {ex})")
+            if hasattr(self, "_lbl_dataset_status"):
+                self._lbl_dataset_status.config(foreground=COL_WARN)
+
+
+
     def _build_ui(self) -> None:
+        from chain_replay_ml.dataset_builder.master_naming import MASTER_DATASET_INTERVAL_LABELS
+
         # Top Container: Context Selector & Production Status Banner
         top_frame = ttk.Frame(self, padding=(8, 6))
         top_frame.pack(fill="x")
@@ -136,9 +217,15 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         m_cb.pack(side="left", padx=(0, 8))
         m_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_context_param_changed())
 
-        # Sampling
+        # Sampling (Authoritative intervals from Master Dataset architecture)
         ttk.Label(controls_row, text="Sampling:").pack(side="left", padx=(2, 2))
-        s_cb = ttk.Combobox(controls_row, textvariable=self._sampling_var, values=["3s", "1s", "5s", "15s", "1m"], width=6, state="readonly")
+        s_cb = ttk.Combobox(
+            controls_row,
+            textvariable=self._sampling_var,
+            values=list(MASTER_DATASET_INTERVAL_LABELS),
+            width=6,
+            state="readonly",
+        )
         s_cb.pack(side="left", padx=(0, 8))
         s_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_context_param_changed())
 
@@ -169,11 +256,20 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
 
         ttk.Button(controls_row, text="Query Leaderboard", command=self.refresh_leaderboard).pack(side="right", padx=4)
 
-        # Context Key Display Label
+        # Context Key Display Label & Real Master Dataset Status
         key_bar = ttk.Frame(ctx_box, padding=(0, 4))
         key_bar.pack(fill="x")
         ttk.Label(key_bar, text="🎯 Active Context Key:", font=("TkDefaultFont", 9, "bold")).pack(side="left")
-        ttk.Label(key_bar, textvariable=self._context_key_var, font=("Consolas", 10, "bold"), foreground="#0d47a1").pack(side="left", padx=(6, 0))
+        ttk.Label(key_bar, textvariable=self._context_key_var, font=("Consolas", 10, "bold"), foreground="#0d47a1").pack(side="left", padx=(6, 16))
+
+        self._lbl_dataset_status = ttk.Label(
+            key_bar,
+            textvariable=self._dataset_status_var,
+            font=("Segoe UI", 9, "bold"),
+            foreground=COL_OK,
+        )
+        self._lbl_dataset_status.pack(side="left")
+
 
         # 2. Production Governance vs Research Candidate Status Banner
         gov_box = ttk.LabelFrame(top_frame, text="Context Governance & Champion Status", padding=(8, 4))
@@ -198,6 +294,79 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         )
         disclaimer_lbl.pack(anchor="w", pady=(2, 0))
 
+        # 3. Autonomous Research Control & Telemetry Bar (Phase 4F.5)
+        run_box = ttk.LabelFrame(top_frame, text="Autonomous Overnight Research Controller (Phase 4F.5)", padding=(8, 4))
+        run_box.pack(fill="x", pady=(2, 4))
+
+        # Row 1: Action Buttons & Research Budget Inputs
+        ctrl_row = ttk.Frame(run_box)
+        ctrl_row.pack(fill="x", pady=(0, 3))
+
+        self._btn_start_research = ttk.Button(
+            ctrl_row,
+            text="▶ Start Autonomous Research",
+            command=self._on_start_autonomous_research,
+        )
+        self._btn_start_research.pack(side="left", padx=(0, 6))
+
+        self._btn_stop_research = ttk.Button(
+            ctrl_row,
+            text="⏹ Stop",
+            command=self._on_stop_autonomous_research,
+            state="disabled",
+        )
+        self._btn_stop_research.pack(side="left", padx=(0, 6))
+
+        self._btn_view_dossier = ttk.Button(
+            ctrl_row,
+            text="🌅 View Morning Dossier",
+            command=self._on_view_morning_dossier,
+        )
+        self._btn_view_dossier.pack(side="left", padx=(0, 16))
+
+        # Budget Parameters Inputs
+        ttk.Label(ctrl_row, text="Max Gens:", font=("Segoe UI", 9)).pack(side="left", padx=(2, 2))
+        ttk.Spinbox(ctrl_row, from_=1, to=100, textvariable=self._cfg_max_gen, width=4).pack(side="left", padx=(0, 8))
+
+        ttk.Label(ctrl_row, text="Max Candidates:", font=("Segoe UI", 9)).pack(side="left", padx=(2, 2))
+        ttk.Spinbox(ctrl_row, from_=5, to=2000, increment=10, textvariable=self._cfg_max_cands, width=5).pack(side="left", padx=(0, 8))
+
+        ttk.Label(ctrl_row, text="Max Hours:", font=("Segoe UI", 9)).pack(side="left", padx=(2, 2))
+        ttk.Spinbox(ctrl_row, from_=0.5, to=48.0, increment=0.5, textvariable=self._cfg_max_hours, width=4).pack(side="left", padx=(0, 8))
+
+        ttk.Label(ctrl_row, text="Plateau Patience:", font=("Segoe UI", 9)).pack(side="left", padx=(2, 2))
+        ttk.Spinbox(ctrl_row, from_=1, to=10, textvariable=self._cfg_plateau_patience, width=3).pack(side="left", padx=(0, 6))
+
+        ttk.Checkbutton(ctrl_row, text="Plateau Halt", variable=self._cfg_plateau_enabled).pack(side="left", padx=(4, 0))
+
+        # Row 2: Status & Message
+        msg_row = ttk.Frame(run_box)
+        msg_row.pack(fill="x", pady=(1, 2))
+
+        ttk.Label(msg_row, text="Status:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
+        self._camp_status_var = tk.StringVar(value="IDLE")
+        self._lbl_camp_status = ttk.Label(msg_row, textvariable=self._camp_status_var, font=("Segoe UI", 9, "bold"), foreground=COL_MUTED)
+        self._lbl_camp_status.pack(side="left", padx=(0, 12))
+
+        self._camp_msg_var = tk.StringVar(value="Ready to start autonomous discovery.")
+        ttk.Label(msg_row, textvariable=self._camp_msg_var, font=("Segoe UI", 9), foreground="#333333").pack(side="left", fill="x", expand=True)
+
+        # Row 3: Live Multi-Generation Metrics & Telemetry Strip
+        telem_row = ttk.Frame(run_box)
+        telem_row.pack(fill="x", pady=(2, 0))
+
+        self._camp_gen_var = tk.StringVar(value="Gen: — / —")
+        self._camp_cand_var = tk.StringVar(value="Candidates: 0 / 100 (Pruned: 0)")
+        self._camp_runtime_var = tk.StringVar(value="Runtime: 0h 00m / 8.0h")
+        self._camp_best_var = tk.StringVar(value="Best: —")
+        self._camp_trade_var = tk.StringVar(value="Trading: —")
+
+        ttk.Label(telem_row, textvariable=self._camp_gen_var, font=("Segoe UI", 8, "bold"), foreground="#0d47a1").pack(side="left", padx=(0, 12))
+        ttk.Label(telem_row, textvariable=self._camp_cand_var, font=("Segoe UI", 8)).pack(side="left", padx=(0, 12))
+        ttk.Label(telem_row, textvariable=self._camp_runtime_var, font=("Segoe UI", 8)).pack(side="left", padx=(0, 12))
+        ttk.Label(telem_row, textvariable=self._camp_best_var, font=("Segoe UI", 8, "bold"), foreground=COL_PRODUCTION).pack(side="left", padx=(0, 12))
+        ttk.Label(telem_row, textvariable=self._camp_trade_var, font=("Segoe UI", 8), foreground="#e65100").pack(side="left", padx=(0, 12))
+
         # Split View: Leaderboard Table (Top) & Detail Dossier Notebook (Bottom)
         paned = ttk.Panedwindow(self, orient=tk.VERTICAL)
         paned.pack(fill="both", expand=True, padx=8, pady=(0, 4))
@@ -206,8 +375,29 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         table_frame = ttk.Frame(paned)
         paned.add(table_frame, weight=3)
 
-        tree_scroll_y = ttk.Scrollbar(table_frame, orient=tk.VERTICAL)
-        tree_scroll_x = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
+        # Leaderboard Action Bar
+        tbl_act_bar = ttk.Frame(table_frame, padding=(0, 2, 0, 4))
+        tbl_act_bar.pack(fill="x")
+
+        ttk.Button(
+            tbl_act_bar,
+            text="🏆 Add to Classifier",
+            command=self._on_add_to_classifier,
+        ).pack(side="left", padx=(0, 8))
+
+        ttk.Label(
+            tbl_act_bar,
+            text="Registers the selected candidate into the Classifier Model Registry (marked as EXPERIMENTAL).",
+            font=("Segoe UI", 9, "italic"),
+            foreground=COL_MUTED,
+        ).pack(side="left")
+
+        table_container = ttk.Frame(table_frame)
+        table_container.pack(fill="both", expand=True)
+
+
+        tree_scroll_y = ttk.Scrollbar(table_container, orient=tk.VERTICAL)
+        tree_scroll_x = ttk.Scrollbar(table_container, orient=tk.HORIZONTAL)
 
         cols = (
             "rank",
@@ -226,9 +416,10 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         )
 
         self.leaderboard_tree = ttk.Treeview(
-            table_frame,
+            table_container,
             columns=cols,
             show="headings",
+            height=12,
             selectmode="browse",
             yscrollcommand=tree_scroll_y.set,
             xscrollcommand=tree_scroll_x.set,
@@ -264,7 +455,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
 
         # Bottom Paned Frame: Research Evidence Dossier Notebook
         detail_outer = ttk.Frame(paned)
-        paned.add(detail_outer, weight=3)
+        paned.add(detail_outer, weight=4)
 
         self._detail_nb = ttk.Notebook(detail_outer)
         self._detail_nb.pack(fill="both", expand=True)
@@ -275,6 +466,11 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._tab_features = ScrollableFrame(self._detail_nb)
         self._tab_lineage = ScrollableFrame(self._detail_nb)
         self._tab_history = ScrollableFrame(self._detail_nb)
+        self._tab_audit = ttk.Frame(self._detail_nb, padding=6)
+
+        self._audit_filter_var = tk.StringVar(value="ALL")
+        self._audit_search_var = tk.StringVar(value="")
+        self._audit_events_cache: list[dict[str, Any]] = []
 
         self._detail_nb.add(self._tab_dossier, text="Robustness Dossier")
         self._detail_nb.add(self._tab_recommendations, text="Research Recommendations")
@@ -282,6 +478,8 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._detail_nb.add(self._tab_features, text="Feature Composition")
         self._detail_nb.add(self._tab_lineage, text="Research Lineage")
         self._detail_nb.add(self._tab_history, text="Champion History")
+        self._detail_nb.add(self._tab_audit, text="📜 Execution Audit Trail")
+
 
     def _on_context_param_changed(self) -> None:
         self._update_resolved_context_key()
@@ -327,6 +525,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             self._render_empty_detail("No benchmarked models found for this context key.")
             self._render_champion_history_tab()
             self._render_recommendations_tab()
+            self._render_audit_tab()
             return
 
         self._item_dossier_map: dict[str, dict[str, Any]] = {}
@@ -349,18 +548,18 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
                 "end",
                 iid=item_id,
                 values=(
-                    d.get("rank_in_context", idx),
+                    idx,
                     d.get("model_name", "—"),
                     d.get("algorithm", "—"),
                     f"{r_score:.2f}",
-                    f"Tier {p_rank}",
+                    f"#{p_rank}",
                     p_metric,
                     f_std,
                     ece,
                     deg,
                     exp_r,
                     d.get("recommendation_status", "—"),
-                    raw.get("total_features", 0),
+                    d.get("feature_count", "—"),
                     sig,
                 ),
             )
@@ -369,13 +568,13 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         children = self.leaderboard_tree.get_children()
         if children:
             self.leaderboard_tree.selection_set(children[0])
-            self.leaderboard_tree.see(children[0])
             first_dossier = self._item_dossier_map.get(children[0], dossiers[0])
             self._selected_dossier = first_dossier
             self._load_dossier_detail(first_dossier)
 
         self._render_champion_history_tab()
         self._render_recommendations_tab()
+        self._render_audit_tab()
 
     def _on_tree_select(self, _event: tk.Event) -> None:
         sel = self.leaderboard_tree.selection()
@@ -686,4 +885,382 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
 
         steps_rows = [(f"Step {i}", step) for i, step in enumerate(top_d.suggested_next_steps, start=1)]
         kv_block(tab, "Suggested Next Research Directions", steps_rows)
+
+    def _on_start_autonomous_research(self) -> None:
+        """Start autonomous overnight campaign on a background thread for the active ModelContextKey."""
+        if self._is_running:
+            messagebox.showwarning("Campaign In Progress", "An autonomous research campaign is already running.")
+            return
+
+        ctx_key = self._context_key_var.get()
+        if not ctx_key:
+            messagebox.showerror("Error", "Please select a valid ModelContextKey first.")
+            return
+
+        # Strict dataset availability validation
+        if not getattr(self, "_dataset_available", False):
+            from chain_replay_ml.dataset_builder.master_naming import (
+                master_dataset_slug,
+                parse_sampling_interval_sec,
+            )
+            market = self._market_var.get() or "NIFTY"
+            interval_sec = parse_sampling_interval_sec(self._sampling_var.get(), default=6)
+            slug = master_dataset_slug(market=market, sampling_interval_sec=interval_sec)
+            messagebox.showerror(
+                "Master Dataset Unavailable",
+                f"No Master Dataset exists for {market} {interval_sec}s (expected '{slug}.db').\n\n"
+                f"Build the {interval_sec}s Master Dataset from the tick database before starting autonomous research or training in this context."
+            )
+            return
+
+        # Generate unique campaign ID
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        campaign_id = f"CAMP_{ctx_key}_{timestamp_str}"
+        self._last_campaign_id = campaign_id
+        self._campaign_start_ts = datetime.now().timestamp()
+
+        # Read configured budget from UI controls (with safety minimums)
+        max_gen = max(1, self._cfg_max_gen.get())
+        max_cands = max(1, self._cfg_max_cands.get())
+        max_hours = max(0.1, float(self._cfg_max_hours.get()))
+        patience = max(1, self._cfg_plateau_patience.get())
+
+        # Construct CampaignConfig using active researcher budget
+        config = CampaignConfig(
+            campaign_id=campaign_id,
+            context_keys=[ctx_key],
+            max_duration_hours=max_hours,
+            max_candidates_total=max_cands,
+            max_generations=max_gen,
+            plateau_enabled=bool(self._cfg_plateau_enabled.get()),
+            plateau_patience_generations=patience,
+            plateau_min_lift=float(self._cfg_plateau_min_lift.get()),
+            min_generations_before_plateau=int(self._cfg_min_gen_before_plateau.get()),
+        )
+
+        data_dir = self._data_dir()
+        self._active_runner = OvernightCampaignRunner(data_dir=data_dir, config=config)
+        self._is_running = True
+
+        self._btn_start_research.config(state="disabled")
+        self._btn_stop_research.config(state="normal")
+        self._camp_status_var.set("STARTING")
+        self._lbl_camp_status.config(foreground=COL_TRAINING)
+        self._camp_msg_var.set(f"Starting autonomous campaign: {campaign_id} (Budget: {max_gen} Gens, {max_cands} Cands, {max_hours}h)...")
+
+        def _progress_cb(st: CampaignState, msg: str) -> None:
+            self.after(0, lambda s=st, m=msg: self._update_campaign_telemetry(s, m))
+
+        def _worker() -> None:
+            try:
+                report = self._active_runner.run(progress_callback=_progress_cb)
+                self.after(0, lambda r=report: self._on_campaign_completed(r))
+            except Exception as ex:
+                import traceback
+                err_msg = f"{type(ex).__name__}: {ex}\n{traceback.format_exc()}"
+                self.after(0, lambda err=err_msg: self._on_campaign_error(err))
+
+        self._worker_thread = threading.Thread(target=_worker, daemon=True)
+        self._worker_thread.start()
+
+
+    def _on_stop_autonomous_research(self) -> None:
+        """Gracefully request campaign cancellation."""
+        if self._active_runner and self._is_running:
+            self._camp_msg_var.set("Stopping campaign gracefully (finishing active candidate)...")
+            self._camp_status_var.set("STOPPING")
+            self._lbl_camp_status.config(foreground=COL_WARN)
+            self._active_runner.cancel()
+
+    def _update_campaign_telemetry(self, st: CampaignState, msg: str) -> None:
+        """Update live telemetry labels on the UI thread."""
+        self._camp_status_var.set(st.status.value)
+        if st.status == CampaignStatus.RUNNING:
+            self._lbl_camp_status.config(foreground=COL_TRAINING)
+        elif st.status in (CampaignStatus.COMPLETED,):
+            self._lbl_camp_status.config(foreground=COL_OK)
+        elif st.status in (CampaignStatus.CAMPAIGN_FAILED, CampaignStatus.CAMPAIGN_STOPPED):
+            self._lbl_camp_status.config(foreground=COL_WARN)
+
+        self._camp_msg_var.set(msg)
+
+        max_gen = self._cfg_max_gen.get()
+        max_cands = self._cfg_max_cands.get()
+        max_hours = self._cfg_max_hours.get()
+
+        elapsed_sec = max(0.0, datetime.now().timestamp() - getattr(self, "_campaign_start_ts", datetime.now().timestamp()))
+        elapsed_hours = int(elapsed_sec // 3600)
+        elapsed_mins = int((elapsed_sec % 3600) // 60)
+
+        self._camp_gen_var.set(f"Gen: {st.current_generation + 1} / {max_gen}")
+        self._camp_cand_var.set(f"Candidates: {st.total_candidates_trained} / {max_cands} (Pruned: {st.total_candidates_pruned})")
+        self._camp_runtime_var.set(f"Runtime: {elapsed_hours}h {elapsed_mins:02d}m / {max_hours:.1f}h")
+        if st.best_candidate_id:
+            lift = st.best_composite_score - st.starting_best_score
+            lift_str = f"+{lift:.2f}" if lift >= 0 else f"{lift:.2f}"
+            self._camp_best_var.set(f"Best: {st.best_candidate_id} (Score: {st.best_composite_score:.2f}, Lift: {lift_str})")
+        if st.best_trading_score > 0:
+            self._camp_trade_var.set(f"Trading Score: {st.best_trading_score:.2f} | Model Score: {st.best_model_score:.2f}")
+
+    def _on_campaign_completed(self, report: OvernightCampaignReport) -> None:
+        """Handle campaign completion on the UI thread."""
+        self._is_running = False
+        self._btn_start_research.config(state="normal")
+        self._btn_stop_research.config(state="disabled")
+        self._camp_status_var.set(report.status.value)
+        self._lbl_camp_status.config(foreground=COL_OK if report.status == CampaignStatus.COMPLETED else COL_WARN)
+        stop_reason_str = report.stop_reason.value if report.stop_reason else "Completed"
+        best_cand_name = report.best_candidate.candidate_id if report.best_candidate else "None"
+        self._camp_msg_var.set(f"Campaign finished: {stop_reason_str}. Top Candidate: {best_cand_name} (Score: {report.best_composite_score:.2f})")
+
+        # Refresh Leaderboard automatically
+        self.refresh_leaderboard()
+        try:
+            messagebox.showinfo(
+                "Autonomous Research Complete",
+                f"Campaign {report.campaign_id} finished.\n\n"
+                f"Stop Reason: {stop_reason_str}\n"
+                f"Generations Completed: {report.total_generations_completed}\n"
+                f"Total Candidates Trained: {report.total_candidates_trained}\n"
+                f"Total Candidates Pruned: {report.total_candidates_pruned}\n"
+                f"Best Discovered Candidate: {best_cand_name}\n"
+                f"Best Composite Score: {report.best_composite_score:.2f} / 100.0 (Lift: +{report.total_score_improvement:.2f})\n\n"
+                f"Click '🌅 View Morning Dossier' to review full lineage and governance audit."
+            )
+        except Exception:
+            pass
+
+    def _on_campaign_error(self, err_msg: str) -> None:
+        """Handle campaign unexpected error on the UI thread."""
+        self._is_running = False
+        self._btn_start_research.config(state="normal")
+        self._btn_stop_research.config(state="disabled")
+        self._camp_status_var.set("ERROR")
+        self._lbl_camp_status.config(foreground=COL_WARN)
+        self._camp_msg_var.set(f"Campaign error: {err_msg}")
+        try:
+            messagebox.showerror("Campaign Error", f"An error occurred during autonomous research execution:\n{err_msg}")
+        except Exception:
+            pass
+
+    def _on_view_morning_dossier(self) -> None:
+        """Open a dedicated window displaying the complete Morning Research Dossier for the active campaign or context."""
+        camp_id = getattr(self, "_last_campaign_id", None)
+        ctx_key = self._context_key_var.get()
+        top = tk.Toplevel(self)
+        top.title(f"🌅 Morning Research Dossier — {ctx_key}")
+        top.geometry("950x700")
+        from .morning_research_dossier_panel import MorningResearchDossierPanel
+        panel = MorningResearchDossierPanel(
+            top,
+            data_dir=self._data_dir(),
+            on_select_model=self._on_select_model,
+        )
+        if camp_id:
+            panel.selected_campaign_id.set(camp_id)
+            panel.load_selected_campaign()
+        panel.pack(fill=tk.BOTH, expand=True)
+
+
+    def _on_add_to_classifier(self) -> None:
+        """Register selected candidate model into Classifier Model Registry."""
+        d = self._selected_dossier
+        if not d or not d.get("model_name"):
+            messagebox.showwarning("Select Candidate", "Please select a candidate model from the Leaderboard table first.")
+            return
+
+        cand_id = d["model_name"]
+        data_dir = self._data_dir()
+        if not data_dir:
+            return
+
+        try:
+            from chain_replay_ml.training.classifier_registration import register_research_candidate_as_classifier
+            res = register_research_candidate_as_classifier(
+                data_dir,
+                cand_id,
+                campaign_id=getattr(self, "_last_campaign_id", None),
+            )
+            messagebox.showinfo(
+                "Added to Classifier Registry",
+                f"Candidate model '{cand_id}' has been registered in the Classifier Model Registry.\n\n"
+                f"Package Location: {res['package_dir']}\n"
+                f"Context Key: {res['context_key']}\n"
+                f"Composite Score: {res['composite_score']:.2f}\n\n"
+                f"Governance: Status marked as EXPERIMENTAL.\n"
+                f"Lineage, features, hyperparameters, and research replay evidence preserved.\n"
+                f"Production promotion requires explicit human review."
+            )
+            if self._on_select_model:
+                try:
+                    self._on_select_model(cand_id)
+                except Exception:
+                    pass
+        except Exception as ex:
+            messagebox.showerror("Registration Error", f"Failed to register model as classifier:\n{ex}")
+
+    def _render_audit_tab(self) -> None:
+        """Render complete chronological execution audit trail for the active campaign or context."""
+        clear_children(self._tab_audit)
+
+        # Top filter bar
+        ctrl_bar = ttk.Frame(self._tab_audit, padding=(0, 0, 0, 6))
+        ctrl_bar.pack(fill="x")
+
+        ttk.Label(ctrl_bar, text="Filter Event Type:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
+        filter_cb = ttk.Combobox(
+            ctrl_bar,
+            textvariable=self._audit_filter_var,
+            values=["ALL", "CANDIDATE", "METRICS", "CHAMPION", "DECISIONS", "WARNINGS"],
+            width=14,
+            state="readonly",
+        )
+        filter_cb.pack(side="left", padx=(0, 12))
+        filter_cb.bind("<<ComboboxSelected>>", lambda _e: self._populate_leaderboard_audit_events())
+
+        ttk.Label(ctrl_bar, text="Search Candidate/Keyword:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
+        search_entry = ttk.Entry(ctrl_bar, textvariable=self._audit_search_var, width=24)
+        search_entry.pack(side="left", padx=(0, 8))
+        search_entry.bind("<Return>", lambda _e: self._populate_leaderboard_audit_events())
+
+        ttk.Button(ctrl_bar, text="🔍 Search / Filter", command=self._populate_leaderboard_audit_events).pack(side="left", padx=(0, 6))
+        ttk.Button(ctrl_bar, text="🔄 Reset Filters", command=self._reset_leaderboard_audit_filters).pack(side="left")
+
+        # Paned Window (Top: Events Treeview, Bottom: JSON Details Pane)
+        paned = ttk.PanedWindow(self._tab_audit, orient=tk.VERTICAL)
+        paned.pack(fill="both", expand=True)
+
+        top_pane = ttk.Frame(paned)
+        paned.add(top_pane, weight=3)
+
+        tree_frame = ttk.Frame(top_pane)
+        tree_frame.pack(fill="both", expand=True)
+
+        tree_scroll_y = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL)
+        tree_scroll_x = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
+
+        cols = ("timestamp", "generation", "candidate_id", "event_type", "message")
+        self._audit_tree = ttk.Treeview(
+            tree_frame,
+            columns=cols,
+            show="headings",
+            height=8,
+            selectmode="browse",
+            yscrollcommand=tree_scroll_y.set,
+            xscrollcommand=tree_scroll_x.set,
+        )
+        tree_scroll_y.config(command=self._audit_tree.yview)
+        tree_scroll_x.config(command=self._audit_tree.xview)
+
+        tree_scroll_y.pack(side="right", fill="y")
+        tree_scroll_x.pack(side="bottom", fill="x")
+        self._audit_tree.pack(side="left", fill="both", expand=True)
+
+        headings = (
+            ("timestamp", 150, "Timestamp"),
+            ("generation", 50, "Gen"),
+            ("candidate_id", 200, "Candidate ID"),
+            ("event_type", 170, "Event Type"),
+            ("message", 450, "Execution Message"),
+        )
+        for cid, width, text in headings:
+            self._audit_tree.heading(cid, text=text)
+            self._audit_tree.column(cid, width=width, anchor=tk.CENTER if cid == "generation" else tk.W)
+
+        self._audit_tree.bind("<<TreeviewSelect>>", self._on_leaderboard_audit_selected)
+
+        # Bottom Pane: JSON Details Inspector
+        bot_pane = ttk.LabelFrame(paned, text="Selected Event Audit Payload (JSON Details)", padding=6)
+        paned.add(bot_pane, weight=2)
+
+        self._audit_detail_text = tk.Text(bot_pane, height=6, wrap="none", font=("Consolas", 9))
+        txt_scroll_y = ttk.Scrollbar(bot_pane, orient=tk.VERTICAL, command=self._audit_detail_text.yview)
+        txt_scroll_x = ttk.Scrollbar(bot_pane, orient=tk.HORIZONTAL, command=self._audit_detail_text.xview)
+        self._audit_detail_text.config(yscrollcommand=txt_scroll_y.set, xscrollcommand=txt_scroll_x.set)
+
+        txt_scroll_y.pack(side="right", fill="y")
+        txt_scroll_x.pack(side="bottom", fill="x")
+        self._audit_detail_text.pack(side="left", fill="both", expand=True)
+
+        self._populate_leaderboard_audit_events()
+
+    def _reset_leaderboard_audit_filters(self) -> None:
+        self._audit_filter_var.set("ALL")
+        self._audit_search_var.set("")
+        self._populate_leaderboard_audit_events()
+
+    def _populate_leaderboard_audit_events(self) -> None:
+        if not hasattr(self, "_audit_tree"):
+            return
+
+        for item in self._audit_tree.get_children():
+            self._audit_tree.delete(item)
+
+        filter_val = self._audit_filter_var.get()
+        search_val = self._audit_search_var.get().strip()
+
+        from chain_replay_ml.overnight_campaign.persistence import load_campaign_events
+        camp_id = getattr(self, "_last_campaign_id", None)
+        events = load_campaign_events(
+            self._data_dir(),
+            campaign_id=camp_id,
+            event_type_filter=filter_val,
+            search_query=search_val if search_val else None,
+        )
+        self._audit_events_cache = events
+
+        for idx, ev in enumerate(events):
+            self._audit_tree.insert(
+                "",
+                tk.END,
+                iid=str(idx),
+                values=(
+                    ev.get("timestamp", ""),
+                    f"G{ev.get('generation', 0)}",
+                    ev.get("candidate_id", "—"),
+                    ev.get("event_type", ""),
+                    ev.get("message", ""),
+                ),
+            )
+
+        if events:
+            self._audit_tree.selection_set("0")
+            self._on_leaderboard_audit_selected(None)
+        else:
+            self._audit_detail_text.config(state="normal")
+            self._audit_detail_text.delete("1.0", tk.END)
+            self._audit_detail_text.insert(tk.END, "// No audit events found matching the active filter criteria.")
+            self._audit_detail_text.config(state="disabled")
+
+    def _on_leaderboard_audit_selected(self, _event: Any) -> None:
+        if not hasattr(self, "_audit_tree") or not hasattr(self, "_audit_detail_text"):
+            return
+        sel = self._audit_tree.selection()
+        if not sel:
+            return
+        try:
+            idx = int(sel[0])
+            if 0 <= idx < len(self._audit_events_cache):
+                ev = self._audit_events_cache[idx]
+                payload = {
+                    "event_id": ev.get("event_id"),
+                    "campaign_id": ev.get("campaign_id"),
+                    "timestamp": ev.get("timestamp"),
+                    "generation": ev.get("generation"),
+                    "candidate_id": ev.get("candidate_id"),
+                    "event_type": ev.get("event_type"),
+                    "message": ev.get("message"),
+                    "details": ev.get("details", {}),
+                }
+                txt_formatted = json.dumps(payload, indent=2, ensure_ascii=False)
+                self._audit_detail_text.config(state="normal")
+                self._audit_detail_text.delete("1.0", tk.END)
+                self._audit_detail_text.insert(tk.END, txt_formatted)
+                self._audit_detail_text.config(state="disabled")
+        except Exception:
+            pass
+
+
+
+
 

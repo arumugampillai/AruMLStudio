@@ -2,8 +2,8 @@
 ## Technical Architectural Specification: Task Taxonomy, Regime Taxonomy, Multi-Dimensional Identity & Research Factory Topology
 
 > **Document Number**: `Doc 13`  
-> **Document Status**: `AUTHORITATIVE SPECIFICATION (Phase 4C, Phase 4D & Phase 4E COMPLETE & VERIFIED — 472/472 Tests Passing; Phase 4F+ PLANNED)`  
-> **Operational Baseline**: Phases 1–3D, Phase 4C Complete, Phase 4D Complete, Phase 4E Complete (**472/472 Tests Passing**), Docs 00–13  
+> **Document Status**: `AUTHORITATIVE SPECIFICATION (Phase 4C, Phase 4D, Phase 4E & Phase 4F COMPLETE & VERIFIED — 629/629 Tests Passing; Phase 4G+ PLANNED)`  
+> **Operational Baseline**: Phases 1–4F Complete & Verified (**629/629 Tests Passing across 40 Test Modules**), Docs 00–15  
 > **Implementing Modules**: `apps/chain_replay_ml/model_taxonomy/`, `apps/chain_replay_ml/research_memory/`, `apps/chain_replay_ml/research_recommendations/` (`coverage.py`, `vulnerability.py`, `feature_affinity.py`, `negative_pruning.py`, `priority_scoring.py`, `dossier.py`), `apps/chain_replay_ml/research_memory/champion_history.py`, `apps/chain_replay_ml/training/registry.py`, `apps/chain_replay_ml/training/artifacts.py`, `apps/master_dataset_tk/model_registry_panel.py`, `apps/master_dataset_tk/model_registry_detail.py`, `apps/master_dataset_tk/model_research_leaderboard_panel.py`  
 > **Hardware Constraint**: Designed for a **16 GB RAM Local Workstation** without external cloud dependencies.
 
@@ -487,7 +487,7 @@ In the context of the **Phase 4 Master Roadmap** ([`Doc 11`](file:///c:/Users/ad
 │ Phase 4C.2   │ Model Lab Population Awareness (Registry/Experimental)  │ Requires 4C.1 │
 │ Phase 4D     │ Persistent Multi-Model Benchmarking in analysis.db      │ Requires 4C   │
 │ Phase 4E     │ Automated Project Recommendations                       │ Requires 4D   │
-│ Phase 4F     │ Strategy Evidence Bridge                                │ Requires 4D   │
+│ Phase 4F     │ Automated Model Discovery & Fine-Tuning                 │ ✅ VERIFIED   │
 │ Phase 4G     │ Lineage & Registry Integrity Auditor                    │ Requires 4C/4D│
 │ Phase 4H     │ Continuous Registry Watcher                             │ Requires 4G   │
 └──────────────┴─────────────────────────────────────────────────────────┴───────────────┘

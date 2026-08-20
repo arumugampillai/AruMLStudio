@@ -3,8 +3,8 @@
 
 > **Document Number**: `Doc 11`  
 > **Document Type**: AUTHORITATIVE MASTER ROADMAP & STEP-BY-STEP IMPLEMENTATION DIRECTIVE  
-> **Operational Baseline**: Phases 1–4E Verified & Operational (**472/472 Tests Passing across 33 Test Modules**), Docs 00–15  
-> **Status**: **AUTHORITATIVE ROADMAP SPECIFICATION** (Phases 1–4E: `IMPLEMENTED & VERIFIED`; Phase 4F: `PLANNED / IMMEDIATE NEXT`; Phase 4G–4H, Phase 5A–5B: `PLANNED`; Phase 6: `STRATEGIC DESTINATION`)  
+> **Operational Baseline**: Phases 1–4F Verified & Operational (**629/629 Tests Passing across 40 Test Modules**), Docs 00–15  
+> **Status**: **AUTHORITATIVE ROADMAP SPECIFICATION** (Phases 1–4F: `IMPLEMENTED & VERIFIED`; Phase 4G–4H, Phase 5A–5B: `PLANNED`; Phase 6: `STRATEGIC DESTINATION`)  
 > **Hardware Constraint**: Designed strictly for a **16 GB RAM Local Workstation** (Zero cloud dependencies)
 
 ---
@@ -80,7 +80,7 @@ To ensure complete architectural clarity across all documentation and tools, eve
 | Status Key | Technical Definition | Active Codebase Meaning |
 |---|---|---|
 | **`IMPLEMENTED`** | Source code is fully written, integrated, and functioning in the active repository. | Exists in `apps/` or `src/`. |
-| **`VERIFIED`** | Code has passed all unit, integration, and regression test suites with 100% assertions met. | 472/472 regression tests passing. |
+| **`VERIFIED`** | Code has passed all unit, integration, and regression test suites with 100% assertions met. | 629/629 regression tests passing across 40 test modules. |
 | **`PLANNED`** | Formally specified in the authoritative roadmap; awaiting explicit implementation turn. | Architectural design finalized. |
 | **`PROPOSED`** | Early architectural hypothesis or concept under pre-implementation design review. | Non-binding technical draft. |
 | **`DEFERRED`** | Intentionally postponed until dependent prerequisite subsystems are hardened. | Explicitly queued for later phase. |
@@ -110,7 +110,7 @@ To ensure complete architectural clarity across all documentation and tools, eve
 │ Phase 4C     │ Model Taxonomy & Regime Architecture     │ 4-Dimensional Meta Schema   │ ✅ IMPLEMENTED / VER│
 │ Phase 4D     │ Persistent Multi-Model Benchmarking      │ Research Memory (`analysis`)│ ✅ IMPLEMENTED / VER│
 │ Phase 4E     │ Automated Project Recommendations        │ Advisory Dossier Engine     │ ✅ IMPLEMENTED / VER│
-│ Phase 4F     │ Automated Model Discovery & Fine-Tuning  │ Candidate Discovery & Tuning│ 🔵 PLANNED / NEXT   │
+│ Phase 4F     │ Automated Model Discovery & Fine-Tuning  │ Candidate Discovery & Tuning│ ✅ IMPLEMENTED / VER│
 │ Phase 4G     │ Lineage & Registry Integrity Auditor     │ Deterministic Read-Only Aud │ 🔵 PLANNED          │
 │ Phase 4H     │ Optional Continuous Registry Watcher     │ Passive Real-Time Drift Mon │ 🔵 PLANNED (Passive)│
 ├──────────────┼──────────────────────────────────────────┼─────────────────────────────┼─────────────────────┤
@@ -222,40 +222,69 @@ Model identity is **multidimensional and cryptographically anchored**. The platf
 
 ---
 
-### Phase 4F — Automated Model Discovery, Strategy Validation & Fine-Tuning Loop `[PLANNED / IMMEDIATE NEXT]`
+### Phase 4F — Automated Model Discovery, Strategy Validation & Fine-Tuning Loop `[IMPLEMENTED & VERIFIED]`
 
 > [!IMPORTANT]
-> **Phase 4F Purpose & Strategic Identity**:  
+> **Phase 4F Status & Strategic Identity**:  
 > Phase 4F empowers AruMLStudio to **automatically discover, train, evaluate, strategy-validate, rank, reject, and fine-tune candidate models** in an unattended, autonomous loop.  
+> **Status**: **`IMPLEMENTED & VERIFIED` (629/629 Master Suite Tests Passing across 40 Test Modules)**.  
 > It is **MODEL-FIRST, NOT STRATEGY-FIRST**: The primary research object is the predictive ML model. The trading strategy is a simple, controlled, deterministic evaluation harness used to determine whether the model's predictions have practical trading value under realistic market conditions.
 
 ```text
-    START CAMPAIGN (Unattended / Overnight Mode)
-          ↓
-    Generate Candidate (via Phase 4E Priority Dossiers & Lineage)
-          ↓
-    Train Candidate Model (Algorithms, Features, Hyperparams)
-          ↓
-    Evaluate Model (Statistical ROC-AUC, LogLoss, Brier, ECE)
-          ↓
-    Test Model through Simple Deterministic Strategy Evaluation Harness
-          ↓
-    Walk-Forward Validation (Zero Look-Ahead Leakage)
-          ↓
-    Regime / Stress Validation (R001–R007)
-          ↓
-    Robustness Evaluation (ROB_POLICY_v1.0 Multi-Objective Scorecard)
-          ↓
-    Rank Candidate vs Context Incumbent (Research Champion / Challenger)
-          ↓
-    Reject Weak Candidate OR Retain Promising Candidate
-          ↓
-    Fine-Tune / Generate Improved Descendant Candidate
-          ↓
-    Repeat Cycle Unattended (Until Budget / Resource / Plateau Stop Condition)
-          ↓
-    Generate Morning Executive Research Report
+               PHASE 4F AUTOMATED DISCOVERY & FINE-TUNING LOOP
+                                (Unattended)
+                                     │
+      Phase 4E Recommendation / Feature Evidence / Regime Vulnerability
+                                     ↓
+             Generate Candidate Model Specifications (Phase 4F.2)
+                                     ↓
+               Pre-Training Negative Pruning & Signature Gate
+                                     ↓
+              Model Training & Walk-Forward Out-of-Sample (OOS)
+                                     ↓
+         Deterministic Strategy Evaluation Harness / Replay (Phase 4F.1)
+          (Signal Accuracy, MFE/MAE, Drawdown, Profit Factor, ECE)
+                                     ↓
+      Model + Trading Evidence Ranking & Pareto Scoring (Phase 4F.3)
+                                     ↓
+            Reject Weak Candidate OR Retain Promising Candidate
+                                     ↓
+      Fine-Tuning / Generate Improved Descendant Mutation (Phase 4F.4)
+                                     ↓
+      Autonomous Campaign Orchestrator Loop & Stop Rules (Phase 4F.5)
+                                     ↓
+      Persist to `<data_dir>/analysis.db` & Morning Dossier (Phase 4F.6)
 ```
+
+#### Subphase Breakdown for Phase 4F:
+1. **Phase 4F.1 — Deterministic Strategy Evaluation Harness & Telemetry Engine `[IMPLEMENTED & VERIFIED]`**:
+   - Fixed, deterministic replay evaluating out-of-sample probability sequences.
+   - Computes `win_rate_pct`, `profit_factor`, `mfe_mae_ratio`, `max_drawdown_pct`, `loss_streak`, and calibration ECE.
+   - Persisted to `benchmark_metrics` table in `<data_dir>/analysis.db`.
+2. **Phase 4F.2 — Automated Candidate Generator & Lineage Tracker `[IMPLEMENTED & VERIFIED]`**:
+   - Direct ingestion of Phase 4E `build_context_priority_agenda()` and `analyze_feature_affinity()` non-linear synergy pairs.
+   - Deterministic SHA-256 experiment signatures preventing duplicate training.
+   - Full parent $\to$ child lineage and opportunity metadata preservation.
+3. **Phase 4F.3 — Model + Trading Evidence Ranking Engine `[IMPLEMENTED & VERIFIED]`**:
+   - Multi-objective Pareto composite scoring: $S_{\text{comp}} = 0.40 \cdot S_m + 0.60 \cdot S_t$.
+   - Trade volume confidence scaling ($\sqrt{N/30}$) and risk penalty deductions (drawdown $> 5\%$, loss streak $> 3$).
+   - 5-level deterministic tie-breaking and advisory recommendation taxonomy (`CHAMPION_CANDIDATE`, `CHALLENGER_CANDIDATE`, `FINE_TUNE_CANDIDATE`, `RESEARCH_BENCHMARK`, `REJECTED_CANDIDATE`).
+4. **Phase 4F.4 — Automated Fine-Tuning & Descendant Mutation Controller `[IMPLEMENTED & VERIFIED]`**:
+   - Evidence-guided evolutionary mutation across 5 dimensions (Feature Subsets, Hyperparameters, Algorithm Challenger, Target Hypotheses, Regime Specialization).
+   - Evaluates child vs parent $\Delta S_{\text{comp}}$; automatically prunes degrading branches ($\Delta S_{\text{comp}} \le -3.0$).
+   - Persisted to `fine_tuning_trials` table in `analysis.db`.
+5. **Phase 4F.5 — Autonomous Overnight Research Campaign Controller `[IMPLEMENTED & VERIFIED]`**:
+   - Finite state machine orchestrator coordinating the complete unattended research cycle across generations.
+   - Deterministic stop conditions: `MAX_DURATION_EXCEEDED`, `MAX_CANDIDATES_REACHED`, `MAX_GENERATIONS_REACHED`, `PLATEAU_DETECTED` ($\Delta S < 1.0$), `EXCESSIVE_FAILURES`, and `USER_CANCELLED`.
+   - Persisted to `overnight_campaigns` and `overnight_campaign_events` tables in `analysis.db`.
+6. **Phase 4F.6 — Morning Research Dossier & Model Research Lab UI `[IMPLEMENTED & VERIFIED]`**:
+   - Pure presentation layer compiling executive KPIs, candidate leaderboards, generational lineage trees, and governance audits.
+   - Interactive GUI in `MorningResearchDossierPanel` with Markdown & JSON export capabilities.
+7. **Autonomous Research UI Integration (`▶ Start Autonomous Research`) `[IMPLEMENTED & VERIFIED]`**:
+   - Integrated directly into the Model Research Leaderboard panel.
+   - Asynchronous background worker execution ensuring Tkinter UI remains 100% responsive.
+   - Real-time telemetry dashboard (Status badge, generation counter, active candidate, candidates tested/pruned/descendants, best candidate with lift, trading metrics, stop reason).
+   - Thread-safe `⏹ Stop` cancellation hook.
 
 #### 12 Authoritative Architectural Specifications for Phase 4F:
 

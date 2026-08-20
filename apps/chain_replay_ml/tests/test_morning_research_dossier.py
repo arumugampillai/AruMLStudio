@@ -246,6 +246,178 @@ class TestMorningResearchDossier(unittest.TestCase):
         self.assertIsNotNone(dossier.best_profit_factor)
         self.assertIsNotNone(dossier.best_max_drawdown_pct)
 
+    def test_28_panel_rendering_kv_block_contract(self):
+        """28. Verify MorningResearchDossierPanel renders overview and kv_block with supported signature without errors."""
+        import tkinter as tk
+        from master_dataset_tk.morning_research_dossier_panel import MorningResearchDossierPanel
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            panel = MorningResearchDossierPanel(root, data_dir=self.tmp_dir)
+            panel.selected_campaign_id.set(self.campaign_id)
+            # Must succeed without throwing unexpected keyword argument 'num_cols'
+            panel.load_selected_campaign()
+            self.assertIsNotNone(panel.current_dossier)
+            self.assertEqual(panel.current_dossier.campaign_id, self.campaign_id)
+        finally:
+            root.destroy()
+
+    def test_29_panel_rendering_empty_and_missing_sections(self):
+        """29. Verify panel renders cleanly even if optional dossier sections are empty."""
+        import tkinter as tk
+        from master_dataset_tk.morning_research_dossier_panel import MorningResearchDossierPanel
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            panel = MorningResearchDossierPanel(root, data_dir=self.tmp_dir)
+            # Create minimal dossier with empty optional sections
+            from chain_replay_ml.morning_dossier import MorningResearchDossier, FeatureGovernanceAuditSummary
+            d = MorningResearchDossier(
+                campaign_id="CAMP_EMPTY_TEST",
+                context_key=self.context_key,
+                generated_at="2026-08-19T00:00:00",
+                campaign_status=CampaignStatus.COMPLETED,
+                stop_reason=CampaignStopReason.MAX_GENERATIONS_REACHED,
+                start_time_iso="",
+                end_time_iso="",
+                duration_seconds=0.0,
+                total_generations_completed=0,
+                total_candidates_generated=0,
+                total_candidates_trained=0,
+                total_candidates_evaluated=0,
+                total_candidates_excluded=0,
+                total_candidates_pruned=0,
+                starting_best_score=0.0,
+                best_composite_score=0.0,
+                total_score_improvement=0.0,
+                best_candidate_id=None,
+                best_candidate_class=None,
+                best_trading_score=0.0,
+                best_model_score=0.0,
+                best_win_rate_pct=0.0,
+                best_profit_factor=0.0,
+                best_max_drawdown_pct=0.0,
+                ranked_candidates=[],
+                fine_tuning_trials=[],
+                lineage_tree=[],
+                feature_governance_summary=FeatureGovernanceAuditSummary(
+                    total_features_evaluated=0,
+                    features_used=[],
+                    phase4e_recommended_features=[],
+                    deprecated_features_blocked=[],
+                    unknown_features_governed=[],
+                ),
+                recommended_next_actions=[],
+            )
+            panel.current_dossier = d
+            panel._render_overview_tab()
+            panel._render_discovered_features_tab()
+            panel._render_leaderboard_tab()
+            panel._render_lineage_tab()
+            panel._render_governance_tab()
+        finally:
+            root.destroy()
+
+    def test_30_panel_scrollable_tabs_contract(self):
+        """30. Verify that overview and governance tabs use ScrollableFrame for long content."""
+        import tkinter as tk
+        from master_dataset_tk.morning_research_dossier_panel import MorningResearchDossierPanel
+        from master_dataset_tk.model_registry_widgets import ScrollableFrame
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            panel = MorningResearchDossierPanel(root, data_dir=self.tmp_dir)
+            self.assertIsInstance(panel.tab_overview, ScrollableFrame)
+            self.assertIsInstance(panel.tab_discovered_features, ScrollableFrame)
+            self.assertIsInstance(panel.tab_governance, ScrollableFrame)
+        finally:
+            root.destroy()
+
+    def test_31_discovered_features_populated(self):
+        """31. Verify dossier.discovered_features contains empirical feature discovery records."""
+        from chain_replay_ml.morning_dossier.types import DiscoveredFeatureRecord
+        dossier = generate_morning_research_dossier(self.tmp_dir, self.campaign_id)
+        self.assertGreater(len(dossier.discovered_features), 0)
+        first = dossier.discovered_features[0]
+        self.assertIsInstance(first, DiscoveredFeatureRecord)
+        self.assertIsNotNone(first.feature_name)
+        self.assertGreater(first.times_tested, 0)
+        self.assertGreater(first.best_composite_score, 0.0)
+
+    def test_32_discovered_feature_categories_and_recommendation(self):
+        """32. Verify feature status classification (STRONG, PROMISING, REJECTED) and governance recommendations."""
+        from chain_replay_ml.morning_dossier.types import DiscoveredFeatureStatus
+        dossier = generate_morning_research_dossier(self.tmp_dir, self.campaign_id)
+        statuses = {f.status for f in dossier.discovered_features}
+        self.assertTrue(any(s in statuses for s in (DiscoveredFeatureStatus.STRONG_DISCOVERED, DiscoveredFeatureStatus.PROMISING)))
+        for f in dossier.discovered_features:
+            if f.status in (DiscoveredFeatureStatus.STRONG_DISCOVERED, DiscoveredFeatureStatus.PROMISING):
+                self.assertEqual(f.recommendation, "DISCOVERED — HUMAN REVIEW REQUIRED")
+
+    def test_33_discovered_feature_synergies(self):
+        """33. Verify pairwise feature synergies are aggregated into dossier.discovered_synergies."""
+        from chain_replay_ml.morning_dossier.types import DiscoveredFeatureSynergy
+        dossier = generate_morning_research_dossier(self.tmp_dir, self.campaign_id)
+        self.assertIsInstance(dossier.discovered_synergies, list)
+        if dossier.discovered_synergies:
+            first = dossier.discovered_synergies[0]
+            self.assertIsInstance(first, DiscoveredFeatureSynergy)
+            self.assertIsNotNone(first.feature_a)
+            self.assertIsNotNone(first.feature_b)
+
+    def test_34_candidate_feature_mutation_drilldown(self):
+        """34. Verify candidate feature drill-down shows parent, added features, removed features, and metric deltas."""
+        from chain_replay_ml.morning_dossier.types import CandidateFeatureDeltaView
+        dossier = generate_morning_research_dossier(self.tmp_dir, self.campaign_id)
+        self.assertGreater(len(dossier.candidate_feature_deltas), 0)
+        first = dossier.candidate_feature_deltas[0]
+        self.assertIsInstance(first, CandidateFeatureDeltaView)
+        self.assertIsNotNone(first.candidate_id)
+        self.assertIsInstance(first.child_features, list)
+        self.assertIsInstance(first.added_features, list)
+
+    def test_35_discovered_features_markdown_export(self):
+        """35. Verify export_morning_dossier_markdown includes Discovered Feature Intelligence section."""
+        dossier = generate_morning_research_dossier(self.tmp_dir, self.campaign_id)
+        md = export_morning_dossier_markdown(dossier)
+        self.assertIn("## 3. Discovered Feature Intelligence", md)
+        self.assertIn("DISCOVERED — HUMAN REVIEW REQUIRED", md)
+
+    def test_36_discovered_features_json_export(self):
+        """36. Verify dossier.to_dict() contains discovered_features, discovered_synergies, candidate_feature_deltas."""
+        dossier = generate_morning_research_dossier(self.tmp_dir, self.campaign_id)
+        data = dossier.to_dict()
+        self.assertIn("discovered_features", data)
+        self.assertIn("discovered_synergies", data)
+        self.assertIn("candidate_feature_deltas", data)
+        self.assertGreater(len(data["discovered_features"]), 0)
+
+    def test_37_panel_discovered_features_tab_rendering(self):
+        """37. Verify MorningResearchDossierPanel successfully renders the Discovered Features tab."""
+        import tkinter as tk
+        from master_dataset_tk.morning_research_dossier_panel import MorningResearchDossierPanel
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            panel = MorningResearchDossierPanel(root, data_dir=self.tmp_dir)
+            panel.selected_campaign_id.set(self.campaign_id)
+            panel.load_selected_campaign()
+            panel._render_discovered_features_tab()
+        finally:
+            root.destroy()
+
+    def test_38_production_and_feature_registry_immutability(self):
+        """38. Invariant: Discovered feature extraction never modifies production models or feature registry."""
+        dossier = generate_morning_research_dossier(self.tmp_dir, self.campaign_id)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp_dir, "models", ".active_model.json")))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp_dir, "models", ".lifecycle_registry.db")))
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

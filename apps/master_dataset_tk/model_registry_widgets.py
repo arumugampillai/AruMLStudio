@@ -413,28 +413,41 @@ def data_table(
 def importance_list(parent: tk.Misc, features: list[dict[str, Any]], *, limit: int = 20) -> ttk.Frame:
     frame = ttk.Frame(parent)
     frame.pack(fill="x", pady=(0, 8))
-    rows = sorted(features, key=lambda x: float(x.get("importance_pct") or 0), reverse=True)[:limit]
-    if not rows:
+    if not features:
         ttk.Label(frame, text="No feature importance data.", foreground=COL_MUTED).pack(anchor="w")
         return frame
-    max_pct = max(float(r.get("importance_pct") or 0) for r in rows) or 0.01
+
+    has_importance = any(x.get("importance_pct") is not None for x in features)
+    if has_importance:
+        rows = sorted(features, key=lambda x: float(x.get("importance_pct") or 0), reverse=True)[:limit]
+    else:
+        rows = list(features)[:limit]
+
     hdr = ttk.Frame(frame)
     hdr.pack(fill="x")
     ttk.Label(hdr, text="Feature", font=(BODY_FONT[0], BODY_FONT[1], "bold")).pack(side="left")
-    ttk.Label(hdr, text="Final Model Gain", font=(BODY_FONT[0], BODY_FONT[1], "bold")).pack(side="right")
+    ttk.Label(hdr, text="Final Model Gain" if has_importance else "Selection Status", font=(BODY_FONT[0], BODY_FONT[1], "bold")).pack(side="right")
+
+    max_pct = max((float(r.get("importance_pct") or 0) for r in rows if r.get("importance_pct") is not None), default=0.01) or 0.01
+
     for idx, row in enumerate(rows):
         feat = str(row.get("feature") or "")
-        pct = float(row.get("importance_pct") or 0)
+        imp_raw = row.get("importance_pct")
         row_f = ttk.Frame(frame)
         row_f.pack(fill="x", pady=2)
         ttk.Label(row_f, text=f"{idx + 1}. {feat}", font=BODY_FONT).pack(side="left")
-        ttk.Label(row_f, text=f"{pct:.2f}%", font=BODY_FONT, foreground=ACCENT).pack(side="right", padx=(8, 0))
-        bar_wrap = tk.Frame(row_f, height=6, bg="#e8eaed")
-        bar_wrap.pack(fill="x", pady=(2, 0))
-        width_px = max(4, int(400 * (pct / max_pct)))
-        tk.Frame(bar_wrap, width=width_px, height=6, bg=ACCENT).pack(side="left", fill="y")
+        if imp_raw is not None:
+            pct = float(imp_raw)
+            ttk.Label(row_f, text=f"{pct:.2f}%", font=BODY_FONT, foreground=ACCENT).pack(side="right", padx=(8, 0))
+            bar_wrap = tk.Frame(row_f, height=6, bg="#e8eaed")
+            bar_wrap.pack(fill="x", pady=(2, 0))
+            width_px = max(4, int(400 * (pct / max_pct)))
+            tk.Frame(bar_wrap, width=width_px, height=6, bg=ACCENT).pack(side="left", fill="y")
+        else:
+            ttk.Label(row_f, text="Selected (Active)", font=BODY_FONT, foreground=COL_OK).pack(side="right", padx=(8, 0))
 
     return frame
+
 
 
 def json_block(parent: tk.Misc, data: Any, *, height: int = 10) -> tk.Text:

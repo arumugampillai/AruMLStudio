@@ -57,12 +57,14 @@ class CampaignConfig:
     campaign_id: str
     context_keys: list[str]
     max_duration_hours: float = 8.0              # Maximum campaign runtime (e.g. overnight window)
-    max_candidates_total: int = 40              # Global candidate budget across all generations
-    max_generations: int = 4                    # Maximum generational mutation depth
+    max_candidates_total: int = 100             # Global candidate budget across all generations
+    max_generations: int = 10                   # Maximum generational mutation depth
     max_descendants_per_parent: int = 3         # Branching factor per parent
     max_candidates_per_generation: int = 10     # Max candidates to train in a single generation
-    plateau_patience_generations: int = 2       # Consecutive generations without lift before plateau stop
-    plateau_min_lift: float = 1.0               # Minimum composite score delta considered meaningful lift
+    plateau_enabled: bool = True                # Enable/disable early plateau halting
+    plateau_patience_generations: int = 3       # Consecutive generations without lift before plateau stop
+    plateau_min_lift: float = 0.5               # Minimum composite score delta considered meaningful lift
+    min_generations_before_plateau: int = 3     # Minimum generations explored before plateau checks can halt
     max_consecutive_failures: int = 5           # Max candidate training/eval errors before aborting
     max_memory_mb: int = 12288                  # 12 GB RAM ceiling on 16 GB workstation
     min_trade_volume: int = 30                  # Minimum trades for full confidence

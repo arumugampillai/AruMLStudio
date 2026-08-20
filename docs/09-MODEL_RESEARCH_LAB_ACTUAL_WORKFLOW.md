@@ -282,7 +282,7 @@ Research Dashboard & Strategy Simulator query prediction_dataset to display live
 ### 11.3. PLANNED SUBSYSTEMS (Future Phases)
 1. **Faceted Filtering & Population Awareness (Phase 4C.4 — PLANNED)**: Multi-dimensional filtering by Task Type, Regime, Population Tier, and Status in Model Registry and Research Lab.
 2. **Persistent Multi-Model Benchmarking (Phase 4D — PLANNED)**: Historical cross-model evaluations in `analysis.db`.
-3. **Strategy Evidence Bridge (Phase 4F — PLANNED)**: Isolated simulation performance ledger linked to research records.
+3. **Autonomous Model Discovery & Fine-Tuning Controller (Phase 4F — IMPLEMENTED & VERIFIED)**: Standardized strategy evaluation harness, automated candidate generation, composite ranking, fine-tuning mutation controller, overnight campaign orchestrator, and `▶ Start Autonomous Research` UI integration.
 
 ### 11.4. STORAGE MODE
 1. **Storage Mode**: The codebase supports both `FEATURE_STORAGE_REFERENCED` (`master_row_id` joined to Master DB) and legacy `FEATURE_STORAGE_EMBEDDED` (`sf_*` columns stored in `prediction_dataset`). Future dataset migrations may fully deprecate embedded mode to minimize disk usage.
