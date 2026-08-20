@@ -540,11 +540,12 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         tbl_act_bar = ttk.Frame(table_frame, padding=(0, 2, 0, 4))
         tbl_act_bar.pack(fill="x")
 
-        ttk.Button(
+        self._btn_add_to_classifier = ttk.Button(
             tbl_act_bar,
             text="🏆 Add to Classifier",
             command=self._on_add_to_classifier,
-        ).pack(side="left", padx=(0, 8))
+        )
+        self._btn_add_to_classifier.pack(side="left", padx=(0, 8))
 
         ttk.Label(
             tbl_act_bar,

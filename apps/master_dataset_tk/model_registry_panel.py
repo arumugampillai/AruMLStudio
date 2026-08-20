@@ -260,11 +260,15 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         ttk.Button(toolbar, text="Refresh", command=self.refresh_models).pack(side="left", padx=4)
         toolbar_right = ttk.Frame(toolbar)
         toolbar_right.pack(side="right")
-        self._compare_btn: ttk.Button | None = None
-        self._pred_runs_btn: ttk.Button | None = None
         if self._on_open_prediction_runs:
             self._pred_runs_btn = ttk.Button(toolbar_right, text="Open Prediction Runs", command=self._open_prediction_runs)
             self._pred_runs_btn.pack(side="right", padx=4)
+        self._research_leaderboard_btn = ttk.Button(
+            toolbar_right,
+            text="Research Leaderboard",
+            command=self._open_research_leaderboard,
+        )
+        self._research_leaderboard_btn.pack(side="right", padx=4)
         if self._on_compare_models:
             self._compare_btn = ttk.Button(toolbar_right, text="Compare", command=self._open_compare)
 
@@ -351,7 +355,6 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
                 ("regression", "Regression"),
                 ("classifier", "Classifier"),
                 ("triple_barrier", "Triple Barrier"),
-                ("research_leaderboard", "Research Leaderboard"),
             )
         ):
             frame = ttk.Frame(self._models_family_nb)
@@ -361,7 +364,6 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
 
         self._tree_host = ttk.Frame(table_frame)
         self._tree_host.pack(fill="both", expand=True)
-        self._leaderboard_panel = ModelResearchLeaderboardPanel(table_frame, chart_dir=self.chart_dir, on_select_model=self.select_model)
         tree_host = self._tree_host
         cols = (
             "name",
@@ -487,28 +489,8 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
 
     def _on_models_family_tab_changed(self, _event: object | None = None) -> None:
         self._models_family = self._models_family_from_notebook()
-        if self._models_family == "research_leaderboard":
-            self._tree_host.pack_forget()
-            if hasattr(self, "_detail_outer") and hasattr(self, "_main_paned"):
-                try:
-                    if str(self._detail_outer) in [str(p) for p in self._main_paned.panes()]:
-                        self._main_paned.forget(self._detail_outer)
-                except Exception:
-                    pass
-            self._leaderboard_panel.set_chart_dir(self.chart_dir)
-            self._leaderboard_panel.pack(fill="both", expand=True)
-            self._leaderboard_panel.refresh_leaderboard()
-        else:
-            self._leaderboard_panel.pack_forget()
-            if hasattr(self, "_detail_outer") and hasattr(self, "_main_paned"):
-                try:
-                    if str(self._detail_outer) not in [str(p) for p in self._main_paned.panes()]:
-                        self._main_paned.add(self._detail_outer, weight=3)
-                except Exception:
-                    pass
-            self._tree_host.pack(fill="both", expand=True)
-            self._sync_models_metric_columns()
-            self._populate_models_tree(select_first=True)
+        self._sync_models_metric_columns()
+        self._populate_models_tree(select_first=True)
 
 
 
@@ -1879,6 +1861,73 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         name = self._selected_model()
         if name and self._on_open_prediction_runs:
             self._on_open_prediction_runs(name)
+
+    def _ensure_research_leaderboard_window(self) -> tk.Toplevel:
+        """Create (once) the Research Leaderboard companion window."""
+        win = getattr(self, "_research_leaderboard_win", None)
+        if win is not None:
+            try:
+                if win.winfo_exists():
+                    return win
+            except tk.TclError:
+                pass
+
+        from .model_research_leaderboard_panel import ModelResearchLeaderboardPanel
+
+        root = self.winfo_toplevel()
+        win = tk.Toplevel(root)
+        win.withdraw()
+        win.title("Research Leaderboard")
+        try:
+            win.transient(root)
+        except tk.TclError:
+            pass
+
+        hdr = ttk.Frame(win, padding=(10, 8))
+        hdr.pack(fill="x")
+        ttk.Label(
+            hdr,
+            text="Autonomous Model Research Leaderboard (Phase 4F)",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="left")
+        ttk.Button(hdr, text="Close", command=lambda: win.withdraw()).pack(side="right")
+
+        self._leaderboard_panel = ModelResearchLeaderboardPanel(
+            win,
+            chart_dir=self.chart_dir,
+            on_select_model=self.select_model,
+        )
+        self._leaderboard_panel.pack(fill="both", expand=True)
+
+        self._research_leaderboard_win = win
+        return win
+
+    def _open_research_leaderboard(self) -> None:
+        """Open Research Leaderboard beside the main app (Companion Window pattern, matching Feature Transformations)."""
+        from .fold_replay_widgets import place_toplevel_beside_main
+
+        win = self._ensure_research_leaderboard_window()
+        if not getattr(self, "_research_leaderboard_placed", False):
+            win.update_idletasks()
+            place_toplevel_beside_main(win, self)
+            self._research_leaderboard_placed = True
+        try:
+            win.deiconify()
+            win.lift()
+            win.focus_force()
+        except tk.TclError:
+            self._research_leaderboard_win = None
+            win = self._ensure_research_leaderboard_window()
+            win.update_idletasks()
+            place_toplevel_beside_main(win, self)
+            self._research_leaderboard_placed = True
+            win.deiconify()
+            win.lift()
+            win.focus_force()
+
+        if hasattr(self, "_leaderboard_panel") and self._leaderboard_panel:
+            self._leaderboard_panel.set_chart_dir(self.chart_dir)
+            self._leaderboard_panel.refresh_leaderboard()
 
 
 def _strat_from_doc(doc: dict[str, Any]) -> str:
