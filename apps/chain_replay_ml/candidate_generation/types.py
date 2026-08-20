@@ -18,6 +18,7 @@ from typing import Any
 
 class MutationType(str, Enum):
     """Categories of candidate specification mutations."""
+    FULL_FEATURE_BASELINE = "FULL_FEATURE_BASELINE"
     COLD_START = "COLD_START"
     ALGORITHM_MUTATION = "ALGORITHM_MUTATION"
     HYPERPARAMETER_MUTATION = "HYPERPARAMETER_MUTATION"
@@ -40,7 +41,7 @@ class CandidateGenerationBudget:
     max_candidates_per_campaign: int = 30       # Maximum total candidates in one generation pass
     max_generations: int = 4                    # Maximum descendant depth (0 -> 1 -> 2 -> 3)
     max_descendants_per_parent: int = 3         # Branching factor ceiling per parent
-    max_features_per_candidate: int = 35        # Maximum feature count ceiling to prevent OOM
+    max_features_per_candidate: int = 2000      # Ceiling to allow complete eligible dataset universes
     max_concurrent_workers: int = 1             # Strict serial execution default
 
     def to_dict(self) -> dict[str, Any]:

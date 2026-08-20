@@ -89,13 +89,9 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._on_select_model = on_select_model
 
         # Context selection state
-        from chain_replay_ml.dataset_builder.master_naming import (
-            MASTER_DATASET_INTERVAL_LABELS,
-            format_sampling_interval_label,
-            master_dataset_slug,
-            parse_sampling_interval_sec,
-            resolve_master_db_path,
-        )
+        self._datasets: list[dict[str, Any]] = []
+        self._dataset_var = tk.StringVar(value="")
+        self._dataset_meta: dict[str, Any] | None = None
 
         self._market_var = tk.StringVar(value="NIFTY")
         self._sampling_var = tk.StringVar(value="6s")
@@ -126,26 +122,210 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._selected_dossier: dict[str, Any] | None = None
 
         self._build_ui()
-        self._update_resolved_context_key()
+        self._refresh_datasets_combo()
+
+    def set_chart_dir(self, chart_dir: str) -> None:
+        self.chart_dir = chart_dir
+        self._refresh_datasets_combo()
 
     def _data_dir(self) -> str:
-        if not self.chart_dir:
-            return ""
-        if os.path.exists(os.path.join(self.chart_dir, "analysis.db")):
-            return self.chart_dir
-        return chart_data_dir(self.chart_dir)
+        candidates = []
+        if self.chart_dir:
+            candidates.append(chart_data_dir(self.chart_dir))
+            candidates.append(self.chart_dir)
+        candidates.append(chart_data_dir(os.getcwd()))
+        candidates.append(os.path.join(os.getcwd(), "data"))
+        candidates.append(os.getcwd())
+
+        for c in candidates:
+            if not c:
+                continue
+            ds_dir = os.path.join(c, "datasets") if not c.endswith("datasets") else c
+            if os.path.isdir(ds_dir) and any(f.endswith(".json") for f in os.listdir(ds_dir)):
+                return c
+        for c in candidates:
+            if c and os.path.isdir(c) and os.path.exists(os.path.join(c, "analysis.db")):
+                return c
+        return chart_data_dir(self.chart_dir) if self.chart_dir else chart_data_dir(os.getcwd())
+
+    def _selected_dataset_name(self) -> str:
+        from .model_builder.panel import _dataset_name_from_label
+        return _dataset_name_from_label(self._dataset_var.get(), self._datasets)
+
+    def _refresh_datasets_combo(self, preferred_name: str | None = None) -> None:
+        try:
+            from .model_builder import service
+            from .model_builder.panel import _dataset_display_label
+
+            candidates = []
+            if self.chart_dir:
+                candidates.append(chart_data_dir(self.chart_dir))
+                candidates.append(self.chart_dir)
+            candidates.append(self._data_dir())
+            candidates.append(chart_data_dir(os.getcwd()))
+            candidates.append(os.path.join(os.getcwd(), "data"))
+            candidates.append(os.getcwd())
+
+            all_datasets: list[dict[str, Any]] = []
+            for d in dict.fromkeys(c for c in candidates if c):
+                try:
+                    found = service.list_builder_datasets(d)
+                    if found:
+                        all_datasets = found
+                        break
+                except Exception:
+                    pass
+
+            self._datasets = all_datasets
+            vals = [_dataset_display_label(d) for d in self._datasets if d.get("dataset_name")]
+            if hasattr(self, "_dataset_cb"):
+                self._dataset_cb["values"] = vals
+            names = [d.get("dataset_name") for d in self._datasets if d.get("dataset_name")]
+            pick = preferred_name if preferred_name in names else self._selected_dataset_name()
+            if not pick and names:
+                pick = names[0]
+            if pick:
+                row = next((d for d in self._datasets if d.get("dataset_name") == pick), None)
+                self._dataset_var.set(_dataset_display_label(row) if row else pick)
+                self._on_dataset_selected(refresh_leaderboard=False)
+            elif not vals:
+                self._dataset_var.set("")
+                self._dataset_status_var.set("⚠️ No Analysis Datasets found in registry. Build/export a dataset in Dataset Builder first.")
+                if hasattr(self, "_lbl_dataset_status"):
+                    self._lbl_dataset_status.config(foreground=COL_WARN)
+        except Exception:
+            pass
+
+    def _on_dataset_selected(self, refresh_leaderboard: bool = True) -> None:
+        ds_name = self._selected_dataset_name()
+        data_dir = self._data_dir()
+        if ds_name and data_dir:
+            try:
+                from .model_builder import service
+                self._dataset_meta = service.load_dataset_metadata_doc(data_dir, ds_name)
+            except Exception:
+                loaded = None
+                candidates = [
+                    chart_data_dir(self.chart_dir) if self.chart_dir else "",
+                    self.chart_dir or "",
+                    chart_data_dir(os.getcwd()),
+                    os.path.join(os.getcwd(), "data"),
+                    os.getcwd(),
+                ]
+                for cand in dict.fromkeys(c for c in candidates if c):
+                    try:
+                        from .model_builder import service
+                        loaded = service.load_dataset_metadata_doc(cand, ds_name)
+                        if loaded:
+                            break
+                    except Exception:
+                        pass
+                self._dataset_meta = loaded
+        else:
+            self._dataset_meta = None
+
+        meta = (self._dataset_meta or {}).get("metadata") or {}
+        market = str(meta.get("market") or meta.get("master_market") or "").strip().upper()
+        if not market and ds_name:
+            for m in ("BANKNIFTY", "FINNIFTY", "SENSEX", "NIFTY"):
+                if m in ds_name.upper():
+                    market = m
+                    break
+        if not market:
+            market = "NIFTY"
+        self._market_var.set(market)
+
+        int_sec = meta.get("interval_sec") or meta.get("sample_interval_sec")
+        if int_sec is None and ds_name:
+            import re
+            match = re.search(r"_(\d+)s", ds_name)
+            if match:
+                try:
+                    int_sec = int(match.group(1))
+                except Exception:
+                    int_sec = 6
+        int_sec_val = int(int_sec) if int_sec is not None else 6
+        self._sampling_var.set(f"{int_sec_val}s")
+
+        self._update_resolved_context_key()
+        if refresh_leaderboard:
+            self.refresh_leaderboard()
+
+    def _dataset_eligible_features(self) -> list[str]:
+        if not self._dataset_meta:
+            return []
+        meta = (self._dataset_meta or {}).get("metadata") or {}
+        cols = (
+            meta.get("feature_columns")
+            or meta.get("enabled_features")
+            or meta.get("selected_features")
+            or []
+        )
+        names = [str(c).strip() for c in cols if str(c).strip()]
+        parquet_rel = str(meta.get("output_parquet") or "").strip()
+        data_dir = self._data_dir()
+        parquet_path = os.path.join(data_dir, parquet_rel) if parquet_rel and not os.path.isabs(parquet_rel) else (
+            str(meta.get("parquet_path") or parquet_rel)
+        )
+        if parquet_path and os.path.isfile(parquet_path):
+            try:
+                import pyarrow.parquet as pq
+                schema_names = set(pq.read_schema(parquet_path).names)
+                if schema_names:
+                    names = [c for c in names if c in schema_names]
+            except Exception:
+                pass
+        targets = set(meta.get("target_columns") or meta.get("prediction_target_columns") or [])
+        meta_skip = {
+            "timestamp", "datetime", "date", "time", "token", "symbol", "expiry", "strike",
+            "option_type", "instrument_type", "day", "trading_day", "open", "high", "low", "close", "ltp"
+        }
+        eligible = [
+            c for c in names
+            if c not in targets
+            and c.lower() not in meta_skip
+            and not c.startswith("target_")
+            and not c.startswith("label_")
+            and not c.startswith("future_")
+        ]
+        return list(dict.fromkeys(eligible))
+
+    def _resolve_target_column(self, meta: dict[str, Any]) -> str:
+        task = self._task_var.get()
+        horizon = self._horizon_var.get()
+        targets = list(meta.get("target_columns") or meta.get("prediction_target_columns") or [])
+        if task == "DIRECTION_CLASSIFIER":
+            preferred = f"label_up_{horizon}"
+            if preferred in targets:
+                return preferred
+            for t in targets:
+                if str(t).startswith("label_up") or str(t).startswith("target_up"):
+                    return str(t)
+        elif task == "REGRESSION":
+            preferred = f"future_ret_{horizon}"
+            if preferred in targets:
+                return preferred
+            for t in targets:
+                if str(t).startswith("future_ret") or str(t).startswith("future_ltp"):
+                    return str(t)
+        elif task == "CONFIDENCE_CLASSIFIER":
+            for t in targets:
+                if str(t) in ("target_reached", "hit"):
+                    return str(t)
+        if targets:
+            return str(targets[0])
+        return f"label_up_{horizon}"
 
     def _update_resolved_context_key(self) -> None:
-        """Resolve dropdown values into canonical ModelContextKey string and verify real Master Dataset."""
-        from chain_replay_ml.dataset_builder.master_naming import (
-            master_dataset_slug,
-            parse_sampling_interval_sec,
-            resolve_master_db_path,
-        )
+        """Resolve dataset metadata into canonical ModelContextKey string and update dataset status badge."""
         from chain_replay_ml.model_taxonomy import TaskType
 
         market = self._market_var.get() or "NIFTY"
-        interval_sec = parse_sampling_interval_sec(self._sampling_var.get(), default=6)
+        interval_sec = 6
+        try:
+            interval_sec = int(str(self._sampling_var.get() or "6").replace("s", ""))
+        except (TypeError, ValueError):
+            interval_sec = 6
 
         # Extract clean regime ID from combo text (e.g. 'R001 - TREND' -> 'R001')
         reg_raw = self._regime_var.get().split()[0].split("-")[0].strip()
@@ -161,45 +341,31 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         )
         self._context_key_var.set(ctx.canonical_key_str())
 
-        # Authoritative Master Dataset resolution using existing master_status service
-        from chain_replay_ml.dataset_builder.master_status import read_master_dataset_status
-
-        data_dir = self._data_dir()
-        slug = master_dataset_slug(market=market, sampling_interval_sec=interval_sec)
-
-        try:
-            status = read_master_dataset_status(
-                data_dir,
-                market=market,
-                interval_sec=interval_sec,
-            )
-            if status.get("exists"):
-                row_count = int(status.get("row_count") or 0)
-                days_count = len(status.get("days_in_master") or [])
-                self._dataset_available = True
-                self._dataset_status_var.set(
-                    f"🟢 Master DB: {slug}.db ({row_count:,} rows · {days_count} days · Ready)"
-                )
-                if hasattr(self, "_lbl_dataset_status"):
-                    self._lbl_dataset_status.config(foreground=COL_OK)
-            else:
-                self._dataset_available = False
-                self._dataset_status_var.set(
-                    f"⚠️ Master DB: {slug}.db (Unavailable — not built from tick DB)"
-                )
-                if hasattr(self, "_lbl_dataset_status"):
-                    self._lbl_dataset_status.config(foreground=COL_WARN)
-        except Exception as ex:
+        ds_name = self._selected_dataset_name()
+        if not ds_name or not self._dataset_meta:
             self._dataset_available = False
-            self._dataset_status_var.set(f"⚠️ Master DB: {slug}.db (Status error: {ex})")
+            self._dataset_status_var.set("⚠️ No Dataset selected — select a dataset from the dropdown.")
             if hasattr(self, "_lbl_dataset_status"):
                 self._lbl_dataset_status.config(foreground=COL_WARN)
+            return
 
+        meta = (self._dataset_meta or {}).get("metadata") or {}
+        row = next((d for d in self._datasets if d.get("dataset_name") == ds_name), None) or {}
+        row_count = int(row.get("row_count") or meta.get("row_count") or 0)
+        feats = self._dataset_eligible_features()
+        feat_count = len(feats) if feats else int(row.get("feature_count") or meta.get("feature_count") or 0)
+        target_count = int(row.get("target_count") or len(meta.get("target_columns") or meta.get("prediction_target_columns") or []) or 0)
+        days = list(meta.get("days") or (meta.get("trading_day_filter") or {}).get("exported_dates") or [])
+        days_count = len(days) if days else (int(meta.get("day_count") or 0) or "—")
 
+        self._dataset_available = True
+        self._dataset_status_var.set(
+            f"🟢 Dataset: {ds_name} ({row_count:,} rows · {feat_count} features · {target_count} targets · {days_count} days · {interval_sec}s · {market})"
+        )
+        if hasattr(self, "_lbl_dataset_status"):
+            self._lbl_dataset_status.config(foreground=COL_OK)
 
     def _build_ui(self) -> None:
-        from chain_replay_ml.dataset_builder.master_naming import MASTER_DATASET_INTERVAL_LABELS
-
         # Top Container: Context Selector & Production Status Banner
         top_frame = ttk.Frame(self, padding=(8, 6))
         top_frame.pack(fill="x")
@@ -211,23 +377,18 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         controls_row = ttk.Frame(ctx_box)
         controls_row.pack(fill="x")
 
-        # Market
-        ttk.Label(controls_row, text="Market:").pack(side="left", padx=(2, 2))
-        m_cb = ttk.Combobox(controls_row, textvariable=self._market_var, values=["NIFTY", "BANKNIFTY", "FINNIFTY"], width=10, state="readonly")
-        m_cb.pack(side="left", padx=(0, 8))
-        m_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_context_param_changed())
-
-        # Sampling (Authoritative intervals from Master Dataset architecture)
-        ttk.Label(controls_row, text="Sampling:").pack(side="left", padx=(2, 2))
-        s_cb = ttk.Combobox(
+        # Authoritative Dataset Dropdown
+        ttk.Label(controls_row, text="Dataset:").pack(side="left", padx=(2, 2))
+        self._dataset_cb = ttk.Combobox(
             controls_row,
-            textvariable=self._sampling_var,
-            values=list(MASTER_DATASET_INTERVAL_LABELS),
-            width=6,
+            textvariable=self._dataset_var,
+            width=42,
             state="readonly",
         )
-        s_cb.pack(side="left", padx=(0, 8))
-        s_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_context_param_changed())
+        self._dataset_cb.pack(side="left", padx=(0, 4))
+        self._dataset_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_dataset_selected())
+
+        ttk.Button(controls_row, text="🔄", width=3, command=self._refresh_datasets_combo).pack(side="left", padx=(0, 8))
 
         # Task Type
         ttk.Label(controls_row, text="Task:").pack(side="left", padx=(2, 2))
@@ -235,7 +396,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             controls_row,
             textvariable=self._task_var,
             values=["DIRECTION_CLASSIFIER", "REGRESSION", "TRIPLE_BARRIER", "CONFIDENCE_CLASSIFIER", "VOLATILITY_ESTIMATOR"],
-            width=22,
+            width=20,
             state="readonly",
         )
         t_cb.pack(side="left", padx=(0, 8))
@@ -250,7 +411,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         # Regime
         ttk.Label(controls_row, text="Regime:").pack(side="left", padx=(2, 2))
         reg_vals = ["R001 (Trend)", "R002 (Sideways)", "R003 (High Vol)", "R004 (Low Vol)", "R005 (Breakout)", "R006 (Reversal)", "R007 (Expiry Pinning)"]
-        r_cb = ttk.Combobox(controls_row, textvariable=self._regime_var, values=reg_vals, width=18, state="readonly")
+        r_cb = ttk.Combobox(controls_row, textvariable=self._regime_var, values=reg_vals, width=16, state="readonly")
         r_cb.pack(side="left", padx=(0, 8))
         r_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_context_param_changed())
 
@@ -487,6 +648,9 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
 
     def refresh_leaderboard(self) -> None:
         """Query analysis.db using Phase 4D.5 ranking service for the active context key."""
+        if not self._datasets:
+            self._refresh_datasets_combo()
+
         ctx_key = self._context_key_var.get()
         data_dir = self._data_dir()
 
@@ -501,16 +665,58 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             self._prod_champ_var.set("👑 Production Champion: None")
             self._prod_chall_var.set("⚔️ Production Challenger: None")
 
-        # 2. Query Authoritative Ranking Dossiers from Phase 4D.5
+        # 2. Query Authoritative Ranking Dossiers from Phase 4D.5 / 4F.3
         try:
             dossiers = rank_models_in_context(data_dir, ctx_key)
         except Exception:
             dossiers = []
 
+        if not dossiers:
+            try:
+                from chain_replay_ml.model_ranking.persistence import load_candidate_rankings_for_context
+                cand_scores = load_candidate_rankings_for_context(data_dir, ctx_key)
+                for rank_idx, cs in enumerate(cand_scores, start=1):
+                    c_id = cs.candidate_id
+                    algo = "xgboost"
+                    if "_LIG_" in c_id or "lightgbm" in c_id.lower():
+                        algo = "lightgbm"
+                    elif "_CAT_" in c_id or "catboost" in c_id.lower():
+                        algo = "catboost"
+                    elif "_RAN_" in c_id or "random_forest" in c_id.lower():
+                        algo = "random_forest"
+                    elif "_EXT_" in c_id or "extra_trees" in c_id.lower():
+                        algo = "extra_trees"
+
+                    m_m = cs.model_metrics or {}
+                    t_m = cs.trading_metrics or {}
+                    dossiers.append({
+                        "rank": rank_idx,
+                        "signature_hash": cs.signature_hash,
+                        "model_name": cs.candidate_id,
+                        "algorithm": algo,
+                        "robustness_score": cs.composite_score,
+                        "pareto_rank": rank_idx,
+                        "is_pareto_optimal": (rank_idx == 1),
+                        "recommendation_status": cs.recommendation_class.value,
+                        "feature_count": int(m_m.get("total_features", len(self._dataset_eligible_features()) or 382)),
+                        "score_breakdown": cs.score_breakdown or {},
+                        "raw_metrics_summary": {
+                            "primary_metric_name": "ROC_AUC" if "roc_auc" in m_m else "Accuracy",
+                            "primary_metric_value": m_m.get("roc_auc", m_m.get("fold_mean", 0.0)),
+                            "fold_std": m_m.get("fold_std", 0.0),
+                            "expected_calibration_error": m_m.get("expected_calibration_error", 0.0),
+                            "avg_regime_degradation_pct": 0.0,
+                            "experimental_dependency_ratio": 0.0,
+                        },
+                        "warnings": list(cs.warnings or []),
+                    })
+            except Exception:
+                pass
+
         self._ranked_dossiers = dossiers
 
         # Update Research Candidate display
-        if dossiers and dossiers[0].get("recommendation_status") == "CHAMPION_CANDIDATE":
+        if dossiers and dossiers[0].get("recommendation_status") in ("CHAMPION_CANDIDATE", "STRONG_CONTENDER"):
             top_cand = dossiers[0]["model_name"]
             score = dossiers[0]["robustness_score"]
             self._cand_champ_var.set(f"🧪 Research Champion Candidate: {top_cand} ({score:.2f} pts)")
@@ -897,21 +1103,48 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             messagebox.showerror("Error", "Please select a valid ModelContextKey first.")
             return
 
-        # Strict dataset availability validation
-        if not getattr(self, "_dataset_available", False):
-            from chain_replay_ml.dataset_builder.master_naming import (
-                master_dataset_slug,
-                parse_sampling_interval_sec,
-            )
-            market = self._market_var.get() or "NIFTY"
-            interval_sec = parse_sampling_interval_sec(self._sampling_var.get(), default=6)
-            slug = master_dataset_slug(market=market, sampling_interval_sec=interval_sec)
-            messagebox.showerror(
-                "Master Dataset Unavailable",
-                f"No Master Dataset exists for {market} {interval_sec}s (expected '{slug}.db').\n\n"
-                f"Build the {interval_sec}s Master Dataset from the tick database before starting autonomous research or training in this context."
+        dataset_name = self._selected_dataset_name()
+        if not dataset_name:
+            messagebox.showerror("No Dataset Selected", "Please select an authoritative Dataset from the dropdown before starting research.")
+            return
+
+        data_dir = self._data_dir()
+        if not self._dataset_meta:
+            try:
+                from .model_builder import service
+                self._dataset_meta = service.load_dataset_metadata_doc(data_dir, dataset_name)
+            except Exception as exc:
+                messagebox.showerror("Dataset Error", f"Could not load metadata for dataset '{dataset_name}':\n{exc}")
+                return
+
+        meta = (self._dataset_meta or {}).get("metadata") or {}
+        parquet_rel = str(meta.get("output_parquet") or "").strip()
+        parquet_path = os.path.join(data_dir, parquet_rel) if parquet_rel and not os.path.isabs(parquet_rel) else (
+            str(meta.get("parquet_path") or parquet_rel)
+        )
+        if parquet_path and not os.path.exists(parquet_path):
+            messagebox.showwarning(
+                "Dataset Parquet Missing",
+                f"Parquet file for dataset '{dataset_name}' not found on disk:\n{parquet_path}\n\n"
+                "Please export or rebuild this dataset before training."
             )
             return
+
+        eligible_features = self._dataset_eligible_features()
+        if not eligible_features:
+            messagebox.showerror(
+                "No Features",
+                f"Dataset '{dataset_name}' contains no eligible feature columns."
+            )
+            return
+
+        target_col = self._resolve_target_column(meta)
+        dataset_snapshot_hash = str(
+            meta.get("dataset_fingerprint")
+            or meta.get("schema_hash")
+            or meta.get("dataset_hash")
+            or "dataset_snapshot_v1"
+        )
 
         # Generate unique campaign ID
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -925,7 +1158,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         max_hours = max(0.1, float(self._cfg_max_hours.get()))
         patience = max(1, self._cfg_plateau_patience.get())
 
-        # Construct CampaignConfig using active researcher budget
+        # Construct CampaignConfig using active researcher budget and full dataset feature universe
         config = CampaignConfig(
             campaign_id=campaign_id,
             context_keys=[ctx_key],
@@ -936,9 +1169,13 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             plateau_patience_generations=patience,
             plateau_min_lift=float(self._cfg_plateau_min_lift.get()),
             min_generations_before_plateau=int(self._cfg_min_gen_before_plateau.get()),
+            dataset_name=dataset_name,
+            dataset_path=parquet_path,
+            dataset_snapshot_hash=dataset_snapshot_hash,
+            dataset_feature_universe=eligible_features,
+            target_column=target_col,
         )
 
-        data_dir = self._data_dir()
         self._active_runner = OvernightCampaignRunner(data_dir=data_dir, config=config)
         self._is_running = True
 
@@ -946,7 +1183,9 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._btn_stop_research.config(state="normal")
         self._camp_status_var.set("STARTING")
         self._lbl_camp_status.config(foreground=COL_TRAINING)
-        self._camp_msg_var.set(f"Starting autonomous campaign: {campaign_id} (Budget: {max_gen} Gens, {max_cands} Cands, {max_hours}h)...")
+        self._camp_msg_var.set(
+            f"Starting autonomous campaign: {campaign_id} (Dataset: {dataset_name} · {len(eligible_features)} features · {max_gen} Gens, {max_cands} Cands)..."
+        )
 
         def _progress_cb(st: CampaignState, msg: str) -> None:
             self.after(0, lambda s=st, m=msg: self._update_campaign_telemetry(s, m))

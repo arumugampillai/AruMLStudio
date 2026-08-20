@@ -221,11 +221,20 @@ def generate_cold_start_candidates(
     dataset_snapshot_hash: str = "dataset_snapshot_v1",
     campaign_id: str | None = None,
     budget: CandidateGenerationBudget | None = None,
+    mutation_type: MutationType = MutationType.FULL_FEATURE_BASELINE,
 ) -> list[CandidateSpec]:
-    """Generate initial cold-start baseline candidate specifications across supported algorithms."""
+    """Generate initial full-universe baseline candidate specifications across verified algorithms."""
     b = budget or CandidateGenerationBudget()
-    algos = algorithms or [ALGORITHM_XGBOOST, ALGORITHM_LIGHTGBM, ALGORITHM_CATBOOST]
-    features_capped = list(base_features)[:b.max_features_per_candidate]
+    algos = algorithms or [
+        ALGORITHM_XGBOOST,
+        ALGORITHM_LIGHTGBM,
+        ALGORITHM_CATBOOST,
+        ALGORITHM_RANDOM_FOREST,
+        ALGORITHM_EXTRA_TREES,
+    ]
+    features_list = list(dict.fromkeys(str(f).strip() for f in base_features if str(f).strip()))
+    if b.max_features_per_candidate and len(features_list) > b.max_features_per_candidate:
+        features_list = features_list[:b.max_features_per_candidate]
 
     candidates: list[CandidateSpec] = []
     for algo in algos:
@@ -234,12 +243,12 @@ def generate_cold_start_candidates(
         cand = create_candidate_spec(
             context_key=context_key,
             algorithm=algo,
-            features=features_capped,
+            features=features_list,
             regime_definition_hash=regime_definition_hash,
             dataset_snapshot_hash=dataset_snapshot_hash,
             campaign_id=campaign_id,
-            mutation_type=MutationType.COLD_START,
-            mutation_description=f"Cold-start baseline {algo.upper()}",
+            mutation_type=mutation_type,
+            mutation_description=f"Full feature baseline ({len(features_list)} features) — {algo.upper()}",
         )
         candidates.append(cand)
 

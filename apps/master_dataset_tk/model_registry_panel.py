@@ -495,6 +495,7 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
                         self._main_paned.forget(self._detail_outer)
                 except Exception:
                     pass
+            self._leaderboard_panel.set_chart_dir(self.chart_dir)
             self._leaderboard_panel.pack(fill="both", expand=True)
             self._leaderboard_panel.refresh_leaderboard()
         else:

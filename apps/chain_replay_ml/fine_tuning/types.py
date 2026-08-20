@@ -36,7 +36,7 @@ class FineTuningBudget:
     max_descendants_per_parent: int = 3
     max_generations: int = 4
     max_candidates_total: int = 30
-    max_features_per_candidate: int = 35
+    max_features_per_candidate: int = 2000
     lift_threshold: float = 1.5           # Delta composite score required for CONFIRMED_MUTATION_LIFT
     regression_threshold: float = -1.0    # Delta composite score that triggers REGRESSION
     prune_threshold: float = -3.0         # Delta composite score that triggers PRUNED_MUTATION_PATH

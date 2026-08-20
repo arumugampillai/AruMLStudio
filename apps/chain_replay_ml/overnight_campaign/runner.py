@@ -23,7 +23,10 @@ import math
 import time
 from typing import Any, Callable, Sequence
 
-from chain_replay_ml.candidate_generation.generator import create_candidate_spec
+from chain_replay_ml.candidate_generation.generator import (
+    create_candidate_spec,
+    generate_cold_start_candidates,
+)
 from chain_replay_ml.candidate_generation.service import (
     generate_candidate_batch,
     generate_candidates_from_priority_agenda,
@@ -182,46 +185,63 @@ class OvernightCampaignRunner:
             )
         )
 
-        # 2. Log CAMPAIGN_STARTED audit event using authoritative master_status resolver
-        from chain_replay_ml.dataset_builder.master_status import read_master_dataset_status
-
+        # 2. Log CAMPAIGN_STARTED audit event
         ctx_str = self.config.context_keys[0] if self.config.context_keys else "NIFTY_6s_DIRECTION_CLASSIFIER_5m_R001"
         ctx_obj = ModelContextKey.from_key_str(ctx_str)
         market = str(ctx_obj.market).upper()
         int_sec = int(ctx_obj.sampling_interval_sec)
-        ds_slug = master_dataset_slug(market=market, sampling_interval_sec=int_sec)
 
-        status_info = read_master_dataset_status(
-            self.data_dir,
-            market=market,
-            interval_sec=int_sec,
-        )
-        db_exists = bool(status_info.get("exists"))
-        master_db = status_info.get("master_db_abs") or resolve_master_db_path(self.data_dir, market=market, sampling_interval_sec=int_sec)
-        master_rows = int(status_info.get("row_count") or 0)
-        trading_days_list = list(status_info.get("days_in_master") or [])
-        schema_hash_val = status_info.get("dataset_fingerprint") or (status_info.get("master_meta") or {}).get("schema_hash")
+        ds_name = self.config.dataset_name or ""
+        ds_path = self.config.dataset_path or ""
+        ds_hash = self.config.dataset_snapshot_hash or "dataset_snapshot_v1"
+        feature_universe = list(self.config.dataset_feature_universe)
+
+        if ds_name:
+            ds_label = ds_name
+            db_exists = os.path.exists(ds_path) if ds_path else True
+            master_db = ds_path or ds_name
+            master_rows = 0
+            trading_days_list = []
+        else:
+            from chain_replay_ml.dataset_builder.master_status import read_master_dataset_status
+
+            ds_slug = master_dataset_slug(market=market, sampling_interval_sec=int_sec)
+            ds_label = f"{ds_slug}.db"
+            status_info = read_master_dataset_status(
+                self.data_dir,
+                market=market,
+                interval_sec=int_sec,
+            )
+            db_exists = bool(status_info.get("exists"))
+            master_db = status_info.get("master_db_abs") or resolve_master_db_path(self.data_dir, market=market, sampling_interval_sec=int_sec)
+            master_rows = int(status_info.get("row_count") or 0)
+            trading_days_list = list(status_info.get("days_in_master") or [])
+            ds_hash = status_info.get("dataset_fingerprint") or (status_info.get("master_meta") or {}).get("schema_hash") or ds_hash
 
         persist_campaign_event(
             self.data_dir,
             campaign_id=self.config.campaign_id,
             generation_number=0,
             event_type="CAMPAIGN_STARTED",
-            message=f"Campaign {self.config.campaign_id} started for {ctx_str} on {ds_slug}.db ({master_rows:,} rows · {len(trading_days_list)} days).",
+            message=f"Campaign {self.config.campaign_id} started for {ctx_str} on {ds_label} ({len(feature_universe)} eligible features).",
             details={
                 "campaign_id": self.config.campaign_id,
                 "context_key": ctx_str,
+                "dataset_name": ds_name or ds_label,
+                "dataset_path": master_db,
+                "dataset_exists": db_exists,
+                "feature_count": len(feature_universe),
+                "feature_universe": feature_universe,
+                "target_column": self.config.target_column,
                 "market": market,
                 "sampling_interval_sec": int_sec,
                 "task_type": ctx_obj.task_type.value,
                 "prediction_horizon": ctx_obj.prediction_horizon,
                 "regime_id": ctx_obj.regime_id,
-                "master_db_path": master_db,
-                "master_db_exists": db_exists,
                 "row_count": master_rows,
                 "trading_days": trading_days_list,
                 "trading_day_count": len(trading_days_list),
-                "schema_hash": schema_hash_val,
+                "schema_hash": ds_hash,
                 "max_generations": self.config.max_generations,
                 "max_candidates": self.config.max_candidates_total,
                 "max_hours": self.config.max_duration_hours,
@@ -233,7 +253,7 @@ class OvernightCampaignRunner:
 
 
         try:
-            # Loop across generations: Generation 0 (Seed/Phase 4E) -> Generation 1..N (Fine-Tuning)
+            # Loop across generations: Generation 0 (Full Feature Baseline) -> Generation 1..N (Fine-Tuning / Elimination)
             for gen in range(state.current_generation, self.config.max_generations):
                 if self._cancel_requested:
                     state.status = CampaignStatus.CAMPAIGN_STOPPED
@@ -283,36 +303,51 @@ class OvernightCampaignRunner:
                 gen_candidates: list[CandidateSpec] = []
                 for ctx in self.config.context_keys:
                     if gen == 0:
-                        # Cold-start generation from Phase 4E agenda or batch
-                        batch_res = None
-                        try:
-                            agenda = build_context_priority_agenda(self.data_dir, ctx)
-                            batch_res = generate_candidates_from_priority_agenda(
-                                self.data_dir, ctx, agenda=agenda, campaign_id=self.config.campaign_id, schema=self.schema
+                        # Generation 0: Full Feature Baseline Models across all eligible dataset features
+                        base_universe = list(self.config.dataset_feature_universe)
+                        if base_universe:
+                            gen_candidates.extend(
+                                generate_cold_start_candidates(
+                                    context_key=ctx,
+                                    base_features=base_universe,
+                                    regime_definition_hash="regime_hash_universal",
+                                    dataset_snapshot_hash=self.config.dataset_snapshot_hash or "dataset_snapshot_v1",
+                                    campaign_id=self.config.campaign_id,
+                                    mutation_type=MutationType.FULL_FEATURE_BASELINE,
+                                )
                             )
-                        except Exception:
-                            pass
+                        else:
+                            batch_res = None
+                            try:
+                                agenda = build_context_priority_agenda(self.data_dir, ctx)
+                                batch_res = generate_candidates_from_priority_agenda(
+                                    self.data_dir, ctx, agenda=agenda, campaign_id=self.config.campaign_id, schema=self.schema
+                                )
+                            except Exception:
+                                pass
 
-                        if not batch_res or batch_res.total_generated == 0:
-                            batch_res = generate_candidate_batch(
-                                self.data_dir, ctx, base_features=["adx_14", "rsi_14", "macd_diff", "bb_width_20", "iv_mean"],
-                                campaign_id=self.config.campaign_id, schema=self.schema
-                            )
-                        gen_candidates.extend(batch_res.candidates)
-                        state.total_candidates_excluded += batch_res.excluded_count
+                            if not batch_res or batch_res.total_generated == 0:
+                                batch_res = generate_candidate_batch(
+                                    self.data_dir, ctx, base_features=["adx_14", "rsi_14", "macd_diff", "bb_width_20", "iv_mean"],
+                                    campaign_id=self.config.campaign_id, schema=self.schema
+                                )
+                            gen_candidates.extend(batch_res.candidates)
+                            state.total_candidates_excluded += batch_res.excluded_count
                     else:
-                        # Descendant mutations from previous generation's top parents
+                        # Descendant mutations from previous generation's top parents (Feature Elimination & Tuning)
                         parents = [
                             all_candidate_specs_by_id[s.candidate_id]
                             for s in all_ranked_scores[:3]
                             if s.candidate_id in all_candidate_specs_by_id
                         ]
                         if not parents:
+                            fallback_feats = list(self.config.dataset_feature_universe) or ["adx_14", "rsi_14", "macd_diff", "bb_width_20", "iv_mean"]
                             parents = [
                                 create_candidate_spec(
                                     context_key=ctx,
                                     algorithm="xgboost",
-                                    features=["adx_14", "rsi_14", "macd_diff", "bb_width_20", "iv_mean"],
+                                    features=fallback_feats,
+                                    dataset_snapshot_hash=self.config.dataset_snapshot_hash or "dataset_snapshot_v1",
                                 )
                             ]
                         parent_scores = {s.candidate_id: s for s in all_ranked_scores}
@@ -602,15 +637,17 @@ class OvernightCampaignRunner:
                 _notify(state, "Maximum generations completed.")
 
         except Exception as ex:
+            import traceback
+            tb_str = traceback.format_exc()
             state.status = CampaignStatus.CAMPAIGN_FAILED
-            state.warnings.append(f"UNHANDLED_CAMPAIGN_EXCEPTION: {str(ex)}")
+            state.warnings.append(f"UNHANDLED_CAMPAIGN_EXCEPTION: {str(ex)}\n{tb_str}")
             persist_campaign_event(
                 self.data_dir,
                 campaign_id=self.config.campaign_id,
                 generation_number=state.current_generation,
                 event_type="CAMPAIGN_FAILED",
                 message=f"Campaign failed with exception: {str(ex)}",
-                details={"error": str(ex)},
+                details={"error": str(ex), "traceback": tb_str},
             )
 
         state.end_time_iso = _utc_now_iso()
@@ -641,9 +678,13 @@ class OvernightCampaignRunner:
 
         state.end_time_iso = _utc_now_iso()
         state.last_update_iso = _utc_now_iso()
-        persist_campaign_state(self.data_dir, self.config, state)
-
-        return self._build_campaign_report(state, start_ts, start_iso, all_trials, all_ranked_scores)
+        return self._build_campaign_report(
+            state,
+            start_ts,
+            start_iso,
+            all_trials,
+            list(all_ranked_scores_by_sig.values()),
+        )
 
     def _build_campaign_report(
         self,
@@ -657,9 +698,8 @@ class OvernightCampaignRunner:
         duration = round(time.time() - start_ts, 2)
         total_lift = round(state.best_composite_score - state.starting_best_score, 4)
 
-        best_cand = None
-        if ranked_scores and state.best_candidate_id:
-            best_cand = next((c for c in ranked_scores if c.candidate_id == state.best_candidate_id), None)
+        sorted_ranked = sorted(ranked_scores or [], key=lambda s: -s.composite_score)
+        best_cand = sorted_ranked[0] if sorted_ranked else None
 
         return OvernightCampaignReport(
             campaign_id=self.config.campaign_id,
@@ -675,12 +715,12 @@ class OvernightCampaignRunner:
             total_candidates_pruned=state.total_candidates_pruned,
             best_candidate=best_cand,
             starting_best_score=state.starting_best_score,
-            best_composite_score=state.best_composite_score,
+            best_composite_score=best_cand.composite_score if best_cand else state.best_composite_score,
             total_score_improvement=total_lift,
-            best_trading_score=state.best_trading_score,
-            best_model_score=state.best_model_score,
+            best_trading_score=best_cand.trading_evidence_score if best_cand else state.best_trading_score,
+            best_model_score=best_cand.model_evidence_score if best_cand else state.best_model_score,
             fine_tuning_trials=trials or [],
-            ranked_candidates=ranked_scores or [],
+            ranked_candidates=sorted_ranked,
             start_time_iso=start_iso,
             end_time_iso=end_iso,
             duration_seconds=duration,

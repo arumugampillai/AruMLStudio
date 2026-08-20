@@ -69,6 +69,11 @@ class CampaignConfig:
     max_memory_mb: int = 12288                  # 12 GB RAM ceiling on 16 GB workstation
     min_trade_volume: int = 30                  # Minimum trades for full confidence
     policy_id: str = "RANK_POLICY_v1.0"
+    dataset_name: str | None = None             # Authoritative Dataset Name
+    dataset_path: str | None = None             # Parquet / DB path
+    dataset_snapshot_hash: str | None = None    # Immutable schema / snapshot hash
+    dataset_feature_universe: list[str] = field(default_factory=list) # All eligible feature columns
+    target_column: str | None = None            # Selected target column
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
