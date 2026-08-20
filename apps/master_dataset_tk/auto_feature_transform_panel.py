@@ -84,7 +84,9 @@ class AutoFeatureTransformPanel(ttk.Frame):
         self._market_var = tk.StringVar(value="NIFTY")
         self._interval_var = tk.StringVar(value="3")
         self._include_registry = tk.BooleanVar(value=True)
-        self._include_pipeline = tk.BooleanVar(value=True)
+        self._include_baseline_pipeline = tk.BooleanVar(value=True)
+        self._include_experimental_pipeline = tk.BooleanVar(value=False)
+        self._include_pipeline = self._include_baseline_pipeline
         self._day_scope_var = tk.StringVar(value="all")
         self._selected_days: set[str] = set()
         self._selected_days_hint_var = tk.StringVar(value="All trading days in the master database")
@@ -136,7 +138,9 @@ class AutoFeatureTransformPanel(ttk.Frame):
         self._mon_eta = tk.StringVar(value="—")
         self._mon_percent = tk.StringVar(value="0%")
         self._mon_reg = tk.StringVar(value="—")
-        self._mon_pipe = tk.StringVar(value="—")
+        self._mon_base_pipe = tk.StringVar(value="—")
+        self._mon_exp_pipe = tk.StringVar(value="—")
+        self._mon_pipe = self._mon_base_pipe
         self._mon_overall = tk.StringVar(value="—")
         self._mon_current = tk.StringVar(value="—")
         self._mon_source = tk.StringVar(value="—")
@@ -149,7 +153,8 @@ class AutoFeatureTransformPanel(ttk.Frame):
         self._mon_wave = tk.StringVar(value="—")
         self._stage_vars = {
             "registry": tk.StringVar(value="○ Registry Features"),
-            "pipeline": tk.StringVar(value="○ Pipeline Features"),
+            "baseline_pipeline": tk.StringVar(value="○ Baseline Pipeline Features"),
+            "experimental_pipeline": tk.StringVar(value="○ Experimental Pipeline Features"),
             "no_null": tk.StringVar(value="○ No-Null Filter"),
             "premium": tk.StringVar(value="○ Premium Filter"),
             "finalize": tk.StringVar(value="○ Dataset Finalization"),
@@ -183,7 +188,8 @@ class AutoFeatureTransformPanel(ttk.Frame):
             self._market_var.set(str(applied["market"]))
             self._interval_var.set(str(applied["interval_sec"]))
             self._include_registry.set(bool(applied["include_registry"]))
-            self._include_pipeline.set(bool(applied["include_pipeline"]))
+            self._include_baseline_pipeline.set(bool(applied.get("include_baseline_pipeline", applied.get("include_pipeline", True))))
+            self._include_experimental_pipeline.set(bool(applied.get("include_experimental_pipeline", False)))
             self._day_scope_var.set(str(applied.get("day_scope") or "all"))
             self._selected_days = set(applied.get("selected_days") or [])
             self._no_null_data.set(bool(applied["no_null_data"]))
@@ -218,6 +224,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
         finally:
             self._prefs_loading = False
         self._update_day_scope_state()
+        self._sync_build_pipeline_selector_state()
 
     def _persist_build_prefs(self, *_args: Any) -> None:
         if self._prefs_loading or not self.chart_dir:
@@ -231,7 +238,8 @@ class AutoFeatureTransformPanel(ttk.Frame):
             market=str(self._market_var.get() or "NIFTY"),
             interval_sec=interval,
             include_registry=bool(self._include_registry.get()),
-            include_pipeline=bool(self._include_pipeline.get()),
+            include_baseline_pipeline=bool(self._include_baseline_pipeline.get()),
+            include_experimental_pipeline=bool(self._include_experimental_pipeline.get()),
             all_days=(day_scope == "all"),
             day_scope=day_scope,
             selected_days=sorted(self._selected_days),
@@ -262,7 +270,8 @@ class AutoFeatureTransformPanel(ttk.Frame):
             self._market_var,
             self._interval_var,
             self._include_registry,
-            self._include_pipeline,
+            self._include_baseline_pipeline,
+            self._include_experimental_pipeline,
             self._day_scope_var,
             self._no_null_data,
             self._pipeline_no_null_report,
@@ -499,7 +508,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
         self._reg_card: ttk.LabelFrame | None = None
         for col, spec in enumerate((
             ("Registry Features", self._reg_status, None, True, "Click to Select Features", self._open_registry_selection),
-            ("Pipeline Features", self._pipe_status, None, True, "Click to view / delete features", self._open_pipeline_manager),
+            ("Baseline Pipeline Features", self._pipe_status, None, True, "Click to view / delete features", self._open_pipeline_manager),
             ("Analysis Dataset", self._analysis_status, self._analysis_detail, False, None, None),
         )):
             title, main_var, sub_var, clickable, hint_text, click_cmd = spec
@@ -513,7 +522,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
             if clickable and hint_text and click_cmd:
                 if title.startswith("Registry"):
                     self._reg_card = cell
-                elif title.startswith("Pipeline"):
+                elif title.startswith("Baseline Pipeline") or title.startswith("Pipeline"):
                     self._pipe_card = cell
                 hint = ttk.Label(
                     cell,
@@ -549,7 +558,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
         reg_tab = ttk.Frame(nb, padding=4)
         pipe_tab = ttk.Frame(nb, padding=4)
         nb.add(reg_tab, text="Registry Features")
-        nb.add(pipe_tab, text="Pipeline Features")
+        nb.add(pipe_tab, text="Baseline Pipeline Features")
 
         self._reg_tree = self._make_source_tree(reg_tab)
         pipe_tools = ttk.Frame(pipe_tab)
@@ -639,13 +648,18 @@ class AutoFeatureTransformPanel(ttk.Frame):
         ).pack(anchor="w", pady=1)
         ttk.Checkbutton(
             src,
-            text="Pipeline Features",
-            variable=self._include_pipeline,
+            text="Baseline Pipeline Features",
+            variable=self._include_baseline_pipeline,
+        ).pack(anchor="w", pady=1)
+        ttk.Checkbutton(
+            src,
+            text="Experimental Pipeline Features",
+            variable=self._include_experimental_pipeline,
             command=self._sync_build_pipeline_selector_state,
         ).pack(anchor="w", pady=1)
         pipe_sel = ttk.Frame(src)
         pipe_sel.pack(anchor="w", fill="x", pady=(4, 0))
-        ttk.Label(pipe_sel, text="Pipeline:").pack(side="left")
+        ttk.Label(pipe_sel, text="Experimental Pipeline:").pack(side="left")
         self._build_pipeline_cb = ttk.Combobox(
             pipe_sel,
             width=32,
@@ -765,7 +779,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
     def _sync_build_pipeline_selector_state(self) -> None:
         if not hasattr(self, "_build_pipeline_cb"):
             return
-        enabled = bool(self._include_pipeline.get())
+        enabled = bool(self._include_experimental_pipeline.get())
         try:
             self._build_pipeline_cb.configure(state="readonly" if enabled else "disabled")
         except tk.TclError:
@@ -1110,13 +1124,15 @@ class AutoFeatureTransformPanel(ttk.Frame):
         stages = ttk.Frame(box)
         stages.pack(fill="x", pady=(0, 6))
         ttk.Label(stages, text="Stages", font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        for key in ("registry", "pipeline", "no_null", "premium", "finalize"):
-            ttk.Label(stages, textvariable=self._stage_vars[key]).pack(anchor="w")
+        for key in ("registry", "baseline_pipeline", "experimental_pipeline", "no_null", "premium", "finalize"):
+            if key in self._stage_vars:
+                ttk.Label(stages, textvariable=self._stage_vars[key]).pack(anchor="w")
 
         src = ttk.LabelFrame(box, text="Feature Sources", padding=4)
         src.pack(fill="x", pady=(0, 6))
         ttk.Label(src, textvariable=self._mon_reg).pack(anchor="w")
-        ttk.Label(src, textvariable=self._mon_pipe).pack(anchor="w")
+        ttk.Label(src, textvariable=self._mon_base_pipe).pack(anchor="w")
+        ttk.Label(src, textvariable=self._mon_exp_pipe).pack(anchor="w")
         ttk.Separator(src, orient="horizontal").pack(fill="x", pady=4)
         ttk.Label(src, textvariable=self._mon_overall, font=("Segoe UI", 9, "bold")).pack(anchor="w")
 
@@ -1305,15 +1321,19 @@ class AutoFeatureTransformPanel(ttk.Frame):
         if self._building or self._runner.running:
             messagebox.showinfo("Build", "An analysis dataset build is already running.", parent=self)
             return
-        if not self._include_registry.get() and not self._include_pipeline.get():
+        if (
+            not self._include_registry.get()
+            and not self._include_baseline_pipeline.get()
+            and not self._include_experimental_pipeline.get()
+        ):
             messagebox.showwarning("Build", "Select at least one feature source.", parent=self)
             return
-        if self._include_pipeline.get():
+        if self._include_experimental_pipeline.get():
             build_pid = str(self._build_pipeline_var.get() or "").strip().upper()
             if not build_pid:
                 messagebox.showwarning(
                     "Build",
-                    "Pipeline Features is enabled, but no experimental pipeline is selected.",
+                    "Experimental Pipeline Features is enabled, but no experimental pipeline is selected.",
                     parent=self,
                 )
                 return
@@ -1322,7 +1342,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
             if is_base_pipeline(self.chart_dir, build_pid):
                 messagebox.showwarning(
                     "Build",
-                    "The Base pipeline cannot be used for experimental dataset creation.\n"
+                    "The Base pipeline cannot be used as an experimental pipeline source.\n"
                     "Select an experimental pipeline (Auto/Manual).",
                     parent=self,
                 )
@@ -1355,33 +1375,6 @@ class AutoFeatureTransformPanel(ttk.Frame):
                     return
             except Exception:
                 pass
-        if not self._include_pipeline.get():
-            pipe_n = 0
-            try:
-                totals = (self._catalog or {}).get("totals") or {}
-                pipe_n = int(totals.get(FEATURE_SOURCE_PIPELINE) or 0)
-            except Exception:
-                pipe_n = 0
-            if pipe_n <= 0:
-                try:
-                    from chain_replay_ml.dataset_builder.feature_sources_catalog import (
-                        pipeline_feature_names,
-                    )
-
-                    pipe_n = len(pipeline_feature_names(data_dir=chart_data_dir(self.chart_dir)))
-                except Exception:
-                    pipe_n = 0
-            if pipe_n > 0:
-                if not messagebox.askyesno(
-                    "Pipeline Features off",
-                    f"Pipeline Features is unchecked, but the catalogue has "
-                    f"{pipe_n} pipeline features ready.\n\n"
-                    "This build will include Registry only "
-                    "(transformation pipeline Enabled: 0).\n\n"
-                    "Continue without Pipeline Features?",
-                    parent=self,
-                ):
-                    return
         path = self._master_db_path()
         if not os.path.isfile(path):
             messagebox.showerror(
@@ -1466,7 +1459,8 @@ class AutoFeatureTransformPanel(ttk.Frame):
             "market": str(self._market_var.get() or "NIFTY").upper(),
             "interval_sec": interval,
             "include_registry": bool(self._include_registry.get()),
-            "include_pipeline": bool(self._include_pipeline.get()),
+            "include_baseline_pipeline": bool(self._include_baseline_pipeline.get()),
+            "include_experimental_pipeline": bool(self._include_experimental_pipeline.get()),
             "all_days": all_days_flag,
             "no_null_data": bool(self._no_null_data.get()),
             "pipeline_no_null_report": bool(self._pipeline_no_null_report.get()),
@@ -1476,7 +1470,7 @@ class AutoFeatureTransformPanel(ttk.Frame):
             "master_db_path": path,
             "feature_project_id": feature_project_id,
         }
-        if self._include_pipeline.get():
+        if self._include_experimental_pipeline.get():
             kwargs["pipeline_id"] = str(self._build_pipeline_var.get() or "").strip().upper()
         if not all_days_flag:
             kwargs["selected_days"] = explicit_days
@@ -1533,13 +1527,16 @@ class AutoFeatureTransformPanel(ttk.Frame):
         self._progress["value"] = max(0.0, min(100.0, pct))
 
         self._mon_reg.set(
-            f"Registry     {int(p.get('registry_done') or 0)} / {int(p.get('registry_total') or 0)}"
+            f"Registry Features: {int(p.get('registry_done') or 0)} / {int(p.get('registry_total') or 0)}"
         )
-        self._mon_pipe.set(
-            f"Pipeline     {int(p.get('pipeline_done') or 0)} / {int(p.get('pipeline_total') or 0)}"
+        self._mon_base_pipe.set(
+            f"Baseline Pipeline Features: {int(p.get('baseline_pipeline_done') or 0)} / {int(p.get('baseline_pipeline_total') or 0)}"
+        )
+        self._mon_exp_pipe.set(
+            f"Experimental Pipeline Features: {int(p.get('experimental_pipeline_done') or 0)} / {int(p.get('experimental_pipeline_total') or 0)}"
         )
         self._mon_overall.set(
-            f"Overall Progress     {int(p.get('overall_done') or 0)} / {int(p.get('overall_total') or 0)}"
+            f"Combined Features: {int(p.get('overall_done') or 0)} / {int(p.get('overall_total') or 0)}"
         )
         feat = str(p.get("current_feature") or "").strip()
         day = str(p.get("day") or "").strip()

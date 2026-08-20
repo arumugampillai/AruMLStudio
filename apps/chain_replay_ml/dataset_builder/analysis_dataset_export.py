@@ -26,14 +26,16 @@ _IST = ZoneInfo("Asia/Kolkata")
 ProgressFn = Callable[[dict[str, Any]], None]
 
 STAGE_REGISTRY = "registry"
-STAGE_PIPELINE = "pipeline"
+STAGE_BASELINE_PIPELINE = "baseline_pipeline"
+STAGE_EXPERIMENTAL_PIPELINE = "experimental_pipeline"
 STAGE_NO_NULL = "no_null"
 STAGE_PREMIUM = "premium"
 STAGE_FINALIZE = "finalize"
 
 STAGE_DEFS = (
     {"id": STAGE_REGISTRY, "label": "Registry Features"},
-    {"id": STAGE_PIPELINE, "label": "Pipeline Features"},
+    {"id": STAGE_BASELINE_PIPELINE, "label": "Baseline Pipeline Features"},
+    {"id": STAGE_EXPERIMENTAL_PIPELINE, "label": "Experimental Pipeline Features"},
     {"id": STAGE_NO_NULL, "label": "No-Null Filter"},
     {"id": STAGE_PREMIUM, "label": "Premium Filter"},
     {"id": STAGE_FINALIZE, "label": "Dataset Finalization"},
@@ -48,15 +50,18 @@ def _stage_states(
     active: str,
     *,
     include_registry: bool,
-    include_pipeline: bool,
+    include_baseline_pipeline: bool,
+    include_experimental_pipeline: bool,
     no_null_data: bool = False,
     premium_enabled: bool = False,
 ) -> list[dict[str, Any]]:
     order: list[str] = []
     if include_registry:
         order.append(STAGE_REGISTRY)
-    if include_pipeline:
-        order.append(STAGE_PIPELINE)
+    if include_baseline_pipeline:
+        order.append(STAGE_BASELINE_PIPELINE)
+    if include_experimental_pipeline:
+        order.append(STAGE_EXPERIMENTAL_PIPELINE)
     if no_null_data:
         order.append(STAGE_NO_NULL)
     if premium_enabled:
@@ -83,7 +88,9 @@ def create_analysis_dataset(
     market: str = "NIFTY",
     interval_sec: int = 3,
     include_registry: bool = True,
-    include_pipeline: bool = True,
+    include_baseline_pipeline: bool = True,
+    include_experimental_pipeline: bool = False,
+    include_pipeline: bool | None = None,
     all_days: bool = True,
     selected_days: list[str] | None = None,
     trading_day: str | None = None,
@@ -109,20 +116,19 @@ def create_analysis_dataset(
 ) -> dict[str, Any]:
     """Create an Analysis Dataset from selected feature sources.
 
-    Phase 1A materialisation:
+    Phase 1A materialisation supports 3 independent sources:
     - Registry Features from the canonical catalogue.
-    - Pipeline Features regenerated via the transformation pipeline.
+    - Baseline Pipeline Features regenerated via the approved baseline config.
+    - Experimental Pipeline Features from selected experimental pipeline.
     - Optional No-Null filter (same policy as Master Dataset export) runs
-      *only after* Feature Transformations finish (Registry ∪ Pipeline columns).
+      *only after* Feature Transformations finish.
     - Optional Pipeline No-Null Report (diagnostics) streams to Activity Log.
     - Optional LTP premium filter (same band as Master) runs *after* No-Null.
-
-    ``trading_day_filter`` mirrors the Master Dataset panel's day-scope
-    metadata (``mode``/``selected_dates``/``exported_dates``) so the written
-    dataset JSON always records the concrete resolved trading dates, whether
-    the caller used "All days" or an explicit "Selected days" subset.
     """
-    if not include_registry and not include_pipeline:
+    if include_pipeline is not None:
+        include_baseline_pipeline = bool(include_pipeline)
+
+    if not include_registry and not include_baseline_pipeline and not include_experimental_pipeline:
         raise MasterRegistryExportError("Select at least one feature source")
 
     from .master_feature_project import (
@@ -179,24 +185,30 @@ def create_analysis_dataset(
             "No Registry Features selected for export. "
             "Open “Click to Select Features” and select at least one."
         )
-    pipe_names: list[str] = []
     base_pipe_names: list[str] = []
-    experimental_pipe_names: list[str] = []
+    if include_baseline_pipeline:
+        from .feature_sources_catalog import base_pipeline_feature_names
+
+        base_pipe_names = sorted(base_pipeline_feature_names(data_dir))
+        if not base_pipe_names:
+            raise MasterRegistryExportError(
+                "No Baseline Pipeline features available in catalogue."
+            )
+
+    exp_pipe_names: list[str] = []
     pipeline_provenance: dict[str, Any] | None = None
     experimental_transform_config: dict[str, Any] | None = None
-    if include_pipeline:
+    if include_experimental_pipeline:
         pid = str(pipeline_id or "").strip().upper()
         if not pid:
             raise MasterRegistryExportError(
-                "Select an experimental pipeline when Pipeline Features is enabled."
+                "Select an experimental pipeline when Experimental Pipeline Features is enabled."
             )
-        from .feature_sources_catalog import base_pipeline_feature_names
         from .pipeline_registry_store import (
             build_pipeline_snapshot,
             ensure_default_existing_pipeline,
             get_pipeline,
             is_base_pipeline_record,
-            load_store,
             resolve_pipeline_dataset_feature_names,
         )
 
@@ -210,18 +222,22 @@ def create_analysis_dataset(
                 "Select an experimental pipeline (Auto/Manual)."
             )
         pipeline_provenance = build_pipeline_snapshot(rec, pipeline_id=pid)
-        base_pipe_names = sorted(base_pipeline_feature_names(data_dir))
-        experimental_pipe_names = resolve_pipeline_dataset_feature_names(data_dir, doc, pid)
-        pipe_names = list(dict.fromkeys(base_pipe_names + experimental_pipe_names))
+        exp_pipe_names = sorted(resolve_pipeline_dataset_feature_names(data_dir, doc, pid))
         if isinstance(pipeline_provenance.get("transformation_config"), dict):
             experimental_transform_config = pipeline_provenance.get("transformation_config")
-        if not pipe_names:
+        if not exp_pipe_names:
             raise MasterRegistryExportError(
                 f"Pipeline {pipeline_provenance.get('pipeline_name') or pid} has no candidate features."
             )
+
+    combined_names = list(dict.fromkeys(reg_names + base_pipe_names + exp_pipe_names))
+    if not combined_names:
+        raise MasterRegistryExportError("No features selected from the chosen feature source(s).")
+
     reg_total = len(reg_names)
-    pipe_total = len(pipe_names)
-    overall_total = reg_total + pipe_total
+    base_pipe_total = len(base_pipe_names)
+    exp_pipe_total = len(exp_pipe_names)
+    overall_total = len(combined_names)
     started = time.monotonic()
     log_lines: list[str] = []
     no_null_data = bool(no_null_data)
@@ -233,31 +249,33 @@ def create_analysis_dataset(
         raise MasterRegistryExportError("LTP premium filter requires both min and max")
     premium_active = bool(premium_enabled and prem_lo is not None and prem_hi is not None)
 
-    # Regenerate Pipeline Features via transformation pipeline (Master no longer emits them).
-    if include_pipeline:
-        from .pipeline_features_config import build_pipeline_features_transformation_config
+    # Build transformation pipeline config
+    transformation_config = None
+    if include_baseline_pipeline or include_experimental_pipeline:
         from .transformations.config import merge_transformation_configs
 
-        base_transform_config = build_pipeline_features_transformation_config(
-            sample_interval_sec=float(interval_sec),
-            exclude_features=output_exclude_for_pipeline,
-            interaction_operand_skip=interaction_operand_skip,
-            source_forbidden=forbidden,
-        )
-        if experimental_transform_config is not None:
+        base_transform_config = None
+        if include_baseline_pipeline:
+            from .pipeline_features_config import build_pipeline_features_transformation_config
+
+            base_transform_config = build_pipeline_features_transformation_config(
+                sample_interval_sec=float(interval_sec),
+                exclude_features=output_exclude_for_pipeline,
+                interaction_operand_skip=interaction_operand_skip,
+                source_forbidden=forbidden,
+            )
+
+        if base_transform_config is not None and experimental_transform_config is not None:
             transformation_config = merge_transformation_configs(
                 base_transform_config,
                 experimental_transform_config,
             )
-        elif transformation_config is not None:
-            transformation_config = merge_transformation_configs(
-                base_transform_config,
-                transformation_config,
-            )
-        else:
+        elif base_transform_config is not None:
             transformation_config = base_transform_config
+        elif experimental_transform_config is not None:
+            transformation_config = experimental_transform_config
 
-    if include_pipeline and transformation_config is not None:
+    if transformation_config is not None:
         from .transformations.config import prune_transformation_config_for_interval
 
         transformation_config = prune_transformation_config_for_interval(
@@ -305,7 +323,9 @@ def create_analysis_dataset(
         status: str = "running",
         stage: str,
         registry_done: int = 0,
-        pipeline_done: int = 0,
+        baseline_pipeline_done: int = 0,
+        experimental_pipeline_done: int = 0,
+        pipeline_done: int | None = None,
         current_feature: str = "",
         current_source: str = "",
         message: str = "",
@@ -313,8 +333,18 @@ def create_analysis_dataset(
         columns_per_sec: float | None = None,
         percent: float | None = None,
         extra: dict[str, Any] | None = None,
+        **_ignored: Any,
     ) -> dict[str, Any]:
-        overall_done = registry_done + pipeline_done
+        if pipeline_done is not None:
+            if include_baseline_pipeline and not include_experimental_pipeline:
+                baseline_pipeline_done = pipeline_done
+            elif include_experimental_pipeline and not include_baseline_pipeline:
+                experimental_pipeline_done = pipeline_done
+            elif include_baseline_pipeline and include_experimental_pipeline:
+                baseline_pipeline_done = min(pipeline_done, base_pipe_total)
+                experimental_pipeline_done = max(0, pipeline_done - base_pipe_total)
+
+        overall_done = registry_done + baseline_pipeline_done + experimental_pipeline_done
         elapsed = time.monotonic() - started
         if percent is None and overall_total > 0:
             percent = round(100.0 * overall_done / overall_total, 1)
@@ -328,14 +358,19 @@ def create_analysis_dataset(
             "stages": _stage_states(
                 stage,
                 include_registry=include_registry,
-                include_pipeline=include_pipeline,
+                include_baseline_pipeline=include_baseline_pipeline,
+                include_experimental_pipeline=include_experimental_pipeline,
                 no_null_data=no_null_data,
                 premium_enabled=premium_active,
             ),
             "registry_done": registry_done,
             "registry_total": reg_total,
-            "pipeline_done": pipeline_done,
-            "pipeline_total": pipe_total,
+            "baseline_pipeline_done": baseline_pipeline_done,
+            "baseline_pipeline_total": base_pipe_total,
+            "experimental_pipeline_done": experimental_pipeline_done,
+            "experimental_pipeline_total": exp_pipe_total,
+            "pipeline_done": baseline_pipeline_done + experimental_pipeline_done,
+            "pipeline_total": base_pipe_total + exp_pipe_total,
             "overall_done": overall_done,
             "overall_total": overall_total,
             "current_feature": current_feature,
@@ -350,7 +385,9 @@ def create_analysis_dataset(
                 log_lines if pipeline_no_null_report else log_lines[-80:]
             ),
             "include_registry": include_registry,
-            "include_pipeline": include_pipeline,
+            "include_baseline_pipeline": include_baseline_pipeline,
+            "include_experimental_pipeline": include_experimental_pipeline,
+            "include_pipeline": include_baseline_pipeline or include_experimental_pipeline,
             "no_null_data": no_null_data,
             "premium_enabled": premium_active,
             "premium_min": prem_lo,
@@ -366,16 +403,31 @@ def create_analysis_dataset(
     created_dt = datetime.now(_IST)
     if not dataset_name:
         stamp = created_dt.strftime("%Y%m%d_%H%M%S")
-        if pipeline_provenance:
-            pid_tag = str(pipeline_provenance.get("pipeline_id") or "pipe").replace("_", "")
-            dataset_name = f"analysis_{pid_tag}_{reg_total}r_{pipe_total}p_{interval_sec}s_{stamp}"
-        else:
-            dataset_name = f"analysis_{reg_total}r_{pipe_total}p_{interval_sec}s_{stamp}"
+        tags = []
+        if include_registry:
+            tags.append(f"{reg_total}r")
+        if include_baseline_pipeline:
+            tags.append(f"{base_pipe_total}b")
+        if include_experimental_pipeline:
+            pid_tag = str(pipeline_provenance.get("pipeline_id") or "exp").replace("_", "") if pipeline_provenance else "exp"
+            tags.append(f"{pid_tag}_{exp_pipe_total}e")
+        tag_str = "_".join(tags) or "empty"
+        dataset_name = f"analysis_{tag_str}_{interval_sec}s_{stamp}"
 
-    _log("Analysis dataset build started")
+    selected_sources_labels = []
+    if include_registry:
+        selected_sources_labels.append("Registry Features")
+    if include_baseline_pipeline:
+        selected_sources_labels.append("Baseline Pipeline Features")
+    if include_experimental_pipeline:
+        selected_sources_labels.append("Experimental Pipeline Features")
+    _log(f"Analysis dataset build started — Selected Sources: {' + '.join(selected_sources_labels)}")
+    _log(f"Configuration: Registry={reg_total} | Baseline Pipeline={base_pipe_total} | Experimental Pipeline={exp_pipe_total} | Combined={overall_total}")
     _emit(_snapshot(
         stage=STAGE_REGISTRY if include_registry else (
-            STAGE_PIPELINE if include_pipeline else STAGE_FINALIZE
+            STAGE_BASELINE_PIPELINE if include_baseline_pipeline else (
+                STAGE_EXPERIMENTAL_PIPELINE if include_experimental_pipeline else STAGE_FINALIZE
+            )
         ),
         message="Preparing feature sources…",
     ))
@@ -391,7 +443,8 @@ def create_analysis_dataset(
                 _emit(_snapshot(
                     stage=STAGE_REGISTRY,
                     registry_done=registry_done,
-                    pipeline_done=0,
+                    baseline_pipeline_done=0,
+                    experimental_pipeline_done=0,
                     current_feature=name,
                     current_source="Registry Features",
                     message=f"Registry {registry_done} / {reg_total}",
@@ -403,24 +456,29 @@ def create_analysis_dataset(
         _emit(_snapshot(
             stage=STAGE_REGISTRY,
             registry_done=reg_total,
-            pipeline_done=0,
+            baseline_pipeline_done=0,
+            experimental_pipeline_done=0,
             current_feature="",
             current_source="Registry Features",
             message="Registry Features completed",
         ))
 
     # --- Stage 2: export Master (keep pipeline columns) + Pipeline walk ---
-    pipeline_done = 0
-    if include_pipeline:
-        _log(f"Pipeline Features — regenerating via transformation pipeline ({pipe_total})")
+    baseline_done = 0
+    if include_baseline_pipeline:
+        _log(f"Baseline Pipeline Features — regenerating via transformation pipeline ({base_pipe_total})")
         _emit(_snapshot(
-            stage=STAGE_PIPELINE,
+            stage=STAGE_BASELINE_PIPELINE,
             registry_done=reg_total,
-            pipeline_done=0,
-            current_source="Pipeline Features",
-            message="Exporting Master + regenerating Pipeline Features…",
+            baseline_pipeline_done=0,
+            experimental_pipeline_done=0,
+            current_source="Baseline Pipeline Features",
+            message="Exporting Master + regenerating Baseline Pipeline Features…",
             percent=round(100.0 * reg_total / max(1, overall_total), 1) if overall_total else 0.0,
         ))
+
+    if include_experimental_pipeline:
+        _log(f"Experimental Pipeline Features — transforming candidate features ({exp_pipe_total})")
 
     export_started = time.monotonic()
 
@@ -527,7 +585,7 @@ def create_analysis_dataset(
             token=token,
             atm_band_filter=atm_band_filter,
             transformation_config=transformation_config,
-            keep_pipeline_owned=True,
+            keep_pipeline_owned=bool(include_baseline_pipeline or include_experimental_pipeline),
             dataset_kind=kind,
             no_null_data=no_null_data,
             pipeline_no_null_report=pipeline_no_null_report,
@@ -538,9 +596,9 @@ def create_analysis_dataset(
             delta_min=delta_min,
             delta_max=delta_max,
             on_progress=_export_progress,
-            registry_export_features=reg_export if include_registry else None,
-            pipeline_provenance=pipeline_provenance,
-            base_pipeline_export_features=frozenset(base_pipe_names) if include_pipeline else None,
+            registry_export_features=reg_export if include_registry else frozenset(),
+            pipeline_provenance=pipeline_provenance if include_experimental_pipeline else None,
+            base_pipeline_export_features=frozenset(base_pipe_names) if include_baseline_pipeline else None,
             feature_project_id=bound_pid,
         )
     except MasterRegistryExportError:
@@ -646,20 +704,23 @@ def create_analysis_dataset(
     payload["output_json"] = output_json
     payload["feature_columns"] = feature_columns
 
-    if include_pipeline:
-        for i, name in enumerate(pipe_names, start=1):
+    has_pipeline = bool(include_baseline_pipeline or include_experimental_pipeline)
+    all_pipe_names = list(dict.fromkeys(base_pipe_names + exp_pipe_names))
+    all_pipe_total = len(all_pipe_names)
+    if has_pipeline:
+        for i, name in enumerate(all_pipe_names, start=1):
             _check_cancel()
             pipeline_done = i
             present = name in feature_set
-            if i == 1 or i == pipe_total or i % 20 == 0 or present:
+            if i == 1 or i == all_pipe_total or i % 20 == 0 or present:
                 _emit(_snapshot(
-                    stage=STAGE_PIPELINE,
+                    stage=STAGE_BASELINE_PIPELINE if include_baseline_pipeline else STAGE_EXPERIMENTAL_PIPELINE,
                     registry_done=reg_total,
                     pipeline_done=pipeline_done,
                     current_feature=name,
                     current_source="Pipeline Features",
                     message=(
-                        f"Pipeline {pipeline_done} / {pipe_total}"
+                        f"Pipeline {pipeline_done} / {all_pipe_total}"
                         + ("" if present else " (not on Master)")
                     ),
                     columns_per_sec=(
@@ -669,21 +730,21 @@ def create_analysis_dataset(
                 ))
             if i % 35 == 0:
                 _log(f"Pipeline  {name}")
-        _log(f"Pipeline Features scan completed  {pipe_total} catalogue columns")
+        _log(f"Pipeline Features scan completed  {all_pipe_total} catalogue columns")
 
     # --- Stage 3: Finalization summary ---
     _emit(_snapshot(
         stage=STAGE_FINALIZE,
         registry_done=reg_total,
-        pipeline_done=pipe_total if include_pipeline else 0,
+        pipeline_done=all_pipe_total if has_pipeline else 0,
         current_source="Dataset Finalization",
         message="Writing completion summary…",
         percent=99.0,
     ))
 
     registry_present = sorted(n for n in reg_names if n in feature_set) if include_registry else []
-    pipeline_present = sorted(n for n in pipe_names if n in feature_set) if include_pipeline else []
-    pipeline_missing = sorted(n for n in pipe_names if n not in feature_set) if include_pipeline else []
+    pipeline_present = sorted(n for n in all_pipe_names if n in feature_set) if has_pipeline else []
+    pipeline_missing = sorted(n for n in all_pipe_names if n not in feature_set) if has_pipeline else []
     analysis_feature_count = len(registry_present) + len(pipeline_present)
 
     parquet_rel = str(payload.get("output_parquet") or "")
@@ -740,7 +801,11 @@ def create_analysis_dataset(
         "premium_report": premium_report,
         "registry_total": reg_total,
         "registry_present": len(registry_present),
-        "pipeline_total": pipe_total,
+        "baseline_pipeline_total": base_pipe_total,
+        "baseline_pipeline_present": len([n for n in base_pipe_names if n in feature_set]),
+        "experimental_pipeline_total": exp_pipe_total,
+        "experimental_pipeline_present": len([n for n in exp_pipe_names if n in feature_set]),
+        "pipeline_total": all_pipe_total,
         "pipeline_present": len(pipeline_present),
         "pipeline_missing": pipeline_missing,
         "pipeline_missing_count": len(pipeline_missing),
@@ -765,7 +830,8 @@ def create_analysis_dataset(
             status="completed",
             stage=STAGE_FINALIZE,
             registry_done=reg_total,
-            pipeline_done=pipe_total if include_pipeline else 0,
+            baseline_pipeline_done=base_pipe_total if include_baseline_pipeline else 0,
+            experimental_pipeline_done=exp_pipe_total if include_experimental_pipeline else 0,
             message="Build completed",
             percent=100.0,
             rows_processed=summary["row_count"],

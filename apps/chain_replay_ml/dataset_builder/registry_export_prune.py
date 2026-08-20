@@ -16,7 +16,7 @@ def prune_registry_columns_in_parquet(
 ) -> list[str]:
     """Remove registry feature columns not in ``selected_registry``. Returns dropped names."""
     reg_all = frozenset(registry_feature_names(data_dir=data_dir))
-    if not selected_registry or selected_registry >= reg_all:
+    if selected_registry >= reg_all:
         return []
 
     try:

@@ -189,7 +189,9 @@ def auto_feature_transform_prefs_snapshot(
     market: str,
     interval_sec: int,
     include_registry: bool,
-    include_pipeline: bool,
+    include_baseline_pipeline: bool = True,
+    include_experimental_pipeline: bool = False,
+    include_pipeline: bool | None = None,
     all_days: bool,
     day_scope: str | None = None,
     selected_days: list[str] | set[str] | None = None,
@@ -207,11 +209,15 @@ def auto_feature_transform_prefs_snapshot(
     except (TypeError, ValueError):
         interval = 3
     scope = _normalize_day_scope(day_scope, all_days=bool(all_days))
+    if include_pipeline is not None:
+        include_baseline_pipeline = bool(include_pipeline)
     return {
         "market": str(market or "NIFTY").strip().upper() or "NIFTY",
         "interval_sec": interval,
         "include_registry": bool(include_registry),
-        "include_pipeline": bool(include_pipeline),
+        "include_baseline_pipeline": bool(include_baseline_pipeline),
+        "include_experimental_pipeline": bool(include_experimental_pipeline),
+        "include_pipeline": bool(include_baseline_pipeline),
         # "all_days" kept for backward compatibility with older prefs files;
         # "day_scope" is the source of truth for All days vs Selected days.
         "all_days": scope == "all",
@@ -251,11 +257,21 @@ def apply_auto_feature_transform_prefs(
     selected_days = sorted({str(d).strip() for d in (src.get("selected_days") or []) if str(d).strip()})
     from .auto_candidate_generation import normalize_candidate_generation_prefs
 
+    include_base = src.get("include_baseline_pipeline")
+    if include_base is None:
+        include_base = src.get("include_pipeline", True)
+
+    include_exp = src.get("include_experimental_pipeline")
+    if include_exp is None:
+        include_exp = bool(str(src.get("build_pipeline_id") or "").strip())
+
     return {
         "market": market,
         "interval_sec": interval,
         "include_registry": bool(src.get("include_registry", True)),
-        "include_pipeline": bool(src.get("include_pipeline", True)),
+        "include_baseline_pipeline": bool(include_base),
+        "include_experimental_pipeline": bool(include_exp),
+        "include_pipeline": bool(include_base),
         "all_days": scope == "all",
         "day_scope": scope,
         "selected_days": selected_days,
