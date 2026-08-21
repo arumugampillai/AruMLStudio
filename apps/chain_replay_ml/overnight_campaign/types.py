@@ -83,6 +83,7 @@ class CampaignConfig:
     dataset_feature_universe: list[str] = field(default_factory=list) # All eligible feature columns
     target_column: str | None = None            # Selected target column
     feature_elimination_strategy: str = "NONE"  # NONE | SHAP | RFE | PERMUTATION
+    allowed_algorithms: list[str] = field(default_factory=lambda: ["xgboost", "catboost", "lightgbm", "random_forest", "extra_trees"])
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

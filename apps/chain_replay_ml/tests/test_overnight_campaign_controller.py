@@ -287,6 +287,28 @@ class TestOvernightCampaignController(unittest.TestCase):
         self.assertIsNotNone(report.best_model_score)
         self.assertIsNotNone(report.total_score_improvement)
 
+    def test_33_allowed_algorithms_filtering(self):
+        """33. Verify only user-checked allowed_algorithms are generated, trained, and evaluated."""
+        cfg = CampaignConfig(
+            campaign_id="CAMP_ALGO_FILTER",
+            context_keys=[self.context_key],
+            max_generations=2,
+            max_candidates_total=10,
+            dataset_feature_universe=["iv_mean", "adx_14", "rsi_14"],
+            allowed_algorithms=["xgboost", "catboost"],  # Only XGBoost & CatBoost
+        )
+        runner = OvernightCampaignRunner(data_dir=self.tmp_dir, config=cfg)
+        report = runner.run()
+        self.assertEqual(report.status, CampaignStatus.COMPLETED)
+        
+        # Verify that all candidates generated/trained are strictly xgboost or catboost
+        self.assertGreater(report.total_candidates_trained, 0)
+        from chain_replay_ml.training.trainers.base import normalize_algorithm_id
+        for cand in report.ranked_candidates:
+            algo_norm = normalize_algorithm_id(cand.candidate_id.split("_")[1] if "_" in cand.candidate_id else "xgboost")
+            # All candidate specs in runner must be either xgboost or catboost
+            self.assertIn(algo_norm, ["xgboost", "catboost"])
+
 
 if __name__ == "__main__":
     unittest.main()

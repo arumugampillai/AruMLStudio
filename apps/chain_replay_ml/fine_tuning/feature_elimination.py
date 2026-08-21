@@ -115,6 +115,37 @@ def resolve_feature_importance_scores(
     finally:
         conn.close()
 
+    # Query Feature Studio Evidence Store (feature_recommendation_evidence.db) for context evidence
+    try:
+        from chain_replay_ml.production_validation.evidence_store import get_connection
+        ev_conn = get_connection(data_dir)
+        try:
+            ev_rows = ev_conn.execute(
+                "SELECT feature_name, evidence_score, last_recommendation, remove_runs, keep_runs FROM feature_context_summary WHERE feature_name IN ({})".format(
+                    ",".join("?" for _ in features)
+                ),
+                tuple(features),
+            ).fetchall()
+            for er in ev_rows:
+                fn = er["feature_name"]
+                ev_score = float(er["evidence_score"] or 0.0) / 100.0
+                last_rec = str(er["last_recommendation"] or "").upper()
+                rem_runs = int(er["remove_runs"] or 0)
+
+                cur_val = scores.get(fn, 0.5)
+                # Blend model importance with Feature Studio longitudinal evidence
+                blended = (0.60 * cur_val) + (0.40 * ev_score)
+                # Penalize features with repeated REMOVE verdicts in Feature Studio
+                if last_rec == "REMOVE" or rem_runs > 0:
+                    penalty_factor = max(0.10, 1.0 - (0.30 * min(3, rem_runs + (1 if last_rec == "REMOVE" else 0))))
+                    blended *= penalty_factor
+
+                scores[fn] = blended
+        finally:
+            ev_conn.close()
+    except Exception:
+        pass
+
     # Deterministic heuristic fallback for any features not yet scored in DB tables
     for idx, f in enumerate(features):
         if f not in scores:

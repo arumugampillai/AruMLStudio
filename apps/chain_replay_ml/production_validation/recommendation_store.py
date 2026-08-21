@@ -343,6 +343,13 @@ def get_population_recommendations(
     try:
         policy = load_recommendation_policy(root, context_id=context_id)
         pop = str(population or "registry").strip().lower()
+        from chain_replay_ml.feature_partition import (
+            FeatureCategory,
+            classify_feature,
+            resolve_feature_partition_sets,
+        )
+        base_set, reg_set, exp_set, _ = resolve_feature_partition_sets(root)
+
         if pop == "experimental":
             query = """
                 SELECT 
@@ -376,7 +383,7 @@ def get_population_recommendations(
         elif pop == "base_pipeline":
             query = """
                 SELECT * FROM feature_context_summary
-                WHERE feature_source = 'base_pipeline'
+                WHERE 1=1
             """
             params = []
             if context_id:
@@ -386,9 +393,19 @@ def get_population_recommendations(
                 query += " AND context_id != ?"
                 params.append(LEGACY_UNKNOWN_CONTEXT_ID)
 
-            query += " ORDER BY evidence_score DESC, keep_runs DESC, feature_name ASC"
             cur = conn.execute(query, params)
-            rows = [dict(r) for r in cur.fetchall()]
+            raw_rows = [dict(r) for r in cur.fetchall()]
+
+            # Authoritatively resolve Base Pipeline (PL_0001) membership
+            dedup_base: dict[str, dict[str, Any]] = {}
+            for r in raw_rows:
+                fn = r.get("feature_name", "")
+                if (base_set and fn in base_set) or (not base_set and r.get("feature_source") == "base_pipeline"):
+                    if fn not in dedup_base or r.get("feature_source") == "base_pipeline":
+                        dedup_base[fn] = r
+
+            rows = list(dedup_base.values())
+            rows.sort(key=lambda r: (-float(r.get("evidence_score") or 0.0), -int(r.get("keep_runs") or 0), str(r.get("feature_name") or "")))
             for rank, r in enumerate(rows, start=1):
                 r["priority_rank"] = rank
             return _enrich_intelligence_metrics(rows, conn, population="base_pipeline", context_id=context_id, policy=policy)
@@ -396,7 +413,7 @@ def get_population_recommendations(
         elif pop == "registry":
             query = """
                 SELECT * FROM feature_context_summary
-                WHERE feature_source = 'registry'
+                WHERE 1=1
             """
             params = []
             if context_id:
@@ -406,9 +423,23 @@ def get_population_recommendations(
                 query += " AND context_id != ?"
                 params.append(LEGACY_UNKNOWN_CONTEXT_ID)
 
-            query += " ORDER BY evidence_score ASC, remove_runs DESC, feature_name ASC"
             cur = conn.execute(query, params)
-            rows = [dict(row) for row in cur.fetchall()]
+            raw_rows = [dict(r) for r in cur.fetchall()]
+
+            # Authoritatively resolve Permanent Registry membership (excluding Base Pipeline and Experimental)
+            dedup_reg: dict[str, dict[str, Any]] = {}
+            for r in raw_rows:
+                fn = r.get("feature_name", "")
+                if base_set and fn in base_set:
+                    continue
+                if exp_set and fn in exp_set:
+                    continue
+                if (reg_set and fn in reg_set) or (not reg_set and r.get("feature_source") == "registry") or r.get("feature_source") == "registry":
+                    if fn not in dedup_reg or r.get("feature_source") == "registry":
+                        dedup_reg[fn] = r
+
+            rows = list(dedup_reg.values())
+            rows.sort(key=lambda r: (float(r.get("evidence_score") or 0.0), -int(r.get("remove_runs") or 0), str(r.get("feature_name") or "")))
             return _enrich_intelligence_metrics(rows, conn, population="registry", context_id=context_id, policy=policy)
 
         else:  # all

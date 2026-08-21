@@ -2,8 +2,9 @@
 ## Technical Architectural Specification: Task Taxonomy, Regime Taxonomy, Multi-Dimensional Identity & Research Factory Topology
 
 > **Document Number**: `Doc 13`  
-> **Document Status**: `AUTHORITATIVE SPECIFICATION (Phase 4C, Phase 4D, Phase 4E & Phase 4F COMPLETE & VERIFIED — 629/629 Tests Passing; Phase 4G+ PLANNED)`  
-> **Operational Baseline**: Phases 1–4F Complete & Verified (**629/629 Tests Passing across 40 Test Modules**), Docs 00–15  
+> **Document Version**: `1.1.0`  
+> **Document Status**: `AUTHORITATIVE SPECIFICATION (SYNCHRONIZED WITH ACTIVE CODEBASE — Phases 1–4F Complete & Verified)`  
+> **Operational Baseline**: Phases 1–4F & Autonomous Discovery Pipeline Complete & Verified, Docs 00–15  
 > **Implementing Modules**: `apps/chain_replay_ml/model_taxonomy/`, `apps/chain_replay_ml/research_memory/`, `apps/chain_replay_ml/research_recommendations/` (`coverage.py`, `vulnerability.py`, `feature_affinity.py`, `negative_pruning.py`, `priority_scoring.py`, `dossier.py`), `apps/chain_replay_ml/research_memory/champion_history.py`, `apps/chain_replay_ml/training/registry.py`, `apps/chain_replay_ml/training/artifacts.py`, `apps/master_dataset_tk/model_registry_panel.py`, `apps/master_dataset_tk/model_registry_detail.py`, `apps/master_dataset_tk/model_research_leaderboard_panel.py`  
 > **Hardware Constraint**: Designed for a **16 GB RAM Local Workstation** without external cloud dependencies.
 

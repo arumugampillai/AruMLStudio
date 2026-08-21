@@ -355,8 +355,9 @@ def validate_training_config(
             elif dataset_exists:
                 df, _, _ = load_dataset_frame(data_dir, config.dataset, columns=[config.target])
                 nan_count = int(df[config.target].isna().sum())
-                nan_target_ok = nan_count == 0
-                nan_detail = f"{nan_count:,} NaN" if nan_count else "OK"
+                valid_count = len(df) - nan_count
+                nan_target_ok = valid_count >= MIN_TRAINING_ROWS
+                nan_detail = f"OK ({nan_count:,} NaN dropped · {valid_count:,} valid)" if nan_count else "OK"
         except Exception as exc:
             nan_target_ok = False
             nan_detail = str(exc)

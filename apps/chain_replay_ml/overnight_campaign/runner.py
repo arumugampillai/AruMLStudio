@@ -130,7 +130,31 @@ class OvernightCampaignRunner:
     ):
         self.data_dir = data_dir
         self.config = config
-        self.evaluator_fn = evaluator_fn or _default_synthetic_evaluator
+        if evaluator_fn is not None:
+            self.evaluator_fn = evaluator_fn
+        elif self.config.dataset_path and os.path.isfile(self.config.dataset_path):
+            from .dataset_evaluator import train_and_evaluate_candidate_real
+
+            p_path = self.config.dataset_path
+            ds_name = self.config.dataset_name or os.path.splitext(os.path.basename(p_path))[0]
+            ds_hash = self.config.dataset_snapshot_hash or "snapshot_v1"
+            tgt = self.config.target_column or "label_up_5pct_5m"
+            camp_id = self.config.campaign_id
+
+            def _real_eval(d_dir: str, spec: CandidateSpec) -> tuple[dict[str, Any], dict[str, Any]]:
+                return train_and_evaluate_candidate_real(
+                    d_dir,
+                    spec,
+                    parquet_path=p_path,
+                    dataset_name=ds_name,
+                    dataset_snapshot_hash=ds_hash,
+                    target_column=tgt,
+                    campaign_id=camp_id,
+                )
+
+            self.evaluator_fn = _real_eval
+        else:
+            self.evaluator_fn = _default_synthetic_evaluator
         self.schema = schema
         self._cancel_requested = False
         init_campaign_tables(self.data_dir)
@@ -301,6 +325,10 @@ class OvernightCampaignRunner:
                     break
 
                 # 1. Generate Candidates for this Generation
+                allowed_algos = self.config.allowed_algorithms or ["xgboost", "catboost", "lightgbm", "random_forest", "extra_trees"]
+                from chain_replay_ml.training.trainers.base import normalize_algorithm_id
+                allowed_algos_set = {normalize_algorithm_id(a) for a in allowed_algos}
+
                 gen_candidates: list[CandidateSpec] = []
                 for ctx in self.config.context_keys:
                     if gen == 0:
@@ -311,6 +339,7 @@ class OvernightCampaignRunner:
                                 generate_cold_start_candidates(
                                     context_key=ctx,
                                     base_features=base_universe,
+                                    algorithms=allowed_algos,
                                     regime_definition_hash="regime_hash_universal",
                                     dataset_snapshot_hash=self.config.dataset_snapshot_hash or "dataset_snapshot_v1",
                                     campaign_id=self.config.campaign_id,
@@ -344,10 +373,11 @@ class OvernightCampaignRunner:
                         ]
                         if not parents:
                             fallback_feats = list(self.config.dataset_feature_universe) or ["adx_14", "rsi_14", "macd_diff", "bb_width_20", "iv_mean"]
+                            fallback_algo = allowed_algos[0] if allowed_algos else "xgboost"
                             parents = [
                                 create_candidate_spec(
                                     context_key=ctx,
-                                    algorithm="xgboost",
+                                    algorithm=fallback_algo,
                                     features=fallback_feats,
                                     dataset_snapshot_hash=self.config.dataset_snapshot_hash or "dataset_snapshot_v1",
                                     feature_elimination_strategy=self.config.feature_elimination_strategy,
@@ -363,6 +393,9 @@ class OvernightCampaignRunner:
                             feature_elimination_strategy=self.config.feature_elimination_strategy,
                         )
                         gen_candidates.extend(descendants)
+
+                # Strictly enforce algorithm selection filter across all generated candidates
+                gen_candidates = [c for c in gen_candidates if normalize_algorithm_id(c.algorithm) in allowed_algos_set]
 
                 for c in gen_candidates:
                     all_candidate_specs_by_id[c.candidate_id] = c
@@ -629,6 +662,54 @@ class OvernightCampaignRunner:
                                 break
                         else:
                             state.consecutive_plateau_generations = 0
+
+                # 5. Orchestrate Autonomous Discovery Pipeline Generation (Phases 1–10)
+                try:
+                    if db_exists and (ds_path or ds_name):
+                        import json
+                        from chain_replay_ml.discovery_pipeline.loop import run_discovery_generation
+                        from chain_replay_ml.discovery_pipeline.types import format_discovery_pipeline_id
+                        from chain_replay_ml.dataset_builder.pipeline_registry_store import get_base_pipeline_for_context, load_store as load_pr_store
+                        from chain_replay_ml.overnight_campaign.dataset_evaluator import load_dataset_matrix_cached
+
+                        pr_store = load_pr_store(self.data_dir)
+                        pl0001_obj = pr_store.get("pipelines", {}).get("PL_0001", {})
+                        base_features_pl0001 = list(pl0001_obj.get("feature_names", []))
+                        if not base_features_pl0001:
+                            base_pipe = get_base_pipeline_for_context(self.data_dir, ctx_str)
+                            base_features_pl0001 = list(base_pipe.get("feature_names", [])) if base_pipe else []
+                        if not base_features_pl0001:
+                            meta_base_path = os.path.join(self.data_dir, "datasets", f"{ds_name}.json") if ds_name else ""
+                            if meta_base_path and os.path.isfile(meta_base_path):
+                                with open(meta_base_path, "r", encoding="utf-8") as fh:
+                                    m_data = json.load(fh)
+                                base_features_pl0001 = list(m_data.get("base_pipeline_export_features", []))
+                        if not base_features_pl0001:
+                            base_features_pl0001 = [f for f in feature_universe if f.startswith("atm_") or f.startswith("iv_") or f in ("adx_14", "rsi_14", "macd_diff", "bb_width_20", "iv_mean")] or feature_universe[:50]
+
+                        # Load dataset matrix cached
+                        feats_to_load = feature_universe or base_features_pl0001
+                        df_matrix = load_dataset_matrix_cached(
+                            ds_path or ds_name,
+                            feature_columns=feats_to_load,
+                            target_column=self.config.target_column or "label_up_5pct_5m",
+                        )
+
+                        dp_id = format_discovery_pipeline_id(self.config.campaign_id)
+                        run_discovery_generation(
+                            df_matrix,
+                            data_dir=self.data_dir,
+                            pipeline_id=dp_id,
+                            campaign_id=self.config.campaign_id,
+                            generation_number=gen + 1,
+                            base_features=base_features_pl0001,
+                            target_column=self.config.target_column or "label_up_5pct_5m",
+                            context_key=ctx_str,
+                            dataset_name=ds_name or ds_label,
+                            dataset_snapshot_hash=ds_hash,
+                        )
+                except Exception as disc_err:
+                    logger.warning("Autonomous discovery generation failed for campaign %s: %s", self.config.campaign_id, disc_err, exc_info=True)
 
                 if budget_exhausted:
                     state.status = CampaignStatus.COMPLETED

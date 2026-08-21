@@ -129,6 +129,14 @@ class MorningResearchDossierPanel(ttk.Frame):
             if self.current_dossier.ranked_candidates:
                 self._selected_drilldown_candidate.set(self.current_dossier.ranked_candidates[0].candidate_id)
 
+            if hasattr(self, "notebook") and hasattr(self, "tab_discovered_features"):
+                try:
+                    self.notebook.tab(self.tab_discovered_features, text=f"⭐ Discovered Features ({len(self.current_dossier.discovered_features)})")
+                    self.notebook.tab(self.tab_leaderboard, text=f"🏆 Candidate Leaderboard ({len(self.current_dossier.ranked_candidates)})")
+                    self.notebook.tab(self.tab_governance, text=f"🛡️ Feature Governance Audit ({len(self.current_dossier.governance_audits)})")
+                except Exception:
+                    pass
+
             self._render_overview_tab()
             self._render_discovered_features_tab()
             self._render_leaderboard_tab()
@@ -253,50 +261,253 @@ class MorningResearchDossierPanel(ttk.Frame):
             foreground=COL_MUTED,
         ).pack(anchor=tk.W, pady=(4, 0))
 
-        # 2. Discovered Features Treeview
+        # 2. Strict Mutually-Exclusive Feature Partitioning & Discovery Provenance Tracing
+        from chain_replay_ml.feature_partition import (
+            get_campaign_discovery_pipeline_info,
+            partition_feature_records,
+        )
+        registry_list, baseline_list, experimental_list, prov_map = partition_feature_records(
+            d.discovered_features,
+            data_dir=self.data_dir or "",
+            campaign_id=d.campaign_id,
+        )
+        dp_info = get_campaign_discovery_pipeline_info(self.data_dir or "", d.campaign_id)
+        pipe_count = dp_info.get("total_pipelines", 0)
+        primary_pipe_id = dp_info.get("primary_pipeline_id")
+
+        # Sub-Notebook for Registry Features, Baseline Features, and Experimental Features
         feat_frame = ttk.LabelFrame(target, text="⭐ Discovered Feature Rankings (Ranked by Empirical Candidate Lift)", padding=8)
         feat_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
+        feat_sub_nb = ttk.Notebook(feat_frame)
+        feat_sub_nb.pack(fill=tk.BOTH, expand=True)
+
+        tab_registry = ttk.Frame(feat_sub_nb, padding=4)
+        tab_baseline = ttk.Frame(feat_sub_nb, padding=4)
+        tab_experimental = ttk.Frame(feat_sub_nb, padding=4)
+
+        # Query Discovery Pipeline details and features from analysis.db if available
+        dp_features_list: list[dict[str, Any]] = []
+        dp_summary_stats = {"total_created": 0, "unique_formulas": 0, "keep": 0, "watch": 0, "remove": 0, "active_pool": 0}
+        if self.data_dir and primary_pipe_id:
+            try:
+                from chain_replay_ml.research_memory.db import connect_analysis_db
+                conn_dp = connect_analysis_db(self.data_dir)
+                dp_rows = conn_dp.execute(
+                    """SELECT feature_id, feature_name, formula_expression, formula_hash,
+                              generator_strategy, generation_discovered, lifecycle_status,
+                              evidence_score, ks_statistic, metadata_json
+                       FROM discovery_pipeline_features
+                       WHERE pipeline_id = ?
+                       ORDER BY generation_discovered DESC, evidence_score DESC;""",
+                    (primary_pipe_id,),
+                ).fetchall()
+                for r in dp_rows:
+                    meta_d = json.loads(r["metadata_json"] or "{}") if r["metadata_json"] else {}
+                    st_val = str(r["lifecycle_status"] or "candidate").upper()
+                    dp_features_list.append({
+                        "feature_id": r["feature_id"],
+                        "feature_name": r["feature_name"],
+                        "formula_expression": r["formula_expression"],
+                        "formula_hash": r["formula_hash"],
+                        "generator_strategy": r["generator_strategy"],
+                        "generation_discovered": r["generation_discovered"],
+                        "lifecycle_status": st_val,
+                        "evidence_score": float(r["evidence_score"] or 0.0),
+                        "ks_statistic": float(r["ks_statistic"] or 0.0),
+                        "delta_auc": float(meta_d.get("delta_auc", 0.0)),
+                        "fold_consistency": float(meta_d.get("fold_consistency", 0.5)),
+                        "governance_rationale": meta_d.get("governance_rationale", "Under evaluation"),
+                    })
+                dp_summary_stats["total_created"] = len(dp_features_list)
+                dp_summary_stats["unique_formulas"] = len({f["formula_hash"] for f in dp_features_list})
+                dp_summary_stats["keep"] = sum(1 for f in dp_features_list if f["lifecycle_status"] == "KEEP")
+                dp_summary_stats["watch"] = sum(1 for f in dp_features_list if f["lifecycle_status"] == "WATCH")
+                dp_summary_stats["remove"] = sum(1 for f in dp_features_list if f["lifecycle_status"] == "REMOVE")
+                dp_summary_stats["active_pool"] = dp_summary_stats["keep"] + dp_summary_stats["watch"]
+            except Exception:
+                pass
+
+        active_exp_count = dp_summary_stats["active_pool"] if dp_features_list else len(experimental_list)
+        tab_exp_title = f"🧪 Experimental Features ({active_exp_count})"
+        if pipe_count == 1 and primary_pipe_id:
+            tab_exp_title = f"🧪 Experimental Features ({active_exp_count}) — Pipeline: {primary_pipe_id}"
+        elif pipe_count > 1:
+            tab_exp_title = f"🧪 Experimental Features ({active_exp_count}) — Pipelines: {pipe_count}"
+
+        feat_sub_nb.add(tab_registry, text=f"📋 Registry Features ({len(registry_list)})")
+        feat_sub_nb.add(tab_baseline, text=f"🏛️ Baseline Features ({len(baseline_list)})")
+        feat_sub_nb.add(tab_experimental, text=tab_exp_title)
+
         cols = ("status", "feature", "tested", "pos_desc", "best_comp", "best_trade", "avg_comp", "best_delta", "p4e_ev", "rec")
-        tree = ttk.Treeview(feat_frame, columns=cols, show="headings", height=10)
-        tree.heading("status", text="Category")
-        tree.heading("feature", text="Feature Name")
-        tree.heading("tested", text="Tested")
-        tree.heading("pos_desc", text="Pos. Children")
-        tree.heading("best_comp", text="Best Score")
-        tree.heading("best_trade", text="Best Trading")
-        tree.heading("avg_comp", text="Avg Score")
-        tree.heading("best_delta", text="Best Δ vs Parent")
-        tree.heading("p4e_ev", text="Phase 4E Ev.")
-        tree.heading("rec", text="Governance Recommendation")
 
-        tree.column("status", width=140, anchor=tk.CENTER)
-        tree.column("feature", width=180)
-        tree.column("tested", width=60, anchor=tk.CENTER)
-        tree.column("pos_desc", width=90, anchor=tk.CENTER)
-        tree.column("best_comp", width=85, anchor=tk.E)
-        tree.column("best_trade", width=85, anchor=tk.E)
-        tree.column("avg_comp", width=85, anchor=tk.E)
-        tree.column("best_delta", width=105, anchor=tk.E)
-        tree.column("p4e_ev", width=95, anchor=tk.CENTER)
-        tree.column("rec", width=220, anchor=tk.CENTER)
+        def _populate_feature_tree(parent_tab: ttk.Frame, feature_list: list[DiscoveredFeatureRecord], empty_msg: str, is_exp: bool = False) -> None:
+            if is_exp and dp_info.get("primary_pipeline"):
+                p_data = dp_info["primary_pipeline"]
+                p_banner = ttk.Frame(parent_tab, padding=(6, 4))
+                p_banner.pack(fill=tk.X, pady=(0, 4))
+                
+                # Row 1: Pipeline Header & Current Snapshot
+                b_row1 = ttk.Frame(p_banner)
+                b_row1.pack(fill=tk.X, pady=(0, 2))
+                ttk.Label(b_row1, text="Discovery Pipeline:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 4))
+                ttk.Label(b_row1, text=p_data.get("pipeline_id", "—"), font=("Segoe UI", 9, "bold"), foreground="#0d47a1").pack(side=tk.LEFT, padx=(0, 12))
+                ttk.Label(b_row1, text="Generation:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 4))
+                ttk.Label(b_row1, text=str(p_data.get("current_generation", 0)), font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 12))
+                snap_h = p_data.get("current_snapshot_hash", "—")
+                snap_short = snap_h[:16] + "..." if len(snap_h) > 16 else snap_h
+                ttk.Label(b_row1, text="Snapshot:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 4))
+                ttk.Label(b_row1, text=snap_short, font=("Segoe UI", 9, "italic"), foreground="#4a148c").pack(side=tk.LEFT, padx=(0, 12))
 
-        for f in d.discovered_features:
-            cat_icon = "🟢 STRONG" if f.status == DiscoveredFeatureStatus.STRONG_DISCOVERED else ("🟡 PROMISING" if f.status == DiscoveredFeatureStatus.PROMISING else "🔴 REJECTED")
-            d_str = f"+{f.best_delta_vs_parent:.2f}" if f.best_delta_vs_parent >= 0 else f"{f.best_delta_vs_parent:.2f}"
-            tree.insert("", tk.END, values=(
-                cat_icon,
-                f.feature_name,
-                str(f.times_tested),
-                str(f.positive_descendant_count),
-                f"{f.best_composite_score:.2f}",
-                f"{f.best_trading_score:.2f}",
-                f"{f.avg_composite_score:.2f}",
-                d_str,
-                f.phase4e_evidence_level,
-                f.recommendation,
-            ))
-        tree.pack(fill=tk.BOTH, expand=True)
+                # Row 2: Cumulative Discovered Metrics & Active Pool
+                b_row2 = ttk.Frame(p_banner)
+                b_row2.pack(fill=tk.X, pady=(2, 2))
+                ttk.Label(b_row2, text="Total DF Features Created:", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 3))
+                ttk.Label(b_row2, text=str(dp_summary_stats["total_created"]), font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(0, 8))
+                ttk.Label(b_row2, text="Unique Formulas:", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 3))
+                ttk.Label(b_row2, text=str(dp_summary_stats["unique_formulas"]), font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(0, 8))
+                ttk.Label(b_row2, text="Governance:", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 3))
+                ttk.Label(
+                    b_row2,
+                    text=f"🟢 {dp_summary_stats['keep']} KEEP · 🟡 {dp_summary_stats['watch']} WATCH · 🔴 {dp_summary_stats['remove']} REMOVE",
+                    font=("Segoe UI", 8, "bold"),
+                    foreground="#004d40",
+                ).pack(side=tk.LEFT, padx=(0, 8))
+                ttk.Label(b_row2, text="Active Discovery Pool:", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 3))
+                ttk.Label(b_row2, text=f"{dp_summary_stats['active_pool']} features", font=("Segoe UI", 8, "bold"), foreground="#0d47a1").pack(side=tk.LEFT, padx=(0, 8))
+
+            if is_exp and dp_features_list:
+                # Specialized sub-notebook for Discovery Pipeline (DF_*) partitioned by governance verdicts
+                exp_cols = ("status", "feature_id", "strategy", "gen", "formula", "delta_auc", "drift", "score", "rationale")
+                
+                exp_sub_nb = ttk.Notebook(parent_tab)
+                exp_sub_nb.pack(fill=tk.BOTH, expand=True)
+
+                tab_keep = ttk.Frame(exp_sub_nb, padding=2)
+                tab_watch = ttk.Frame(exp_sub_nb, padding=2)
+                tab_remove = ttk.Frame(exp_sub_nb, padding=2)
+
+                keep_features = [f for f in dp_features_list if f["lifecycle_status"] == "KEEP"]
+                watch_features = [f for f in dp_features_list if f["lifecycle_status"] == "WATCH"]
+                remove_features = [f for f in dp_features_list if f["lifecycle_status"] == "REMOVE"]
+
+                exp_sub_nb.add(tab_keep, text=f"🟢 KEEP ({len(keep_features)})")
+                exp_sub_nb.add(tab_watch, text=f"🟡 WATCH ({len(watch_features)})")
+                exp_sub_nb.add(tab_remove, text=f"🔴 REMOVE ({len(remove_features)})")
+
+                def _build_exp_sub_tree(container: ttk.Frame, sub_features: list[dict[str, Any]], empty_text: str) -> None:
+                    if not sub_features:
+                        ttk.Label(container, text=empty_text, font=("Segoe UI", 9, "italic"), foreground=COL_MUTED).pack(pady=20)
+                        return
+
+                    tree_frame = ttk.Frame(container)
+                    tree_frame.pack(fill=tk.BOTH, expand=True)
+
+                    tree_exp = ttk.Treeview(tree_frame, columns=exp_cols, show="headings", height=8)
+                    tree_exp.heading("status", text="Verdict")
+                    tree_exp.heading("feature_id", text="Feature ID")
+                    tree_exp.heading("strategy", text="Strategy")
+                    tree_exp.heading("gen", text="Gen")
+                    tree_exp.heading("formula", text="Mathematical Formula (AST)")
+                    tree_exp.heading("delta_auc", text="Marginal ΔAUC")
+                    tree_exp.heading("drift", text="D_KS (Drift)")
+                    tree_exp.heading("score", text="Evidence Score")
+                    tree_exp.heading("rationale", text="Governance Rationale")
+
+                    tree_exp.column("status", width=90, anchor=tk.CENTER)
+                    tree_exp.column("feature_id", width=170)
+                    tree_exp.column("strategy", width=95, anchor=tk.CENTER)
+                    tree_exp.column("gen", width=45, anchor=tk.CENTER)
+                    tree_exp.column("formula", width=310)
+                    tree_exp.column("delta_auc", width=95, anchor=tk.E)
+                    tree_exp.column("drift", width=85, anchor=tk.E)
+                    tree_exp.column("score", width=95, anchor=tk.E)
+                    tree_exp.column("rationale", width=240)
+
+                    for f in sub_features:
+                        icon = "🟢 KEEP" if f["lifecycle_status"] == "KEEP" else ("🟡 WATCH" if f["lifecycle_status"] == "WATCH" else "🔴 REMOVE")
+                        d_auc_str = f"+{f['delta_auc']:.5f}" if f["delta_auc"] >= 0 else f"{f['delta_auc']:.5f}"
+                        tree_exp.insert("", tk.END, values=(
+                            icon,
+                            f["feature_id"],
+                            f["generator_strategy"],
+                            f"G{f['generation_discovered']}",
+                            f["formula_expression"],
+                            d_auc_str,
+                            f"{f['ks_statistic']:.4f}",
+                            f"{f['evidence_score']:.1f} pts",
+                            f["governance_rationale"],
+                        ))
+
+                    vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree_exp.yview)
+                    tree_exp.configure(yscrollcommand=vsb.set)
+                    tree_exp.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                    vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+                _build_exp_sub_tree(tab_keep, keep_features, "No features currently hold KEEP governance status in this discovery pipeline.")
+                _build_exp_sub_tree(tab_watch, watch_features, "No features currently hold WATCH governance status in this discovery pipeline.")
+                _build_exp_sub_tree(tab_remove, remove_features, "No features have been removed by governance in this discovery pipeline.")
+                return
+
+            if not feature_list:
+                ttk.Label(parent_tab, text=empty_msg, font=("Segoe UI", 9, "italic"), foreground=COL_MUTED).pack(pady=20)
+                return
+
+            tree_frame = ttk.Frame(parent_tab)
+            tree_frame.pack(fill=tk.BOTH, expand=True)
+
+            tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=9)
+            tree.heading("status", text="Category")
+            tree.heading("feature", text="Feature Name")
+            tree.heading("tested", text="Tested")
+            tree.heading("pos_desc", text="Pos. Children")
+            tree.heading("best_comp", text="Best Score")
+            tree.heading("best_trade", text="Best Trading")
+            tree.heading("avg_comp", text="Avg Score")
+            tree.heading("best_delta", text="Best Δ vs Parent")
+            tree.heading("p4e_ev", text="Phase 4E Ev.")
+            tree.heading("rec", text="Governance Recommendation")
+
+            tree.column("status", width=140, anchor=tk.CENTER)
+            tree.column("feature", width=220)
+            tree.column("tested", width=60, anchor=tk.CENTER)
+            tree.column("pos_desc", width=90, anchor=tk.CENTER)
+            tree.column("best_comp", width=85, anchor=tk.E)
+            tree.column("best_trade", width=85, anchor=tk.E)
+            tree.column("avg_comp", width=85, anchor=tk.E)
+            tree.column("best_delta", width=105, anchor=tk.E)
+            tree.column("p4e_ev", width=95, anchor=tk.CENTER)
+            tree.column("rec", width=220, anchor=tk.CENTER)
+
+            for f in feature_list:
+                cat_icon = "🟢 STRONG" if f.status == DiscoveredFeatureStatus.STRONG_DISCOVERED else ("🟡 PROMISING" if f.status == DiscoveredFeatureStatus.PROMISING else "🔴 REJECTED")
+                d_str = f"+{f.best_delta_vs_parent:.2f}" if f.best_delta_vs_parent >= 0 else f"{f.best_delta_vs_parent:.2f}"
+                tree.insert("", tk.END, values=(
+                    cat_icon,
+                    f.feature_name,
+                    str(f.times_tested),
+                    str(f.positive_descendant_count),
+                    f"{f.best_composite_score:.2f}",
+                    f"{f.best_trading_score:.2f}",
+                    f"{f.avg_composite_score:.2f}",
+                    d_str,
+                    f.phase4e_evidence_level,
+                    f.recommendation,
+                ))
+
+            vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=vsb.set)
+            tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        _populate_feature_tree(tab_registry, registry_list, "No registered features found in this campaign.")
+        _populate_feature_tree(tab_baseline, baseline_list, "No baseline features evaluated in this campaign.")
+        _populate_feature_tree(
+            tab_experimental,
+            experimental_list,
+            "No autonomous discovery pipeline features (DF_*) generated in this campaign.\nAll evaluated features are authoritative Base Pipeline (PL_0001) or Permanent Registry features.",
+            is_exp=True,
+        )
 
         # 3. Feature Synergy Discoveries Table
         if d.discovered_synergies:

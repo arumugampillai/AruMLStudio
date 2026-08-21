@@ -1,7 +1,7 @@
 # Strategy Allocation & Averaging Engines Architecture Specification
 ## Two Production Trading Engines Powered, Fine-Tuned, and Governed by AruMLStudio
 
-> **Document ID:** `Doc 15`  
+> **Document ID:** `Doc F1` (`F1-STRATEGY_ALLOCATION_ENGINE_RESEARCH_SPECIFICATION.md`)  
 > **Document Type:** Authoritative Architecture & Functional Specification  
 > **Subsystems:** Strategy Allocation Engine (Pre-Entry), Averaging Engine (Post-Entry), and AruMLStudio Research Platform  
 > **Trading Scope:** Intraday NIFTY / SENSEX Options  

@@ -2,10 +2,11 @@
 ## Strategic North-Star Architecture: From Local ML Studio to Autonomous Quantitative Research Factory
 
 > **Document Number**: `Doc 12`  
+> **Document Version**: `1.1.0`  
 > **Document Type**: STRATEGIC NORTH-STAR ARCHITECTURAL VISION  
 > **Target Audience**: Quantitative Researchers, Platform Architects, Machine Learning Engineers, and Coding Agents  
-> **Authority**: Permanent High-Level Strategic Destination Document (Non-Implementation Specification)  
-> **Operational Prerequisite Baseline**: Phases 1–4F Verified & Operational (**629/629 Tests Passing across 40 Test Modules**)  
+> **Authority**: Permanent High-Level Strategic Destination Document (SYNCHRONIZED WITH ACTIVE CODEBASE)  
+> **Operational Prerequisite Baseline**: Phases 1–4F & Autonomous Discovery Pipeline Verified & Operational, Docs 00–15  
 > **Execution Constraint**: Designed for a **16 GB RAM Local Workstation** without external cloud dependencies.
 
 ---

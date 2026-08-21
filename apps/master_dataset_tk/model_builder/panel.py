@@ -2195,39 +2195,63 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
             pipeline_family_of,
         )
 
-        candidate_names = other_pipeline_feature_names_from_metadata(meta)
-        if not candidate_names:
-            return []
-
-        if dataset_names:
-            present_exp = sorted(f for f in candidate_names if f in dataset_names)
-        else:
-            present_exp = sorted(candidate_names)
-
-        if not present_exp:
-            return []
-
-        pipeline_name = str(
-            meta.get("pipeline_name")
-            or meta.get("pipeline_id")
-            or "Experimental Candidates"
-        ).strip()
-
-        fam_map: dict[str, list[str]] = {}
-        for f in present_exp:
-            fam = pipeline_family_of(f)
-            fam_map.setdefault(fam, []).append(f)
-
         out: list[dict[str, Any]] = []
-        for fam, feats in fam_map.items():
-            fam_label = GENERATOR_FAMILY_LABELS.get(fam, fam.title())
-            out.append({
-                "id": f"exp_{fam}",
-                "label": f"{pipeline_name} — {fam_label}" if len(fam_map) > 1 else pipeline_name,
-                "features": sorted(feats),
-                "registry_features": sorted(feats),
-                "total_features": len(feats),
-            })
+        candidate_names = other_pipeline_feature_names_from_metadata(meta)
+        if candidate_names:
+            if dataset_names:
+                present_exp = sorted(f for f in candidate_names if f in dataset_names)
+            else:
+                present_exp = sorted(candidate_names)
+
+            if present_exp:
+                pipeline_name = str(
+                    meta.get("pipeline_name")
+                    or meta.get("pipeline_id")
+                    or "Experimental Candidates"
+                ).strip()
+
+                fam_map: dict[str, list[str]] = {}
+                for f in present_exp:
+                    fam = pipeline_family_of(f)
+                    fam_map.setdefault(fam, []).append(f)
+
+                for fam, feats in fam_map.items():
+                    fam_label = GENERATOR_FAMILY_LABELS.get(fam, fam.title())
+                    out.append({
+                        "id": f"exp_{fam}",
+                        "label": f"{pipeline_name} — {fam_label}" if len(fam_map) > 1 else pipeline_name,
+                        "features": sorted(feats),
+                        "registry_features": sorted(feats),
+                        "total_features": len(feats),
+                    })
+
+        # Also discover any registered / promoted pipelines from pipeline_registry_store.json
+        try:
+            from chain_replay_ml.dataset_builder.pipeline_registry_store import load_store, is_base_pipeline_record
+            pl_store = load_store(self._data_dir)
+            for pid, prec in sorted((pl_store.get("pipelines") or {}).items()):
+                if is_base_pipeline_record(prec):
+                    continue
+                p_cands = [str(f).strip() for f in (prec.get("candidate_features") or []) if str(f).strip()]
+                if not p_cands:
+                    continue
+                p_present = sorted(f for f in p_cands if not dataset_names or f in dataset_names)
+                if not p_present:
+                    continue
+                p_name = str(prec.get("name") or pid).strip()
+                # Deduplicate if already loaded
+                if any(g.get("id") == f"promoted_{pid.lower()}" for g in out):
+                    continue
+                out.append({
+                    "id": f"promoted_{pid.lower()}",
+                    "label": f"📦 {p_name} ({len(p_present)} feats)",
+                    "features": sorted(p_present),
+                    "registry_features": sorted(p_present),
+                    "total_features": len(p_present),
+                })
+        except Exception:
+            pass
+
         return out
 
     def _feature_groups(self) -> list[dict[str, Any]]:
@@ -3523,6 +3547,22 @@ class CreateModelPanel(ttk.Frame, LazyLoadMixin):
             if sampling.get("interval_sec") is not None:
                 stats.setdefault("sampling_interval_sec", sampling.get("interval_sec"))
             enriched["dataset_stats"] = stats
+
+        # Resolve pipeline ID and snapshot ID if matching registered/promoted pipeline
+        try:
+            from chain_replay_ml.dataset_builder.pipeline_registry_store import load_store, is_base_pipeline_record
+            pl_store = load_store(self._data_dir)
+            feats_set = set(cfg.get("features") or [])
+            for pid, prec in sorted((pl_store.get("pipelines") or {}).items()):
+                if is_base_pipeline_record(prec):
+                    continue
+                p_cands = set(str(f).strip() for f in (prec.get("candidate_features") or []) if str(f).strip())
+                if p_cands and p_cands == feats_set:
+                    enriched["pipeline_id"] = pid
+                    enriched["pipeline_snapshot_id"] = prec.get("pipeline_snapshot_id") or ""
+                    break
+        except Exception:
+            pass
 
         split = cfg.get("split") or {}
         if split.get("strategy") == "walk_forward":

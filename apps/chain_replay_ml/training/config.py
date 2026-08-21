@@ -59,6 +59,9 @@ class TrainingConfig:
     end_day: str | None = None
     # Phase X — one Label Run per model (Feature Dataset ⟕ Label Run).
     label_run_id: str | None = None
+    pipeline_id: str | None = None
+    pipeline_snapshot_id: str | None = None
+    dataset_snapshot_hash: str | None = None
     # Auto Feature Studio after Create Model (Phase 5.1).
     post_training: dict[str, Any] = field(
         default_factory=lambda: {
@@ -309,6 +312,9 @@ def normalize_training_config(raw: dict[str, Any]) -> TrainingConfig:
         start_day=start_day,
         end_day=end_day,
         label_run_id=label_run_id,
+        pipeline_id=str(raw.get("pipeline_id") or "").strip().upper() or None,
+        pipeline_snapshot_id=str(raw.get("pipeline_snapshot_id") or "").strip() or None,
+        dataset_snapshot_hash=str(raw.get("dataset_snapshot_hash") or raw.get("dataset_fingerprint") or "").strip() or None,
         post_training=post_training,
     )
     apply_lifecycle_training_overrides(config)

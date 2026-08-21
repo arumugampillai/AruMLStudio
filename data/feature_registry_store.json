@@ -1,0 +1,44 @@
+{
+  "registry_version": "1.0",
+  "created_by": "System",
+  "created_on": "2026-08-21",
+  "description": "Feature registry overlay",
+  "next_feature_id_seq": 3,
+  "feature_ids": {
+    "synth_log1p__volume_flow": "FR0001",
+    "synth_ratio__volume_flow__div__vega_exposure": "FR0002"
+  },
+  "feature_identities": {
+    "FR0001": {
+      "feature_id": "FR0001",
+      "name": "synth_log1p__volume_flow",
+      "display_name": "Discovered NONLINEAR: synth_log1p__volume_flow",
+      "previous_names": [],
+      "created_at": "2026-08-21T13:27:47.995635+00:00",
+      "created_by": "CHIEF_QUANT_RESEARCHER",
+      "updated_at": "2026-08-21T13:27:47.995635+00:00",
+      "version": "1.0",
+      "owner": "Discovered Module",
+      "group_id": "discovered"
+    },
+    "FR0002": {
+      "feature_id": "FR0002",
+      "name": "synth_ratio__volume_flow__div__vega_exposure",
+      "display_name": "Discovered RATIO: synth_ratio__volume_flow__div__vega_exposure",
+      "previous_names": [],
+      "created_at": "2026-08-21T17:01:03.385252+00:00",
+      "created_by": "CHIEF_QUANT_RESEARCHER",
+      "updated_at": "2026-08-21T17:01:03.385252+00:00",
+      "version": "1.0",
+      "owner": "Discovered Module",
+      "group_id": "discovered"
+    }
+  },
+  "custom_groups": {},
+  "projects": {},
+  "overrides": {},
+  "imported_features": {},
+  "disabled_features": {},
+  "deleted_feature_ids": {},
+  "history": []
+}

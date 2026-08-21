@@ -49,6 +49,18 @@ from chain_replay_ml.research_memory import (
     get_regime_evaluations_for_model,
     rank_models_in_context,
 )
+from chain_replay_ml.discovery_pipeline import (
+    DiscoveredFeatureSpec,
+    DiscoveryLifecycleStatus,
+    DiscoveryPipelineSnapshot,
+    DiscoveryPipelineSpec,
+    GeneratorStrategy,
+    get_discovery_pipeline_summary,
+    load_discovered_features,
+    load_discovery_pipeline,
+    load_discovery_pipeline_by_campaign,
+    load_discovery_snapshots_for_pipeline,
+)
 from chain_replay_ml.research_memory.champion_history import get_champion_for_context
 from chain_replay_ml.research_recommendations import (
     RecommendationDossier,
@@ -56,6 +68,7 @@ from chain_replay_ml.research_recommendations import (
 )
 
 from .build_service import chart_data_dir
+from .ui_state import get_ui_state_manager
 from .model_registry_widgets import (
     ACCENT,
     COL_MUTED,
@@ -112,7 +125,15 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._cfg_min_gen_before_plateau = tk.IntVar(value=3)
         self._elim_strat_var = tk.StringVar(value="NONE")
         self._elim_strat_status_var = tk.StringVar(value="🎯 Elimination Strategy: None")
+        self._evidence_db_summary_var = tk.StringVar(value="📊 Evidence DB: Loading...")
         self._campaign_start_ts: float = 0.0
+
+        # Available Algorithm Selection Checkbox variables (All checked by default)
+        self._algo_xgb_var = tk.BooleanVar(value=True)
+        self._algo_cat_var = tk.BooleanVar(value=True)
+        self._algo_lgb_var = tk.BooleanVar(value=True)
+        self._algo_rf_var = tk.BooleanVar(value=True)
+        self._algo_et_var = tk.BooleanVar(value=True)
 
         # Lazy loading state per tab
         self._loaded_tab_candidate: dict[str, str] = {}
@@ -126,6 +147,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
 
         self._ranked_dossiers: list[dict[str, Any]] = []
         self._selected_dossier: dict[str, Any] | None = None
+        self._ui_state = get_ui_state_manager()
 
         self._build_ui()
         self._refresh_datasets_combo()
@@ -283,7 +305,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
                 pass
         targets = set(meta.get("target_columns") or meta.get("prediction_target_columns") or [])
         meta_skip = {
-            "timestamp", "datetime", "date", "time", "token", "symbol", "expiry", "strike",
+            "timestamp", "datetime", "date", "time", "token", "symbol", "expiry",
             "option_type", "instrument_type", "day", "trading_day", "open", "high", "low", "close", "ltp"
         }
         eligible = [
@@ -466,38 +488,31 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         run_box = ttk.LabelFrame(top_frame, text="Autonomous Overnight Research Controller (Phase 4F.5)", padding=(8, 4))
         run_box.pack(fill="x", pady=(2, 4))
 
-        # Row 1: Action Buttons & Research Budget Inputs
-        ctrl_row = ttk.Frame(run_box)
-        ctrl_row.pack(fill="x", pady=(0, 3))
+        # Row 1: Available Algorithms & Action Buttons (Single Horizontal Row)
+        algo_row = ttk.Frame(run_box)
+        algo_row.pack(fill="x", pady=(0, 2))
 
-        # Feature Elimination Strategy Radio Buttons (Positioned horizontally immediately before Start Autonomous Research)
-        elim_frame = ttk.Frame(ctrl_row)
-        elim_frame.pack(side="left", padx=(0, 12))
-
-        ttk.Label(elim_frame, text="Elimination Strategy:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
-        for val, lbl in (
-            ("NONE", "None"),
-            ("SHAP", "SHAP Importance"),
-            ("RFE", "Recursive Feature Elimination"),
-            ("PERMUTATION", "Permutation Importance"),
-        ):
-            ttk.Radiobutton(
-                elim_frame,
-                text=lbl,
-                value=val,
-                variable=self._elim_strat_var,
-                command=self._on_elim_strategy_changed,
-            ).pack(side="left", padx=(0, 6))
+        ttk.Label(algo_row, text="Available Algorithms:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
+        self._cb_algo_xgb = ttk.Checkbutton(algo_row, text="XGBoost", variable=self._algo_xgb_var)
+        self._cb_algo_xgb.pack(side="left", padx=(0, 8))
+        self._cb_algo_cat = ttk.Checkbutton(algo_row, text="CatBoost", variable=self._algo_cat_var)
+        self._cb_algo_cat.pack(side="left", padx=(0, 8))
+        self._cb_algo_lgb = ttk.Checkbutton(algo_row, text="LightGBM", variable=self._algo_lgb_var)
+        self._cb_algo_lgb.pack(side="left", padx=(0, 8))
+        self._cb_algo_rf = ttk.Checkbutton(algo_row, text="Random Forest", variable=self._algo_rf_var)
+        self._cb_algo_rf.pack(side="left", padx=(0, 8))
+        self._cb_algo_et = ttk.Checkbutton(algo_row, text="Extra Trees", variable=self._algo_et_var)
+        self._cb_algo_et.pack(side="left", padx=(0, 14))
 
         self._btn_start_research = ttk.Button(
-            ctrl_row,
+            algo_row,
             text="▶ Start Autonomous Research",
             command=self._on_start_autonomous_research,
         )
         self._btn_start_research.pack(side="left", padx=(0, 6))
 
         self._btn_stop_research = ttk.Button(
-            ctrl_row,
+            algo_row,
             text="⏹ Stop",
             command=self._on_stop_autonomous_research,
             state="disabled",
@@ -505,28 +520,78 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._btn_stop_research.pack(side="left", padx=(0, 6))
 
         self._btn_view_dossier = ttk.Button(
-            ctrl_row,
+            algo_row,
             text="🌅 View Morning Dossier",
             command=self._on_view_morning_dossier,
         )
-        self._btn_view_dossier.pack(side="left", padx=(0, 16))
+        self._btn_view_dossier.pack(side="left", padx=(0, 6))
 
-        # Budget Parameters Inputs
-        ttk.Label(ctrl_row, text="Max Gens:", font=("Segoe UI", 9)).pack(side="left", padx=(2, 2))
-        ttk.Spinbox(ctrl_row, from_=1, to=100, textvariable=self._cfg_max_gen, width=4).pack(side="left", padx=(0, 8))
+        self._btn_evidence_db = ttk.Button(
+            algo_row,
+            text="📊 Evidence DB",
+            command=self._on_open_evidence_db,
+        )
+        self._btn_evidence_db.pack(side="left", padx=(0, 6))
 
-        ttk.Label(ctrl_row, text="Max Candidates:", font=("Segoe UI", 9)).pack(side="left", padx=(2, 2))
-        ttk.Spinbox(ctrl_row, from_=5, to=2000, increment=10, textvariable=self._cfg_max_cands, width=5).pack(side="left", padx=(0, 8))
+        # Row 2: Feature Elimination Strategy Radio Buttons (Positioned directly below Available Algorithms)
+        elim_row = ttk.Frame(run_box)
+        elim_row.pack(fill="x", pady=(2, 2))
 
-        ttk.Label(ctrl_row, text="Max Hours:", font=("Segoe UI", 9)).pack(side="left", padx=(2, 2))
-        ttk.Spinbox(ctrl_row, from_=0.5, to=48.0, increment=0.5, textvariable=self._cfg_max_hours, width=4).pack(side="left", padx=(0, 8))
+        ttk.Label(elim_row, text="Elimination Strategy:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
+        for val, lbl in (
+            ("NONE", "None"),
+            ("SHAP", "SHAP Importance"),
+            ("RFE", "Recursive Feature Elimination"),
+            ("PERMUTATION", "Permutation Importance"),
+        ):
+            ttk.Radiobutton(
+                elim_row,
+                text=lbl,
+                value=val,
+                variable=self._elim_strat_var,
+                command=self._on_elim_strategy_changed,
+            ).pack(side="left", padx=(0, 8))
 
-        ttk.Label(ctrl_row, text="Plateau Patience:", font=("Segoe UI", 9)).pack(side="left", padx=(2, 2))
-        ttk.Spinbox(ctrl_row, from_=1, to=10, textvariable=self._cfg_plateau_patience, width=3).pack(side="left", padx=(0, 6))
+        # Row 3: Budget Parameters & Termination Inputs
+        params_row = ttk.Frame(run_box)
+        params_row.pack(fill="x", pady=(2, 3))
 
-        ttk.Checkbutton(ctrl_row, text="Plateau Halt", variable=self._cfg_plateau_enabled).pack(side="left", padx=(4, 0))
+        ttk.Label(params_row, text="Max Gens:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 3))
+        self._spin_max_gen = ttk.Spinbox(params_row, from_=1, to=100, textvariable=self._cfg_max_gen, width=4)
+        self._spin_max_gen.pack(side="left", padx=(0, 14))
 
-        # Row 2: Status & Message
+        ttk.Label(params_row, text="Max Candidates:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 3))
+        self._spin_max_cands = ttk.Spinbox(params_row, from_=5, to=2000, increment=10, textvariable=self._cfg_max_cands, width=5)
+        self._spin_max_cands.pack(side="left", padx=(0, 14))
+
+        ttk.Label(params_row, text="Max Hours:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 3))
+        self._spin_max_hours = ttk.Spinbox(params_row, from_=0.5, to=48.0, increment=0.5, textvariable=self._cfg_max_hours, width=5)
+        self._spin_max_hours.pack(side="left", padx=(0, 14))
+
+        ttk.Label(params_row, text="Plateau Patience:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 3))
+        self._spin_plateau_patience = ttk.Spinbox(params_row, from_=1, to=10, textvariable=self._cfg_plateau_patience, width=4)
+        self._spin_plateau_patience.pack(side="left", padx=(0, 10))
+
+        self._chk_plateau = ttk.Checkbutton(params_row, text="Plateau Halt", variable=self._cfg_plateau_enabled)
+        self._chk_plateau.pack(side="left", padx=(4, 0))
+
+        # Wire UI State Persistence (Debounced autosave & restore)
+        self._ui_state.bind_checkbutton(self._cb_algo_xgb, "research_leaderboard.algo_xgb", var=self._algo_xgb_var, default=True)
+        self._ui_state.bind_checkbutton(self._cb_algo_cat, "research_leaderboard.algo_cat", var=self._algo_cat_var, default=True)
+        self._ui_state.bind_checkbutton(self._cb_algo_lgb, "research_leaderboard.algo_lgb", var=self._algo_lgb_var, default=True)
+        self._ui_state.bind_checkbutton(self._cb_algo_rf, "research_leaderboard.algo_rf", var=self._algo_rf_var, default=True)
+        self._ui_state.bind_checkbutton(self._cb_algo_et, "research_leaderboard.algo_et", var=self._algo_et_var, default=True)
+
+        self._ui_state.bind_radiobutton(self._elim_strat_var, "research_leaderboard.elimination_strategy", default="NONE")
+        self._on_elim_strategy_changed()
+
+        self._ui_state.bind_spinbox(self._spin_max_gen, "research_leaderboard.max_gen", var=self._cfg_max_gen, default="10")
+        self._ui_state.bind_spinbox(self._spin_max_cands, "research_leaderboard.max_cands", var=self._cfg_max_cands, default="100")
+        self._ui_state.bind_spinbox(self._spin_max_hours, "research_leaderboard.max_hours", var=self._cfg_max_hours, default="8.0")
+        self._ui_state.bind_spinbox(self._spin_plateau_patience, "research_leaderboard.plateau_patience", var=self._cfg_plateau_patience, default="3")
+        self._ui_state.bind_checkbutton(self._chk_plateau, "research_leaderboard.plateau_enabled", var=self._cfg_plateau_enabled, default=True)
+
+        # Row 3: Status & Message
         msg_row = ttk.Frame(run_box)
         msg_row.pack(fill="x", pady=(1, 2))
 
@@ -536,9 +601,9 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._lbl_camp_status.pack(side="left", padx=(0, 12))
 
         self._camp_msg_var = tk.StringVar(value="Ready to start autonomous discovery.")
-        ttk.Label(msg_row, textvariable=self._camp_msg_var, font=("Segoe UI", 9), foreground="#333333").pack(side="left", fill="x", expand=True)
+        ttk.Label(msg_row, textvariable=self._camp_msg_var, font=("Segoe UI", 9), foreground="#333333").pack(side="left")
 
-        # Row 3: Live Multi-Generation Metrics & Telemetry Strip
+        # Row 4: Live Multi-Generation Metrics & Telemetry Strip + Evidence DB Summary
         telem_row = ttk.Frame(run_box)
         telem_row.pack(fill="x", pady=(2, 0))
 
@@ -553,6 +618,14 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         ttk.Label(telem_row, textvariable=self._camp_runtime_var, font=("Segoe UI", 8)).pack(side="left", padx=(0, 12))
         ttk.Label(telem_row, textvariable=self._camp_best_var, font=("Segoe UI", 8, "bold"), foreground=COL_PRODUCTION).pack(side="left", padx=(0, 12))
         ttk.Label(telem_row, textvariable=self._camp_trade_var, font=("Segoe UI", 8), foreground="#e65100").pack(side="left", padx=(0, 12))
+
+        self._lbl_evidence_summary = ttk.Label(
+            telem_row,
+            textvariable=self._evidence_db_summary_var,
+            font=("Segoe UI", 8, "bold"),
+            foreground="#004d40",
+        )
+        self._lbl_evidence_summary.pack(side="right", padx=(8, 4))
 
         # Split View: Leaderboard Table (Top) & Detail Dossier Notebook (Bottom)
         paned = ttk.Panedwindow(self, orient=tk.VERTICAL)
@@ -571,7 +644,14 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             text="🏆 Add to Classifier",
             command=self._on_add_to_classifier,
         )
-        self._btn_add_to_classifier.pack(side="left", padx=(0, 8))
+        self._btn_add_to_classifier.pack(side="left", padx=(0, 6))
+
+        self._btn_promote_pipeline = ttk.Button(
+            tbl_act_bar,
+            text="📦 Promote Pipeline",
+            command=self._on_promote_pipeline,
+        )
+        self._btn_promote_pipeline.pack(side="left", padx=(0, 10))
 
         ttk.Label(
             tbl_act_bar,
@@ -653,6 +733,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._tab_regimes = ScrollableFrame(self._detail_nb)
         self._tab_features = ScrollableFrame(self._detail_nb)
         self._tab_lineage = ScrollableFrame(self._detail_nb)
+        self._tab_discovered_features = ScrollableFrame(self._detail_nb)
         self._tab_history = ScrollableFrame(self._detail_nb)
         self._tab_audit = ttk.Frame(self._detail_nb, padding=6)
 
@@ -665,6 +746,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._detail_nb.add(self._tab_regimes, text="Cross-Regime Stress")
         self._detail_nb.add(self._tab_features, text="Feature Composition")
         self._detail_nb.add(self._tab_lineage, text="Research Lineage")
+        self._detail_nb.add(self._tab_discovered_features, text="🔬 Discovered Features")
         self._detail_nb.add(self._tab_history, text="Champion History")
         self._detail_nb.add(self._tab_audit, text="📜 Execution Audit Trail")
 
@@ -808,6 +890,8 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             self._selected_dossier = first_dossier
             self._on_notebook_tab_changed()
 
+        self._refresh_evidence_db_summary()
+
     def _on_tree_select(self, _event: tk.Event) -> None:
         sel = self.leaderboard_tree.selection()
         if not sel:
@@ -863,12 +947,17 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
                 self._render_tab_lineage(dossier)
                 self._loaded_tab_candidate["lineage"] = cand_id
 
-        elif tab_idx == 5:  # Champion History
+        elif tab_idx == 5:  # Discovered Features
+            if "discovered" not in self._loaded_context_tabs:
+                self._render_tab_discovered_features()
+                self._loaded_context_tabs.add("discovered")
+
+        elif tab_idx == 6:  # Champion History
             if "history" not in self._loaded_context_tabs:
                 self._render_champion_history_tab()
                 self._loaded_context_tabs.add("history")
 
-        elif tab_idx == 6:  # Execution Audit Trail
+        elif tab_idx == 7:  # Execution Audit Trail
             if "audit" not in self._loaded_context_tabs:
                 self._render_audit_tab()
                 self._loaded_context_tabs.add("audit")
@@ -887,10 +976,14 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         score = dossier.get("robustness_score", 0.0)
         p_rank = dossier.get("pareto_rank", 1)
         status = dossier.get("recommendation_status", "VALIDATED")
+        exec_dev = dossier.get("execution_device") or dossier.get("raw_metrics_summary", {}).get("execution_device") or "CPU"
+        dev_det = dossier.get("device_details") or dossier.get("raw_metrics_summary", {}).get("device_details") or ""
+        dev_label = f"⚡ {exec_dev} ({dev_det})" if dev_det else f"⚡ {exec_dev}"
 
         summary_rows = [
             ("Robustness Score", f"{score:.2f} / 100.00"),
             ("Pareto Optimality Tier", f"Tier {p_rank} ({'Non-Dominated / Optimal' if p_rank == 1 else 'Dominated'})"),
+            ("Execution Device", dev_label),
             ("Recommendation Status", status),
             ("Ranking Policy Version", dossier.get("ranking_policy_version", "ROB_POLICY_v1.0")),
             ("Ranking Policy Hash", dossier.get("ranking_policy_hash", "—")),
@@ -1002,7 +1095,38 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             except Exception:
                 pass
         else:
-            # Query candidate spec for this single candidate on demand
+            # Query Feature Studio Evidence Store for candidate-specific feature records
+            fe_records: list[dict[str, Any]] = []
+            try:
+                from chain_replay_ml.production_validation.evidence_store import get_connection
+                ev_conn = get_connection(data_dir)
+                try:
+                    cur = ev_conn.execute(
+                        "SELECT feature_name, recommendation, relative_imp_drop, drift_severity, evidence_detail_json, run_timestamp FROM recommendation_evidence WHERE model_name = ? ORDER BY holdout_rank ASC",
+                        (model_name,),
+                    )
+                    for r in cur.fetchall():
+                        d_json = {}
+                        try:
+                            d_json = json.loads(r["evidence_detail_json"] or "{}")
+                        except Exception:
+                            pass
+                        fe_records.append({
+                            "feature_name": r["feature_name"],
+                            "recommendation": r["recommendation"],
+                            "ks_stat": r["relative_imp_drop"],
+                            "drift_severity": r["drift_severity"],
+                            "evidence_score": d_json.get("evidence_score", 0.0),
+                            "reason": d_json.get("reason", "—"),
+                            "importance": d_json.get("importance", 0.0),
+                            "rank": d_json.get("importance_rank", "—"),
+                        })
+                finally:
+                    ev_conn.close()
+            except Exception:
+                pass
+
+            # Query CandidateSpec for mutation & elimination metadata
             cand_features: list[str] = []
             strat = None
             mut_type = None
@@ -1017,17 +1141,61 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             except Exception:
                 pass
 
-            total_cnt = len(cand_features) if cand_features else dossier.get("raw_metrics_summary", {}).get("total_features", 0)
-            rows = [
-                ("Total Features Count", str(total_cnt)),
-                ("Mutation Type", str(mut_type or "Full Baseline / Candidate Spec")),
-                ("Elimination Strategy", str(strat or "NONE")),
-                ("Audit Status", "Candidate Specification verified"),
-            ]
-            kv_block(tab3, "Composition", rows)
-            if cand_features:
-                preview_feats = [[f] for f in cand_features[:30]]
-                data_table(tab3, [("feat", f"Sample Features (Showing {len(preview_feats)} of {len(cand_features)})", 300)], preview_feats)
+            total_cnt = len(fe_records) if fe_records else (len(cand_features) if cand_features else dossier.get("raw_metrics_summary", {}).get("total_features", 0))
+
+            if fe_records:
+                keep_cnt = sum(1 for r in fe_records if r["recommendation"] == "KEEP")
+                watch_cnt = sum(1 for r in fe_records if r["recommendation"] == "WATCH")
+                remove_cnt = sum(1 for r in fe_records if r["recommendation"] == "REMOVE")
+
+                summary_rows = [
+                    ("Total Candidate Features", str(total_cnt)),
+                    ("Feature Studio: KEEP", f"{keep_cnt} features ({keep_cnt/max(1, total_cnt)*100:.1f}%)"),
+                    ("Feature Studio: WATCH", f"{watch_cnt} features ({watch_cnt/max(1, total_cnt)*100:.1f}%)"),
+                    ("Feature Studio: REMOVE", f"{remove_cnt} features ({remove_cnt/max(1, total_cnt)*100:.1f}%)"),
+                    ("Elimination Strategy", str(strat or "NONE")),
+                    ("Mutation Type", str(mut_type or "Candidate Specification")),
+                ]
+                kv_block(tab3, "Feature Studio Governance", summary_rows)
+
+                table_rows = []
+                for r in fe_records:
+                    rec = r["recommendation"]
+                    badge = f"🟢 {rec}" if rec == "KEEP" else (f"🟡 {rec}" if rec == "WATCH" else f"🔴 {rec}")
+                    ks_str = f"{r['ks_stat']:.3f}" if r['ks_stat'] is not None else "—"
+                    score_str = f"{r['evidence_score']:.1f}" if r['evidence_score'] is not None else "—"
+                    table_rows.append((
+                        str(r["rank"]),
+                        r["feature_name"],
+                        badge,
+                        score_str,
+                        ks_str,
+                        r["reason"],
+                    ))
+
+                data_table(
+                    tab3,
+                    [
+                        ("rank", "Rank", 50),
+                        ("feat", "Feature Name", 180),
+                        ("rec", "Studio Decision", 110),
+                        ("ev_score", "Score", 60),
+                        ("ks", "KS Drift", 70),
+                        ("reason", "Auditable Governance Reason", 320),
+                    ],
+                    table_rows,
+                )
+            else:
+                rows = [
+                    ("Total Features Count", str(total_cnt)),
+                    ("Mutation Type", str(mut_type or "Full Baseline / Candidate Spec")),
+                    ("Elimination Strategy", str(strat or "NONE")),
+                    ("Audit Status", "Candidate Specification verified"),
+                ]
+                kv_block(tab3, "Composition", rows)
+                if cand_features:
+                    preview_feats = [[f] for f in cand_features[:30]]
+                    data_table(tab3, [("feat", f"Sample Features (Showing {len(preview_feats)} of {len(cand_features)})", 300)], preview_feats)
 
     def _render_tab_lineage(self, dossier: dict[str, Any]) -> None:
         """Render Research Lineage tab for the selected candidate."""
@@ -1222,6 +1390,182 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         steps_rows = [(f"Step {i}", step) for i, step in enumerate(top_d.suggested_next_steps, start=1)]
         kv_block(tab, "Suggested Next Research Directions", steps_rows)
 
+    def _render_tab_discovered_features(self) -> None:
+        """Render Autonomous Discovery Pipeline features, generations, snapshots, and telemetry."""
+        tab = self._tab_discovered_features.inner
+        clear_children(tab)
+        ctx_key = self._context_key_var.get()
+        data_dir = self._data_dir()
+
+        section_title(tab, f"Autonomous Discovery Pipeline Sandbox: {ctx_key}")
+        section_desc(tab, "Isolated research sandbox synthesizing, evaluating, and evolving experimental features across multi-generation campaigns.")
+
+        # Try to resolve latest Discovery Pipeline for this context or campaign
+        pipe: DiscoveryPipelineSpec | None = None
+        try:
+            from chain_replay_ml.research_memory.db import connect_analysis_db
+            conn = connect_analysis_db(data_dir)
+            try:
+                row = conn.execute(
+                    """
+                    SELECT * FROM discovery_pipelines
+                    WHERE context_key = ?
+                    ORDER BY updated_at DESC LIMIT 1
+                    """,
+                    (ctx_key,),
+                ).fetchone()
+                if row:
+                    pipe = DiscoveryPipelineSpec.from_dict(dict(row))
+            finally:
+                conn.close()
+        except Exception:
+            pipe = None
+
+        if not pipe:
+            ttk.Label(
+                tab,
+                text=f"No active Discovery Pipeline found for context '{ctx_key}'.\nRun an Autonomous Research Campaign to discover, evaluate, and evolve novel features.",
+                font=("TkDefaultFont", 9, "italic"),
+                foreground=COL_MUTED,
+                justify="center",
+            ).pack(pady=24)
+            return
+
+        # 1. Pipeline Summary Cards
+        pipe_id = pipe.pipeline_id
+        camp_id = pipe.campaign_id
+        gen_num = pipe.current_generation
+        snap_hash = pipe.current_snapshot_hash or "DP_SNAP_INITIAL"
+        active_cnt = pipe.active_features_count
+        total_cnt = pipe.total_generated_count
+
+        all_features = load_discovered_features(data_dir, pipe_id)
+        keeps = [f for f in all_features if f.lifecycle_status == DiscoveryLifecycleStatus.KEEP]
+        watches = [f for f in all_features if f.lifecycle_status == DiscoveryLifecycleStatus.WATCH]
+        removes = [f for f in all_features if f.lifecycle_status == DiscoveryLifecycleStatus.REMOVE]
+
+        summary_rows = [
+            ("Discovery Pipeline ID", pipe_id),
+            ("Base Pipeline Anchor", f"{pipe.base_pipeline_id} ({pipe.base_feature_count} base features)"),
+            ("Owning Campaign ID", camp_id),
+            ("Current Generation", f"Generation {gen_num}"),
+            ("Current Snapshot Hash", snap_hash),
+            ("Active Pool Size", f"{active_cnt} surviving features ({len(keeps)} KEEPs + {len(watches)} WATCHes)"),
+            ("Cumulative Generated", f"{total_cnt} experimental features synthesized"),
+            ("Governance Breakdown", f"🟢 KEEP: {len(keeps)}  |  🟡 WATCH: {len(watches)}  |  🔴 REMOVE: {len(removes)}"),
+        ]
+        kv_block(tab, "Pipeline Metadata & Status", summary_rows)
+
+        # 2. Discovered Features Table
+        if all_features:
+            section_title(tab, "Discovered Features Telemetry & Governance Status")
+            feat_rows = []
+            for idx, f in enumerate(all_features, start=1):
+                st_icon = "🟢 KEEP" if f.lifecycle_status == DiscoveryLifecycleStatus.KEEP else ("🟡 WATCH" if f.lifecycle_status == DiscoveryLifecycleStatus.WATCH else "🔴 REMOVE")
+                strat_val = f.generator_strategy.value if hasattr(f.generator_strategy, "value") else str(f.generator_strategy)
+                d_auc = f.metadata.get("delta_auc", 0.0) if f.metadata else 0.0
+                cons = f.metadata.get("fold_consistency", 0.0) if f.metadata else 0.0
+                parents_str = ", ".join(f.parent_features) if f.parent_features else "—"
+
+                feat_rows.append((
+                    str(idx),
+                    f.feature_name,
+                    strat_val,
+                    st_icon,
+                    f"{f.evidence_score:.2f}",
+                    f"{d_auc:+.5f}",
+                    f"{f.ks_statistic:.4f}",
+                    f"{cons*100:.0f}%",
+                    f"Gen {f.generation_discovered}",
+                    f.formula_expression[:60] + ("..." if len(f.formula_expression) > 60 else ""),
+                    parents_str,
+                ))
+
+            data_table(
+                tab,
+                [
+                    ("idx", "#", 30),
+                    ("feat", "Feature Name", 220),
+                    ("strat", "Strategy", 100),
+                    ("status", "Status", 95),
+                    ("score", "Score", 65),
+                    ("delta_auc", "ΔAUC", 85),
+                    ("drift", "D_KS Drift", 80),
+                    ("cons", "Consistency", 85),
+                    ("gen", "Discovered", 80),
+                    ("formula", "Formula Expression", 240),
+                    ("parents", "Parent Features", 160),
+                ],
+                feat_rows,
+            )
+
+            # 3. Top / Governed Feature Formula Inspector
+            top_feature = keeps[0] if keeps else (watches[0] if watches else all_features[0])
+            top_meta = top_feature.metadata or {}
+            top_delta = top_meta.get("delta_auc", 0.0)
+            top_base_auc = top_meta.get("baseline_auc", 0.5)
+            top_cons = top_meta.get("fold_consistency", 0.5)
+            top_rationale = top_meta.get("governance_rationale", "Evaluated via 5-fold walk-forward cross-validation.")
+
+            inspector_rows = [
+                ("Selected Feature", top_feature.feature_name),
+                ("Feature Identifier", top_feature.feature_id),
+                ("Canonical Formula Hash", top_feature.formula_hash),
+                ("Mathematical Expression", top_feature.formula_expression),
+                ("Generator Strategy", top_feature.generator_strategy.value if hasattr(top_feature.generator_strategy, "value") else str(top_feature.generator_strategy)),
+                ("Parent Input Features", ", ".join(top_feature.parent_features)),
+                ("Empirical Marginal Gain", f"ΔAUC = {top_delta:+.5f} (Baseline: {top_base_auc:.4f} → Augmented: {top_base_auc + top_delta:.4f})"),
+                ("Distribution Drift Test", f"D_KS = {top_feature.ks_statistic:.4f} (p-value: {top_feature.ks_pvalue:.4f}, Severity: {top_feature.drift_severity})"),
+                ("Walk-Forward Stability", f"Fold Consistency = {top_cons*100:.0f}% across 5 expanding folds"),
+                ("Evidence Score", f"{top_feature.evidence_score:.2f} / 100.00"),
+                ("Governance Verdict", f"{top_feature.lifecycle_status.value} — {top_rationale}"),
+            ]
+            kv_block(tab, f"Mathematical Provenance & Evidence Inspector: {top_feature.feature_name}", inspector_rows)
+
+        # 4. Cryptographic Snapshots History
+        snapshots = load_discovery_snapshots_for_pipeline(data_dir, pipe_id)
+        if snapshots:
+            section_title(tab, "Cryptographic Generation Snapshots (DP_SNAP_*)")
+            snap_rows = []
+            for s in snapshots:
+                snap_rows.append((
+                    f"Gen {s.generation_number}",
+                    s.snapshot_hash,
+                    str(s.feature_count),
+                    str(s.keep_count),
+                    str(s.watch_count),
+                    str(s.remove_count),
+                    s.created_at[:19],
+                ))
+            data_table(
+                tab,
+                [
+                    ("gen", "Generation", 90),
+                    ("hash", "Snapshot Hash", 240),
+                    ("count", "Active Features", 110),
+                    ("keeps", "KEEPs", 75),
+                    ("watches", "WATCHes", 75),
+                    ("removes", "REMOVEs", 75),
+                    ("created", "Created At", 150),
+                ],
+                snap_rows,
+            )
+
+    def _get_selected_algorithms(self) -> list[str]:
+        """Return list of canonical algorithm IDs selected by the researcher."""
+        selected: list[str] = []
+        if self._algo_xgb_var.get():
+            selected.append("xgboost")
+        if self._algo_cat_var.get():
+            selected.append("catboost")
+        if self._algo_lgb_var.get():
+            selected.append("lightgbm")
+        if self._algo_rf_var.get():
+            selected.append("random_forest")
+        if self._algo_et_var.get():
+            selected.append("extra_trees")
+        return selected
+
     def _elim_strategy_display_name(self, strat: str | None = None) -> str:
         s = str(strat or self._elim_strat_var.get() or "NONE").strip().upper()
         mapping = {
@@ -1303,6 +1647,14 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         elim_strat = self._elim_strat_var.get() or "NONE"
         self._elim_strat_status_var.set(f"🎯 Elimination Strategy: {self._elim_strategy_display_name(elim_strat)}")
 
+        selected_algos = self._get_selected_algorithms()
+        if not selected_algos:
+            messagebox.showerror(
+                "No Algorithm Selected",
+                "Please select at least one algorithm from Available Algorithms (XGBoost, CatBoost, LightGBM, Random Forest, Extra Trees)."
+            )
+            return
+
         # Construct CampaignConfig using active researcher budget and full dataset feature universe
         config = CampaignConfig(
             campaign_id=campaign_id,
@@ -1320,6 +1672,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             dataset_feature_universe=eligible_features,
             target_column=target_col,
             feature_elimination_strategy=elim_strat,
+            allowed_algorithms=selected_algos,
         )
 
         self._active_runner = OvernightCampaignRunner(data_dir=data_dir, config=config)
@@ -1434,7 +1787,8 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         ctx_key = self._context_key_var.get()
         top = tk.Toplevel(self)
         top.title(f"🌅 Morning Research Dossier — {ctx_key}")
-        top.geometry("950x700")
+        top.geometry("1188x875")
+        top.minsize(1000, 750)
         from .morning_research_dossier_panel import MorningResearchDossierPanel
         panel = MorningResearchDossierPanel(
             top,
@@ -1445,6 +1799,92 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             panel.selected_campaign_id.set(camp_id)
             panel.load_selected_campaign()
         panel.pack(fill=tk.BOTH, expand=True)
+
+    def _on_open_evidence_db(self) -> None:
+        """Open the existing Feature Recommendation Evidence DB / Feature Studio inspector."""
+        from .feature_recommendation_viewer import open_feature_recommendation_viewer
+
+        market = self._market_var.get() or "NIFTY"
+        try:
+            int_sec = int(str(self._sampling_var.get() or "6").replace("s", ""))
+        except (TypeError, ValueError):
+            int_sec = 6
+
+        open_feature_recommendation_viewer(
+            self,
+            chart_dir=self.chart_dir or "",
+            initial_market=market,
+            initial_interval_sec=int_sec,
+            initial_sliding_window="standard",
+            initial_feature_project_id="all",
+            on_changed=self._refresh_evidence_db_summary,
+        )
+
+    def _refresh_evidence_db_summary(self) -> None:
+        """Query feature_recommendation_evidence.db for compact summary counters."""
+        data_dir = self._data_dir()
+        if not data_dir:
+            self._evidence_db_summary_var.set("📊 Evidence DB: Ready")
+            return
+
+        try:
+            from chain_replay_ml.production_validation.evidence_store import get_connection
+            conn = get_connection(data_dir)
+            try:
+                # Query recommendation_evidence for total evaluations and verdict distribution
+                cur = conn.execute("""
+                    SELECT 
+                        COUNT(*),
+                        COUNT(DISTINCT feature_name),
+                        COUNT(DISTINCT model_name),
+                        SUM(CASE WHEN recommendation='KEEP' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN recommendation='WATCH' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN recommendation='REMOVE' THEN 1 ELSE 0 END)
+                    FROM recommendation_evidence
+                """)
+                row = cur.fetchone()
+                total_ev = int(row[0] or 0)
+                uniq_feats = int(row[1] or 0)
+                uniq_models = int(row[2] or 0)
+                keep_cnt = int(row[3] or 0)
+                watch_cnt = int(row[4] or 0)
+                rem_cnt = int(row[5] or 0)
+
+                # Query latest/current governance status per unique feature
+                cur_uniq = conn.execute("""
+                    WITH latest_evals AS (
+                        SELECT feature_name, recommendation
+                        FROM (
+                            SELECT feature_name, recommendation,
+                                   ROW_NUMBER() OVER (PARTITION BY feature_name ORDER BY run_timestamp DESC, rowid DESC) as rn
+                            FROM recommendation_evidence
+                        )
+                        WHERE rn = 1
+                    )
+                    SELECT 
+                        SUM(CASE WHEN recommendation='KEEP' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN recommendation='WATCH' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN recommendation='REMOVE' THEN 1 ELSE 0 END)
+                    FROM latest_evals
+                """)
+                uniq_row = cur_uniq.fetchone()
+                uniq_keep = int(uniq_row[0] or 0)
+                uniq_watch = int(uniq_row[1] or 0)
+                uniq_rem = int(uniq_row[2] or 0)
+
+                if total_ev > 0:
+                    summary_text = (
+                        f"📊 Evidence DB: {total_ev:,} evaluations · {uniq_feats:,} unique features · {uniq_models} models  |  "
+                        f"Evaluations: 🟢 {keep_cnt:,} KEEP · 🟡 {watch_cnt:,} WATCH · 🔴 {rem_cnt:,} REMOVE  |  "
+                        f"Current Features: 🟢 {uniq_keep:,} KEEP · 🟡 {uniq_watch:,} WATCH · 🔴 {uniq_rem:,} REMOVE"
+                    )
+                else:
+                    summary_text = "📊 Evidence DB: 0 evaluations"
+                self._evidence_db_summary_var.set(summary_text)
+            finally:
+                conn.close()
+        except Exception:
+            self._evidence_db_summary_var.set("📊 Evidence DB: Ready")
 
 
     def _on_add_to_classifier(self) -> None:
@@ -1483,6 +1923,106 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
                     pass
         except Exception as ex:
             messagebox.showerror("Registration Error", f"Failed to register model as classifier:\n{ex}")
+
+    def _on_promote_pipeline(self) -> None:
+        """Promote selected candidate's exact feature set to an authoritative Pipeline Snapshot."""
+        d = self._selected_dossier
+        if not d or not d.get("model_name"):
+            messagebox.showwarning("Select Candidate", "Please select a candidate model from the Leaderboard table first.")
+            return
+
+        cand_id = d["model_name"]
+        algo = d.get("algorithm", "model")
+        data_dir = self._data_dir()
+        if not data_dir:
+            return
+
+        # 1. Resolve CandidateSpec
+        spec = None
+        try:
+            from chain_replay_ml.overnight_campaign.persistence import load_candidate_specs_for_campaign
+            specs = load_candidate_specs_for_campaign(data_dir, candidate_id=cand_id)
+            spec_dict = specs.get(cand_id)
+            if spec_dict:
+                from chain_replay_ml.candidate_generation.generator import create_candidate_spec
+                from chain_replay_ml.candidate_generation.types import MutationType
+                spec = create_candidate_spec(
+                    context_key=spec_dict.get("context_key", self._context_key_var.get()),
+                    algorithm=spec_dict.get("algorithm", algo),
+                    features=spec_dict.get("features", []),
+                    dataset_snapshot_hash=self._dataset_meta.get("metadata", {}).get("dataset_fingerprint", "snapshot_v1") if self._dataset_meta else "snapshot_v1",
+                    mutation_type=MutationType(spec_dict.get("mutation_type", "FULL_FEATURE_BASELINE")),
+                    campaign_id=getattr(self, "_last_campaign_id", None) or spec_dict.get("campaign_id", "CAMP_PROMOTED"),
+                    feature_elimination_strategy=spec_dict.get("feature_elimination_strategy", "NONE"),
+                )
+        except Exception:
+            pass
+
+        if spec is None:
+            # Fallback construct spec from dossier features
+            from chain_replay_ml.candidate_generation.generator import create_candidate_spec
+            feats = list(self._dataset_eligible_features())
+            spec = create_candidate_spec(
+                context_key=self._context_key_var.get(),
+                algorithm=algo,
+                features=feats,
+                dataset_snapshot_hash=self._dataset_meta.get("metadata", {}).get("dataset_fingerprint", "snapshot_v1") if self._dataset_meta else "snapshot_v1",
+                campaign_id=getattr(self, "_last_campaign_id", None) or "CAMP_PROMOTED",
+            )
+
+        # 2. Validate Candidate for Promotion
+        from chain_replay_ml.dataset_builder.pipeline_promotion_engine import (
+            validate_candidate_for_promotion,
+            promote_candidate_to_pipeline_snapshot,
+        )
+
+        val_report = validate_candidate_for_promotion(data_dir, spec)
+        if not val_report.eligible:
+            messagebox.showerror(
+                "Promotion Blocked",
+                f"Candidate '{cand_id}' cannot be promoted to a Pipeline Snapshot due to governance violations:\n\n"
+                + "\n".join(f"• {r}" for r in val_report.blocked_reasons)
+            )
+            return
+
+        # 3. Confirmation Dialog
+        warn_text = f"\n⚠️ Warnings ({len(val_report.warnings)}):\n" + "\n".join(f"• {w}" for w in val_report.warnings[:3]) if val_report.warnings else ""
+        ds_name = self._selected_dataset_name() or "Active Dataset"
+
+        confirm = messagebox.askyesno(
+            "Confirm Pipeline Promotion",
+            f"Promote candidate '{cand_id}' ({algo}) to an authoritative Pipeline Snapshot?\n\n"
+            f"• Exact Features to Promote: {val_report.feature_count} features\n"
+            f"• Feature Studio Governance: {val_report.keep_count} KEEP, {val_report.watch_count} WATCH, {val_report.remove_count} REMOVE\n"
+            f"• Mean Evidence Score: {val_report.mean_evidence_score:.1f} pts\n"
+            f"• Dataset Source: {ds_name}\n"
+            f"{warn_text}\n"
+            f"This will allocate a permanent Pipeline ID (PL_XXXX) and link Feature Registry IDs in the pipeline store.",
+        )
+        if not confirm:
+            return
+
+        # 4. Execute Promotion Engine
+        try:
+            res = promote_candidate_to_pipeline_snapshot(
+                data_dir,
+                spec,
+                campaign_id=getattr(self, "_last_campaign_id", None),
+                dataset_name=ds_name,
+            )
+            self._refresh_evidence_db_summary()
+            messagebox.showinfo(
+                "Pipeline Promoted Successfully",
+                f"Candidate '{cand_id}' has been promoted to a registered Pipeline Snapshot!\n\n"
+                f"• Pipeline ID: {res.pipeline_id}\n"
+                f"• Snapshot ID: {res.pipeline_snapshot_id}\n"
+                f"• Exact Features: {res.feature_count}\n"
+                f"• Feature Registry IDs Linked: {res.registry_feature_ids_count}\n"
+                f"• Status: {res.status}\n\n"
+                f"The promoted pipeline is now available in Model Builder and the Feature Pipeline Registry.",
+            )
+        except Exception as ex:
+            messagebox.showerror("Promotion Error", f"Failed to promote pipeline:\n{ex}")
 
     def _render_audit_tab(self) -> None:
         """Render complete chronological execution audit trail for the active campaign or context."""

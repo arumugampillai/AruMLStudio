@@ -97,6 +97,21 @@ def _attach_post_training(
             X=X,
             y=y,
         )
+
+        # Ingest feature telemetry into feature_recommendation_evidence.db
+        try:
+            from chain_replay_ml.overnight_campaign.feature_evidence_bridge import persist_model_builder_feature_evidence
+            cfg_doc = result.get("config") if isinstance(result.get("config"), dict) else {}
+            ev_res = persist_model_builder_feature_evidence(
+                data_dir=data_dir,
+                package_dir=package_dir,
+                config_doc=cfg_doc,
+                post_training_result=pt,
+            )
+            pt["evidence_db_ingest"] = ev_res
+        except Exception as ev_exc:
+            logger.warning("[PostTraining] Evidence DB ingest failed: %s", ev_exc)
+
     except Exception as exc:  # pragma: no cover — run_safe already swallows
         pt = {
             "status": "failed",

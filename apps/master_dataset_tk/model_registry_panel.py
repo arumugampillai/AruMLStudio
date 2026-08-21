@@ -511,9 +511,6 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
                 # TB: drop Dataset / Target / Label status — Label Run stays.
                 display = (
                     "name",
-                    "task",
-                    "regime",
-                    "pop",
                     "strategy",
                     "ds_st",
                     "label_run",
@@ -531,9 +528,6 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
                 # Classifier: show dataset, target, fc, interval, m1..m4
                 display = (
                     "name",
-                    "task",
-                    "regime",
-                    "pop",
                     "strategy",
                     "dataset",
                     "target",
@@ -558,9 +552,6 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
             # Label Run / DS status columns are OLE/TB-focused — hide on Regression.
             display = (
                 "name",
-                "task",
-                "regime",
-                "pop",
                 "strategy",
                 "dataset",
                 "target",

@@ -322,15 +322,55 @@ def add_candidate_features(
     return deepcopy(rec)
 
 
-def ensure_default_existing_pipeline(data_dir: str) -> dict[str, Any]:
+def get_base_pipeline_for_context(
+    data_dir: str,
+    context_key: str | None = None,
+    *,
+    auto_seed: bool = True,
+) -> dict[str, Any] | None:
+    """Retrieve authoritative Base Pipeline (type='base') for given model research context."""
+    doc = load_store(data_dir)
+    pipelines = doc.get("pipelines") or {}
+
+    # 1. Exact match on context_key and type=base
+    if context_key:
+        clean_ctx = str(context_key).strip()
+        for rec in pipelines.values():
+            if not isinstance(rec, dict):
+                continue
+            if is_base_pipeline_record(rec) and str(rec.get("context_key") or "").strip() == clean_ctx:
+                return deepcopy(rec)
+
+    # 2. Fallback to any base pipeline
+    for rec in pipelines.values():
+        if isinstance(rec, dict) and is_base_pipeline_record(rec):
+            return deepcopy(rec)
+
+    # 3. Auto-seed default base pipeline if enabled
+    if auto_seed:
+        ensured_doc = ensure_default_existing_pipeline(data_dir, context_key=context_key)
+        for rec in (ensured_doc.get("pipelines") or {}).values():
+            if isinstance(rec, dict) and is_base_pipeline_record(rec):
+                return deepcopy(rec)
+
+    return None
+
+
+def ensure_default_existing_pipeline(
+    data_dir: str,
+    context_key: str | None = "NIFTY_6s_DIRECTION_CLASSIFIER_5m_R001",
+) -> dict[str, Any]:
     """Seed PL_0001 Base pipeline if store is empty; migrate legacy types on load."""
     doc = load_store(data_dir)
     pipelines = doc.get("pipelines") or {}
     if not pipelines:
-        from .feature_migration import PIPELINE_OWNED_FEATURES
-        from .pipeline_features_prefs import active_pipeline_feature_names
+        from .feature_sources_catalog import registry_feature_names, pipeline_feature_names
 
-        candidates = active_pipeline_feature_names(sorted(PIPELINE_OWNED_FEATURES), data_dir=data_dir)
+        # Authoritative Base 382 Universe (Canonical Registry + Pipeline-Owned)
+        reg_names = registry_feature_names(data_dir=data_dir)
+        pipe_names = pipeline_feature_names(data_dir=data_dir)
+        candidates = sorted(list(set(reg_names) | set(pipe_names)))
+
         now = _utc_now()
         pipeline_id = format_pipeline_id(1)
         doc["next_pipeline_id_seq"] = max(int(doc.get("next_pipeline_id_seq") or 1), 2)
@@ -340,8 +380,10 @@ def ensure_default_existing_pipeline(data_dir: str) -> dict[str, Any]:
             "name": f"{format_display_name(1)} — Base",
             "type": "base",
             "status": "ready",
+            "context_key": context_key or "NIFTY_6s_DIRECTION_CLASSIFIER_5m_R001",
             "registry_feature_ids": [],
             "candidate_features": list(candidates),
+            "pipeline_snapshot_id": "1714b8dddb455a95",
             "transformation_config": None,
             "created_at": now,
             "updated_at": now,
@@ -354,6 +396,8 @@ def ensure_default_existing_pipeline(data_dir: str) -> dict[str, Any]:
         for rec in pipelines.values():
             if isinstance(rec, dict) and is_base_pipeline_record(rec):
                 rec["type"] = "base"
+                if context_key and not rec.get("context_key"):
+                    rec["context_key"] = context_key
         save_store(data_dir, doc)
     return doc
 
@@ -456,6 +500,7 @@ __all__ = [
     "ensure_default_existing_pipeline",
     "format_display_name",
     "format_pipeline_id",
+    "get_base_pipeline_for_context",
     "get_pipeline",
     "get_pipeline_summary",
     "is_base_pipeline_record",
