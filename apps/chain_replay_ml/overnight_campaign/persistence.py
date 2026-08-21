@@ -73,6 +73,10 @@ def init_campaign_tables(data_dir: str) -> None:
             conn.execute("ALTER TABLE overnight_campaign_events ADD COLUMN message TEXT;")
         except Exception:
             pass
+        try:
+            conn.execute("ALTER TABLE overnight_campaigns ADD COLUMN feature_elimination_strategy TEXT;")
+        except Exception:
+            pass
 
         conn.execute(
             """
@@ -87,10 +91,15 @@ def init_campaign_tables(data_dir: str) -> None:
                 mutation_type TEXT,
                 mutation_description TEXT,
                 campaign_id TEXT,
+                feature_elimination_strategy TEXT,
                 created_at TEXT NOT NULL
             );
             """
         )
+        try:
+            conn.execute("ALTER TABLE campaign_candidate_specs ADD COLUMN feature_elimination_strategy TEXT;")
+        except Exception:
+            pass
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_camp_events ON overnight_campaign_events (campaign_id, generation_number);"
         )
@@ -213,14 +222,15 @@ def persist_candidate_specs(
             m_type = c.lineage.mutation_type.value if c.lineage else "INITIAL_SPEC"
             m_desc = c.lineage.mutation_description if c.lineage else "Phase 4E seed candidate"
             camp_id = campaign_id or (c.lineage.campaign_id if c.lineage else None)
+            strat = c.feature_elimination_strategy or (c.lineage.feature_elimination_strategy if c.lineage else None)
 
             conn.execute(
                 """
                 INSERT OR REPLACE INTO campaign_candidate_specs (
                     candidate_id, signature_hash, context_key, algorithm,
                     features_json, hyperparameters_json, parent_candidate_id,
-                    mutation_type, mutation_description, campaign_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    mutation_type, mutation_description, campaign_id, feature_elimination_strategy, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     c.candidate_id,
@@ -233,6 +243,7 @@ def persist_candidate_specs(
                     m_type,
                     m_desc,
                     camp_id,
+                    strat,
                     now_iso,
                 ),
             )
@@ -248,6 +259,7 @@ def load_candidate_specs_for_campaign(
     campaign_id: str | None = None,
     *,
     context_key: str | None = None,
+    candidate_id: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Retrieve persisted candidate specifications from analysis.db as candidate_id -> metadata dict."""
     init_campaign_tables(data_dir)
@@ -261,6 +273,9 @@ def load_candidate_specs_for_campaign(
         if context_key:
             query += " AND context_key = ?"
             params.append(context_key)
+        if candidate_id:
+            query += " AND candidate_id = ?"
+            params.append(str(candidate_id).strip())
 
         rows = conn.execute(query, tuple(params)).fetchall()
         result: dict[str, dict[str, Any]] = {}
@@ -276,6 +291,7 @@ def load_candidate_specs_for_campaign(
                 "mutation_type": r["mutation_type"],
                 "mutation_description": r["mutation_description"],
                 "campaign_id": r["campaign_id"],
+                "feature_elimination_strategy": r["feature_elimination_strategy"] if "feature_elimination_strategy" in r.keys() else None,
                 "created_at": r["created_at"],
             }
         return result

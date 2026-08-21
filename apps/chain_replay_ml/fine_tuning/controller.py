@@ -56,6 +56,7 @@ class FineTuningController:
         *,
         campaign_id: str | None = None,
         schema: dict[str, Any] | None = None,
+        feature_elimination_strategy: str = "NONE",
     ) -> list[CandidateSpec]:
         """Propose a batch of descendant candidates from eligible parents."""
         proposed: list[CandidateSpec] = []
@@ -72,6 +73,7 @@ class FineTuningController:
                 budget=self.budget,
                 campaign_id=campaign_id,
                 schema=schema,
+                feature_elimination_strategy=feature_elimination_strategy,
             )
             proposed.extend(descendants)
 

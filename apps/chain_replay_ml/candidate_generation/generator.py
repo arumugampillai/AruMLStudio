@@ -140,6 +140,7 @@ def create_candidate_spec(
     opportunity_id: str | None = None,
     opportunity_type: str | None = None,
     priority_score: float | None = None,
+    feature_elimination_strategy: str | None = None,
 ) -> CandidateSpec:
     """Construct a complete, deterministically signed CandidateSpec."""
     ctx_obj = ModelContextKey.from_key_str(context_key)
@@ -188,6 +189,7 @@ def create_candidate_spec(
         opportunity_id=opportunity_id,
         opportunity_type=opportunity_type,
         priority_score=priority_score,
+        feature_elimination_strategy=feature_elimination_strategy,
         created_at=_utc_now_iso(),
     )
 
@@ -209,6 +211,7 @@ def create_candidate_spec(
         signature_hash=sig_hash,
         lineage=lineage,
         eligibility=CandidateEligibility.ELIGIBLE,
+        feature_elimination_strategy=feature_elimination_strategy,
     )
 
 
@@ -222,6 +225,7 @@ def generate_cold_start_candidates(
     campaign_id: str | None = None,
     budget: CandidateGenerationBudget | None = None,
     mutation_type: MutationType = MutationType.FULL_FEATURE_BASELINE,
+    feature_elimination_strategy: str | None = None,
 ) -> list[CandidateSpec]:
     """Generate initial full-universe baseline candidate specifications across verified algorithms."""
     b = budget or CandidateGenerationBudget()
@@ -249,6 +253,7 @@ def generate_cold_start_candidates(
             campaign_id=campaign_id,
             mutation_type=mutation_type,
             mutation_description=f"Full feature baseline ({len(features_list)} features) — {algo.upper()}",
+            feature_elimination_strategy=feature_elimination_strategy,
         )
         candidates.append(cand)
 

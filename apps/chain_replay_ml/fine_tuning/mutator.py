@@ -28,6 +28,7 @@ from chain_replay_ml.research_recommendations.feature_affinity import (
     recommend_features_for_context,
 )
 from chain_replay_ml.research_recommendations.priority_scoring import build_context_priority_agenda
+from .feature_elimination import apply_feature_elimination
 from .types import FineTuningBudget
 
 
@@ -39,6 +40,7 @@ def generate_fine_tuning_descendants(
     budget: FineTuningBudget | None = None,
     campaign_id: str | None = None,
     schema: dict[str, Any] | None = None,
+    feature_elimination_strategy: str = "NONE",
 ) -> list[CandidateSpec]:
     """Generate a batch of evidence-guided, pruning-validated descendant candidates for a parent."""
     b = budget or FineTuningBudget()
@@ -48,7 +50,38 @@ def generate_fine_tuning_descendants(
     if gen_num >= b.max_generations:
         return []
 
-    # 1. Ingest Phase 4E Feature Affinity & Interaction Synergy Evidence
+    strat = str(feature_elimination_strategy or "NONE").strip().upper()
+    raw_descendants: list[CandidateSpec] = []
+
+    # 1. If an active feature elimination strategy is selected, generate pruned descendant candidates
+    if strat not in ("NONE", ""):
+        retained, eliminated, desc = apply_feature_elimination(
+            data_dir=data_dir,
+            context_key=parent_candidate.context_key,
+            current_features=parent_candidate.features,
+            strategy=strat,
+            generation_number=gen_num + 1,
+        )
+        if eliminated:
+            elim_spec = create_candidate_spec(
+                context_key=parent_candidate.context_key,
+                algorithm=parent_candidate.algorithm,
+                features=retained,
+                hyperparameters=parent_candidate.hyperparameters,
+                walk_forward_config=parent_candidate.walk_forward_config,
+                regime_definition_hash=parent_candidate.regime_definition_hash,
+                dataset_snapshot_hash=parent_candidate.dataset_snapshot_hash,
+                random_seed=parent_candidate.random_seed,
+                parent_spec=parent_candidate,
+                mutation_type=MutationType.FEATURE_ELIMINATION,
+                mutation_description=desc,
+                campaign_id=campaign_id or (parent_candidate.lineage.campaign_id if parent_candidate.lineage else None),
+                candidate_id_suffix=f"_{strat[:4]}",
+                feature_elimination_strategy=strat,
+            )
+            raw_descendants.append(elim_spec)
+
+    # 2. Ingest Phase 4E Feature Affinity & Interaction Synergy Evidence
     try:
         aff_report = analyze_feature_affinity(data_dir, parent_candidate.context_key)
         top_affinity = [r.feature_name for r in aff_report.univariate_recommendations]
@@ -64,15 +97,18 @@ def generate_fine_tuning_descendants(
         max_features_per_candidate=b.max_features_per_candidate,
     )
 
-    raw_descendants = generate_descendant_mutations(
+    other_descendants = generate_descendant_mutations(
         parent_candidate,
         top_affinity_features=top_affinity,
         interaction_pairs=interaction_pairs,
         budget=c_budget,
         campaign_id=campaign_id,
     )
+    for od in other_descendants:
+        od.feature_elimination_strategy = strat
+    raw_descendants.extend(other_descendants)
 
-    # 2. Validate Eligibility and Negative Pruning for all generated descendants
+    # 3. Validate Eligibility and Negative Pruning for all generated descendants
     eligible_descendants: list[CandidateSpec] = []
     for d in raw_descendants:
         if len(eligible_descendants) >= b.max_descendants_per_parent:

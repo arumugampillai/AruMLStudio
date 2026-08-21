@@ -23,6 +23,7 @@ class MutationType(str, Enum):
     ALGORITHM_MUTATION = "ALGORITHM_MUTATION"
     HYPERPARAMETER_MUTATION = "HYPERPARAMETER_MUTATION"
     FEATURE_SUBSET_MUTATION = "FEATURE_SUBSET_MUTATION"
+    FEATURE_ELIMINATION = "FEATURE_ELIMINATION"
     TARGET_HORIZON_MUTATION = "TARGET_HORIZON_MUTATION"
     REGIME_SPECIALIZATION = "REGIME_SPECIALIZATION"
 
@@ -63,6 +64,7 @@ class CandidateLineageRecord:
     opportunity_id: str | None = None          # Phase 4E opportunity ID (e.g. OPP_NIFTY_3s_DIR_5m_R001_01)
     opportunity_type: str | None = None        # Phase 4E opportunity archetype (e.g. INTERACTION_SYNERGY_TEST)
     priority_score: float | None = None        # Phase 4E multi-objective priority score
+    feature_elimination_strategy: str | None = None # NONE | SHAP | RFE | PERMUTATION
     created_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -93,6 +95,7 @@ class CandidateSpec:
     eligibility: CandidateEligibility = CandidateEligibility.ELIGIBLE
     exclusion_reasons: list[str] = field(default_factory=list)
     caution_warnings: list[str] = field(default_factory=list)
+    feature_elimination_strategy: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

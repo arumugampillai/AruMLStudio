@@ -110,7 +110,13 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._cfg_plateau_patience = tk.IntVar(value=3)
         self._cfg_plateau_min_lift = tk.DoubleVar(value=0.5)
         self._cfg_min_gen_before_plateau = tk.IntVar(value=3)
+        self._elim_strat_var = tk.StringVar(value="NONE")
+        self._elim_strat_status_var = tk.StringVar(value="🎯 Elimination Strategy: None")
         self._campaign_start_ts: float = 0.0
+
+        # Lazy loading state per tab
+        self._loaded_tab_candidate: dict[str, str] = {}
+        self._loaded_context_tabs: set[str] = set()
 
         # Autonomous Campaign Runner state
         self._active_runner: OvernightCampaignRunner | None = None
@@ -187,7 +193,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             if pick:
                 row = next((d for d in self._datasets if d.get("dataset_name") == pick), None)
                 self._dataset_var.set(_dataset_display_label(row) if row else pick)
-                self._on_dataset_selected(refresh_leaderboard=False)
+                self._on_dataset_selected(refresh_leaderboard=True)
             elif not vals:
                 self._dataset_var.set("")
                 self._dataset_status_var.set("⚠️ No Analysis Datasets found in registry. Build/export a dataset in Dataset Builder first.")
@@ -446,6 +452,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         ttk.Label(gov_row, textvariable=self._prod_champ_var, font=("TkDefaultFont", 9, "bold"), foreground="#1b5e20").pack(side="left", padx=(0, 16))
         ttk.Label(gov_row, textvariable=self._prod_chall_var, font=("TkDefaultFont", 9), foreground="#e65100").pack(side="left", padx=(0, 16))
         ttk.Label(gov_row, textvariable=self._cand_champ_var, font=("TkDefaultFont", 9, "bold"), foreground="#4a148c").pack(side="left", padx=(0, 16))
+        ttk.Label(gov_row, textvariable=self._elim_strat_status_var, font=("TkDefaultFont", 9), foreground="#0d47a1").pack(side="left", padx=(0, 16))
 
         disclaimer_lbl = ttk.Label(
             gov_box,
@@ -462,6 +469,25 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         # Row 1: Action Buttons & Research Budget Inputs
         ctrl_row = ttk.Frame(run_box)
         ctrl_row.pack(fill="x", pady=(0, 3))
+
+        # Feature Elimination Strategy Radio Buttons (Positioned horizontally immediately before Start Autonomous Research)
+        elim_frame = ttk.Frame(ctrl_row)
+        elim_frame.pack(side="left", padx=(0, 12))
+
+        ttk.Label(elim_frame, text="Elimination Strategy:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
+        for val, lbl in (
+            ("NONE", "None"),
+            ("SHAP", "SHAP Importance"),
+            ("RFE", "Recursive Feature Elimination"),
+            ("PERMUTATION", "Permutation Importance"),
+        ):
+            ttk.Radiobutton(
+                elim_frame,
+                text=lbl,
+                value=val,
+                variable=self._elim_strat_var,
+                command=self._on_elim_strategy_changed,
+            ).pack(side="left", padx=(0, 6))
 
         self._btn_start_research = ttk.Button(
             ctrl_row,
@@ -642,6 +668,8 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._detail_nb.add(self._tab_history, text="Champion History")
         self._detail_nb.add(self._tab_audit, text="📜 Execution Audit Trail")
 
+        self._detail_nb.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
+
 
     def _on_context_param_changed(self) -> None:
         self._update_resolved_context_key()
@@ -728,11 +756,12 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         for item in self.leaderboard_tree.get_children():
             self.leaderboard_tree.delete(item)
 
+        # Clear lazy loading tab caches
+        self._loaded_tab_candidate.clear()
+        self._loaded_context_tabs.clear()
+
         if not dossiers:
             self._render_empty_detail("No benchmarked models found for this context key.")
-            self._render_champion_history_tab()
-            self._render_recommendations_tab()
-            self._render_audit_tab()
             return
 
         self._item_dossier_map: dict[str, dict[str, Any]] = {}
@@ -771,17 +800,13 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
                 ),
             )
 
-        # Select first item by default
+        # Select first item by default and render ONLY the currently active tab
         children = self.leaderboard_tree.get_children()
         if children:
             self.leaderboard_tree.selection_set(children[0])
             first_dossier = self._item_dossier_map.get(children[0], dossiers[0])
             self._selected_dossier = first_dossier
-            self._load_dossier_detail(first_dossier)
-
-        self._render_champion_history_tab()
-        self._render_recommendations_tab()
-        self._render_audit_tab()
+            self._on_notebook_tab_changed()
 
     def _on_tree_select(self, _event: tk.Event) -> None:
         sel = self.leaderboard_tree.selection()
@@ -791,7 +816,10 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         d = self._item_dossier_map.get(item_id)
         if d:
             self._selected_dossier = d
-            self._load_dossier_detail(d)
+            # Invalidate candidate-specific tab caches for this new candidate
+            self._loaded_tab_candidate.clear()
+            # Render only the currently active visible tab!
+            self._on_notebook_tab_changed()
             if self._on_select_model and d.get("model_name"):
                 self._on_select_model(d["model_name"])
 
@@ -800,13 +828,56 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             clear_children(tab.inner)
             ttk.Label(tab.inner, text=message, font=("TkDefaultFont", 10, "italic"), foreground=COL_MUTED).pack(padx=16, pady=16)
 
-    def _load_dossier_detail(self, dossier: dict[str, Any]) -> None:
-        """Render multi-tab research evidence for the selected dossier."""
-        data_dir = self._data_dir()
-        sig_hash = dossier["signature_hash"]
-        model_name = dossier["model_name"]
+    def _on_notebook_tab_changed(self, _event: Any = None) -> None:
+        """Lazy-render the currently selected notebook tab on demand."""
+        try:
+            tab_idx = self._detail_nb.index("current")
+        except Exception:
+            return
 
-        # 1. Robustness Dossier Tab
+        dossier = self._selected_dossier
+        cand_id = dossier.get("model_name") if dossier else ""
+
+        if tab_idx == 0:  # Robustness Dossier
+            if dossier and self._loaded_tab_candidate.get("dossier") != cand_id:
+                self._render_tab_dossier(dossier)
+                self._loaded_tab_candidate["dossier"] = cand_id
+
+        elif tab_idx == 1:  # Research Recommendations
+            if "recommendations" not in self._loaded_context_tabs:
+                self._render_recommendations_tab()
+                self._loaded_context_tabs.add("recommendations")
+
+        elif tab_idx == 2:  # Cross-Regime Stress
+            if dossier and self._loaded_tab_candidate.get("regimes") != cand_id:
+                self._render_tab_regimes(dossier)
+                self._loaded_tab_candidate["regimes"] = cand_id
+
+        elif tab_idx == 3:  # Feature Composition
+            if dossier and self._loaded_tab_candidate.get("features") != cand_id:
+                self._render_tab_features(dossier)
+                self._loaded_tab_candidate["features"] = cand_id
+
+        elif tab_idx == 4:  # Research Lineage
+            if dossier and self._loaded_tab_candidate.get("lineage") != cand_id:
+                self._render_tab_lineage(dossier)
+                self._loaded_tab_candidate["lineage"] = cand_id
+
+        elif tab_idx == 5:  # Champion History
+            if "history" not in self._loaded_context_tabs:
+                self._render_champion_history_tab()
+                self._loaded_context_tabs.add("history")
+
+        elif tab_idx == 6:  # Execution Audit Trail
+            if "audit" not in self._loaded_context_tabs:
+                self._render_audit_tab()
+                self._loaded_context_tabs.add("audit")
+
+    def _render_tab_dossier(self, dossier: dict[str, Any]) -> None:
+        """Render Robustness Dossier tab for the selected candidate."""
+        sig_hash = dossier.get("signature_hash", "—")
+        model_name = dossier.get("model_name", "—")
+
         tab1 = self._tab_dossier.inner
         clear_children(tab1)
         section_title(tab1, f"Robustness Dossier: {model_name}")
@@ -852,7 +923,12 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             for w in warnings:
                 ttk.Label(w_box, text=f"⚠️ {w}", foreground=COL_WARN, font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=2)
 
-        # 2. Cross-Regime Stress Tab
+    def _render_tab_regimes(self, dossier: dict[str, Any]) -> None:
+        """Render Cross-Regime Stress tab for the selected candidate."""
+        data_dir = self._data_dir()
+        sig_hash = dossier.get("signature_hash", "")
+        model_name = dossier.get("model_name", "—")
+
         tab2 = self._tab_regimes.inner
         clear_children(tab2)
         section_title(tab2, f"Cross-Regime Stress Evidence: {model_name}")
@@ -891,7 +967,12 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         else:
             ttk.Label(tab2, text="No multi-regime stress evaluations recorded for this experiment.", font=("TkDefaultFont", 9, "italic"), foreground=COL_MUTED).pack(pady=12)
 
-        # 3. Feature Composition Tab
+    def _render_tab_features(self, dossier: dict[str, Any]) -> None:
+        """Render Feature Composition tab for the selected candidate."""
+        data_dir = self._data_dir()
+        sig_hash = dossier.get("signature_hash", "")
+        model_name = dossier.get("model_name", "—")
+
         tab3 = self._tab_features.inner
         clear_children(tab3)
         section_title(tab3, f"Feature Set Governance & Composition: {model_name}")
@@ -921,10 +1002,39 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             except Exception:
                 pass
         else:
-            raw_feats = dossier.get("raw_metrics_summary", {}).get("total_features", 0)
-            kv_block(tab3, "Composition", [("Total Features Count", str(raw_feats)), ("Audit Status", "Pending detailed composition evaluation")])
+            # Query candidate spec for this single candidate on demand
+            cand_features: list[str] = []
+            strat = None
+            mut_type = None
+            try:
+                from chain_replay_ml.overnight_campaign.persistence import load_candidate_specs_for_campaign
+                c_specs = load_candidate_specs_for_campaign(data_dir, candidate_id=model_name)
+                c_spec = c_specs.get(model_name)
+                if c_spec:
+                    cand_features = c_spec.get("features", [])
+                    strat = c_spec.get("feature_elimination_strategy")
+                    mut_type = c_spec.get("mutation_type")
+            except Exception:
+                pass
 
-        # 4. Research Lineage Tab
+            total_cnt = len(cand_features) if cand_features else dossier.get("raw_metrics_summary", {}).get("total_features", 0)
+            rows = [
+                ("Total Features Count", str(total_cnt)),
+                ("Mutation Type", str(mut_type or "Full Baseline / Candidate Spec")),
+                ("Elimination Strategy", str(strat or "NONE")),
+                ("Audit Status", "Candidate Specification verified"),
+            ]
+            kv_block(tab3, "Composition", rows)
+            if cand_features:
+                preview_feats = [[f] for f in cand_features[:30]]
+                data_table(tab3, [("feat", f"Sample Features (Showing {len(preview_feats)} of {len(cand_features)})", 300)], preview_feats)
+
+    def _render_tab_lineage(self, dossier: dict[str, Any]) -> None:
+        """Render Research Lineage tab for the selected candidate."""
+        data_dir = self._data_dir()
+        sig_hash = dossier.get("signature_hash", "")
+        model_name = dossier.get("model_name", "—")
+
         tab4 = self._tab_lineage.inner
         clear_children(tab4)
         section_title(tab4, f"End-to-End Research Lineage: {model_name}")
@@ -933,8 +1043,12 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         bm_id = dossier.get("benchmark_id", "—")
         run_id = dossier.get("benchmark_run_id", "—")
 
-        # Try to resolve campaign_id from benchmark_run
+        # Try to resolve campaign_id from benchmark_run or candidate spec
         camp_id = None
+        parent_id = None
+        mut_desc = None
+        elim_strat = None
+
         if run_id and run_id != "—":
             try:
                 b_run = get_benchmark_run(data_dir, run_id)
@@ -943,8 +1057,23 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             except Exception:
                 pass
 
+        try:
+            from chain_replay_ml.overnight_campaign.persistence import load_candidate_specs_for_campaign
+            c_specs = load_candidate_specs_for_campaign(data_dir, candidate_id=model_name)
+            c_spec = c_specs.get(model_name)
+            if c_spec:
+                camp_id = camp_id or c_spec.get("campaign_id")
+                parent_id = c_spec.get("parent_candidate_id")
+                mut_desc = c_spec.get("mutation_description")
+                elim_strat = c_spec.get("feature_elimination_strategy")
+        except Exception:
+            pass
+
         lineage_rows = [
             ("Campaign ID", camp_id or "Direct / Independent Run"),
+            ("Parent Candidate ID", parent_id or "Root Baseline (Gen 0)"),
+            ("Mutation Description", mut_desc or "Baseline Candidate"),
+            ("Elimination Strategy", elim_strat or "NONE"),
             ("Experiment Signature Hash", sig_hash),
             ("Benchmark Run ID", str(run_id)),
             ("Model Benchmark Scorecard ID", str(bm_id)),
@@ -1093,6 +1222,19 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         steps_rows = [(f"Step {i}", step) for i, step in enumerate(top_d.suggested_next_steps, start=1)]
         kv_block(tab, "Suggested Next Research Directions", steps_rows)
 
+    def _elim_strategy_display_name(self, strat: str | None = None) -> str:
+        s = str(strat or self._elim_strat_var.get() or "NONE").strip().upper()
+        mapping = {
+            "NONE": "None",
+            "SHAP": "SHAP Importance",
+            "RFE": "Recursive Feature Elimination",
+            "PERMUTATION": "Permutation Importance",
+        }
+        return mapping.get(s, s)
+
+    def _on_elim_strategy_changed(self) -> None:
+        self._elim_strat_status_var.set(f"🎯 Elimination Strategy: {self._elim_strategy_display_name()}")
+
     def _on_start_autonomous_research(self) -> None:
         """Start autonomous overnight campaign on a background thread for the active ModelContextKey."""
         if self._is_running:
@@ -1158,6 +1300,8 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         max_cands = max(1, self._cfg_max_cands.get())
         max_hours = max(0.1, float(self._cfg_max_hours.get()))
         patience = max(1, self._cfg_plateau_patience.get())
+        elim_strat = self._elim_strat_var.get() or "NONE"
+        self._elim_strat_status_var.set(f"🎯 Elimination Strategy: {self._elim_strategy_display_name(elim_strat)}")
 
         # Construct CampaignConfig using active researcher budget and full dataset feature universe
         config = CampaignConfig(
@@ -1175,6 +1319,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
             dataset_snapshot_hash=dataset_snapshot_hash,
             dataset_feature_universe=eligible_features,
             target_column=target_col,
+            feature_elimination_strategy=elim_strat,
         )
 
         self._active_runner = OvernightCampaignRunner(data_dir=data_dir, config=config)
@@ -1185,7 +1330,7 @@ class ModelResearchLeaderboardPanel(ttk.Frame):
         self._camp_status_var.set("STARTING")
         self._lbl_camp_status.config(foreground=COL_TRAINING)
         self._camp_msg_var.set(
-            f"Starting autonomous campaign: {campaign_id} (Dataset: {dataset_name} · {len(eligible_features)} features · {max_gen} Gens, {max_cands} Cands)..."
+            f"Starting autonomous campaign: {campaign_id} (Dataset: {dataset_name} · {len(eligible_features)} features · Elimination: {self._elim_strategy_display_name(elim_strat)} · {max_gen} Gens, {max_cands} Cands)..."
         )
 
         def _progress_cb(st: CampaignState, msg: str) -> None:

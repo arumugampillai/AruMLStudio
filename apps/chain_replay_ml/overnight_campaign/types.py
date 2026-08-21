@@ -51,6 +51,14 @@ class CampaignStopReason(str, Enum):
     COMPLETED_SUCCESSFULLY = "COMPLETED_SUCCESSFULLY"
 
 
+class FeatureEliminationStrategy(str, Enum):
+    """Selectable feature elimination algorithms for autonomous fine-tuning."""
+    NONE = "NONE"
+    SHAP = "SHAP"
+    RFE = "RFE"
+    PERMUTATION = "PERMUTATION"
+
+
 @dataclass(frozen=True)
 class CampaignConfig:
     """Configurable overnight research campaign parameters and safety limits."""
@@ -74,6 +82,7 @@ class CampaignConfig:
     dataset_snapshot_hash: str | None = None    # Immutable schema / snapshot hash
     dataset_feature_universe: list[str] = field(default_factory=list) # All eligible feature columns
     target_column: str | None = None            # Selected target column
+    feature_elimination_strategy: str = "NONE"  # NONE | SHAP | RFE | PERMUTATION
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

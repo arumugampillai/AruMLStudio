@@ -248,6 +248,7 @@ class OvernightCampaignRunner:
                 "plateau_enabled": self.config.plateau_enabled,
                 "plateau_patience": self.config.plateau_patience_generations,
                 "plateau_min_lift": self.config.plateau_min_lift,
+                "feature_elimination_strategy": self.config.feature_elimination_strategy,
             },
         )
 
@@ -314,6 +315,7 @@ class OvernightCampaignRunner:
                                     dataset_snapshot_hash=self.config.dataset_snapshot_hash or "dataset_snapshot_v1",
                                     campaign_id=self.config.campaign_id,
                                     mutation_type=MutationType.FULL_FEATURE_BASELINE,
+                                    feature_elimination_strategy=self.config.feature_elimination_strategy,
                                 )
                             )
                         else:
@@ -348,6 +350,7 @@ class OvernightCampaignRunner:
                                     algorithm="xgboost",
                                     features=fallback_feats,
                                     dataset_snapshot_hash=self.config.dataset_snapshot_hash or "dataset_snapshot_v1",
+                                    feature_elimination_strategy=self.config.feature_elimination_strategy,
                                 )
                             ]
                         parent_scores = {s.candidate_id: s for s in all_ranked_scores}
@@ -357,6 +360,7 @@ class OvernightCampaignRunner:
                             parent_scores=parent_scores,
                             campaign_id=self.config.campaign_id,
                             schema=self.schema,
+                            feature_elimination_strategy=self.config.feature_elimination_strategy,
                         )
                         gen_candidates.extend(descendants)
 
@@ -381,6 +385,7 @@ class OvernightCampaignRunner:
                             "feature_count": len(c.features),
                             "hyperparameters": dict(c.hyperparameters),
                             "eligibility": c.eligibility.value,
+                            "feature_elimination_strategy": c.feature_elimination_strategy or self.config.feature_elimination_strategy,
                         },
                     )
 
@@ -429,6 +434,7 @@ class OvernightCampaignRunner:
                                 "features": list(cand.features),
                                 "feature_count": len(cand.features),
                                 "validation_strategy": "Walk Forward (5 folds)",
+                                "feature_elimination_strategy": cand.feature_elimination_strategy or self.config.feature_elimination_strategy,
                             },
                         )
 
