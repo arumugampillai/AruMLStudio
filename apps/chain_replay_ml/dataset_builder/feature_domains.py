@@ -179,6 +179,9 @@ _DOMAIN_MEMBERS: dict[DomainId, frozenset[str]] = {
         "volga",
         "charm",
         "speed",
+        "color",
+        "zomma",
+        "ultima",
         "theta_per_min",
         "vega_per_ivpt",
     }),
@@ -199,7 +202,24 @@ _DOMAIN_MEMBERS: dict[DomainId, frozenset[str]] = {
         "iv_skew_atm",
         "iv_call_put_skew",
         "iv_skew_25d",
+        "iv_skew_10d",
+        "iv_curvature_25d",
         "iv_butterfly_25d",
+        "iv_term_slope_near_next",
+        "surface_displacement_5m",
+        "surface_displacement_15m",
+        "surface_acceleration_15m",
+        "vrp_proxy_30m",
+        "svi_param_a",
+        "svi_param_b",
+        "svi_param_rho",
+        "svi_param_m",
+        "svi_param_sigma",
+        "svi_calibration_rmse",
+        "sabr_param_alpha",
+        "sabr_param_rho",
+        "sabr_param_nu",
+        "sabr_calibration_rmse",
         "iv_rv_spread_5m",
         "iv_rv_spread_10m",
     }),
@@ -374,6 +394,26 @@ _DATA_TYPE_OVERRIDES: dict[str, DataType] = {
     "dgt_prediction_error": "Price",
     "theta_per_min": "Greek",
     "vega_per_ivpt": "Greek",
+    "color": "Greek",
+    "zomma": "Greek",
+    "ultima": "Greek",
+    "iv_skew_10d": "Volatility",
+    "iv_curvature_25d": "Volatility",
+    "iv_term_slope_near_next": "Volatility",
+    "surface_displacement_5m": "Level",
+    "surface_displacement_15m": "Level",
+    "surface_acceleration_15m": "Level",
+    "vrp_proxy_30m": "Volatility",
+    "svi_param_a": "Level",
+    "svi_param_b": "Level",
+    "svi_param_rho": "Ratio",
+    "svi_param_m": "Level",
+    "svi_param_sigma": "Volatility",
+    "svi_calibration_rmse": "Score",
+    "sabr_param_alpha": "Volatility",
+    "sabr_param_rho": "Ratio",
+    "sabr_param_nu": "Volatility",
+    "sabr_calibration_rmse": "Score",
 }
 
 # Transform-flag overrides (True/False). Unset → inferred from data_type.
@@ -622,7 +662,7 @@ def domain_counts() -> dict[DomainId, int]:
     return {d: len(names) for d, names in features_by_domain().items()}
 
 
-def validate_domain_coverage(*, expected_total: int = 206) -> dict[str, Any]:
+def validate_domain_coverage(*, expected_total: int = 226) -> dict[str, Any]:
     """Validate 1:1 coverage of registry features ↔ domain members."""
     registry = set(_registry_feature_names())
     assigned: set[str] = set()

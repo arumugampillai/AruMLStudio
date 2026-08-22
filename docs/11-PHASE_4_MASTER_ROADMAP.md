@@ -105,8 +105,8 @@ To ensure complete architectural clarity across all documentation and tools, eve
 │ Phase 3D     │ Feature Promotion, Graduation & Deprec.  │ Governance Framework        │ ✅ IMPLEMENTED / VER│
 │ Auto Cand Up │ Evidence-Driven Parents & Commutative Ded│ Combinatorial Pruning       │ ✅ IMPLEMENTED / VER│
 ├──────────────┼──────────────────────────────────────────┼─────────────────────────────┼─────────────────────┤
-│ Phase 4A     │ Higher-Order Option Surface Engine       │ Advanced Surface Calculus   │ 🔵 PLANNED          │
-│ Phase 4B     │ Composite Non-Linear Feature Selection   │ Attributions & Pruning      │ 🔵 PLANNED          │
+│ Phase 4A     │ Higher-Order Option Surface Engine       │ Advanced Surface Calculus   │ ✅ IMPLEMENTED / VER│
+│ Phase 4B     │ Composite Non-Linear Feature Selection   │ Attributions & Pruning      │ ✅ COMPLETE & CLOSED│
 │ Phase 4C     │ Model Taxonomy & Regime Architecture     │ 4-Dimensional Meta Schema   │ ✅ IMPLEMENTED / VER│
 │ Phase 4D     │ Persistent Multi-Model Benchmarking      │ Research Memory (`analysis`)│ ✅ IMPLEMENTED / VER│
 │ Phase 4E     │ Automated Project Recommendations        │ Advisory Dossier Engine     │ ✅ IMPLEMENTED / VER│
@@ -176,16 +176,19 @@ Model identity is **multidimensional and cryptographically anchored**. The platf
 
 ---
 
-### Phase 4A — Higher-Order Option Surface Engine `[PLANNED]`
-- **Purpose**: Calculate continuous volatility surface parameters and higher-order Greeks (Vanna, Volga, SVI Total Implied Variance, SABR strike skew).
-- **Architecture**: Isolated in custom additive transformation modules (`surface_svi.py`, `surface_sabr.py`, `higher_greeks.py`).
-- **Independence**: Fully decoupled; does not alter existing Phase 1–3D scoring.
+### Phase 4A — Higher-Order Option Surface Engine `[IMPLEMENTED & VERIFIED]`
+- **Purpose**: Calculate continuous volatility surface parameters and higher-order Greeks (Vanna, Volga, SVI Total Implied Variance, SABR strike skew, Surface dynamics).
+- **Architecture**: Isolated in custom additive transformation modules (`surface_math/` package: `greeks.py`, `svi.py`, `sabr.py`, `surface.py`, `feature_extractor.py`, `analysis_bridge.py`).
+- **Verification**: Complete 105/105 comprehensive regression tests passing; full 374-bar real-data single-day validation passing (`2026-05-27` NIFTY option chain).
+- **Independence**: Fully decoupled; does not alter existing Phase 1–3D scoring or immutable base pipeline `PL_0001`.
 
 ---
 
-### Phase 4B — Composite Non-Linear Feature Selection `[PLANNED]`
-- **Purpose**: Combine TreeSHAP, Mutual Information entropy, and Permutation Importance into a normalized composite importance score.
-- **Safety**: Strictly contained inside walk-forward training folds; row-group subsampled ($N \le 10,000$) for 16 GB RAM safety.
+### Phase 4B — Composite Non-Linear Feature Selection & Attribution Integration `[COMPLETE & CLOSED]`
+- **Purpose**: Coordinate non-linear pre-training feature qualification with post-training validation and canonical lifecycle governance (`KEEP / WATCH / REMOVE`).
+- **4B.0: Data Contracts, Enums & Config `[IMPLEMENTED & VERIFIED]`**: `CompositeSelectionConfig` with explicit defaults, diagnostic-to-canonical mappings (`map_discovery_action_to_canonical`, `map_validation_action_to_canonical`), and provenance types in `feature_selection/types.py`.
+- **4B.1: Pre-Training Selection Orchestrator `[IMPLEMENTED & VERIFIED]`**: Thin orchestration layer (`feature_selection/composite_pre.py`) delegating directly to authoritative Analysis Lab modules (`analysis_feature_profiles`, `analysis_correlation`, `analysis_mutual_information`, `analysis_feature_rating`, `analysis_feature_selection`) with Phase 4A Tier-3 surface quality gating.
+- **4B.2: Standalone Post-Training Synthesizer `[ELIMINATED / NOT REQUIRED]`**: Eliminated to prevent duplicate calculation engines; post-training TreeSHAP, out-of-sample permutation loss, multi-model consensus, and cross-regime validation remain 100% authoritatively owned by Feature Studio and the Feature Recommendation Evidence Subsystem.
 
 ---
 

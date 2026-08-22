@@ -241,11 +241,11 @@ def _load_parquet_for_correlation(
 
 def _family_label(name: str) -> str:
     n = str(name or "").lower()
-    if any(tok in n for tok in ("iv_", "_iv", "current_iv", "vega", "volga", "vanna", "implied")):
+    if any(tok in n for tok in ("iv_", "_iv", "current_iv", "vega", "volga", "vanna", "implied", "svi_", "sabr_", "surface_", "vrp_")):
         return "IV"
     if any(tok in n for tok in ("oi", "open_interest")):
         return "OI"
-    if any(tok in n for tok in ("delta", "gamma", "theta", "charm", "speed", "rho")):
+    if any(tok in n for tok in ("delta", "gamma", "theta", "charm", "speed", "rho", "color", "zomma", "ultima")):
         return "Greeks"
     if any(tok in n for tok in ("volume", "vwap", "turnover")):
         return "Volume"

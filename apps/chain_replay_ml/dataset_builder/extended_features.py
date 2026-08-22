@@ -10,6 +10,7 @@ import numpy as np
 from chain_replay_ml import bs
 from chain_replay_ml.constants import RISK_FREE_RATE
 from chain_replay_ml.reanchor import ReanchorThresholds
+from chain_replay_ml.surface_math.greeks import calculate_higher_order_greeks
 from chain_replay_ml.ticks import EMA_BAR_INTERVAL_SEC, TickTimeline
 
 from .chain_maps import ChainMaps, chain_features_at
@@ -248,7 +249,15 @@ def enrich_dataset_features(
 
     greeks_now = {}
     if actual_iv is not None and actual_iv > 0 and spot is not None and t_exp > 0:
-        greeks_now = bs.greeks(option_type, spot, strike_rupees, RISK_FREE_RATE, t_exp, actual_iv)
+        g_rec = calculate_higher_order_greeks(
+            option_type=option_type,
+            underlying_spot=spot,
+            strike=strike_rupees,
+            risk_free_rate=RISK_FREE_RATE,
+            time_to_expiry_years=t_exp,
+            implied_volatility=actual_iv,
+        )
+        greeks_now = g_rec.to_dict()
         opt_state.greek_snapshots.append((ts, dict(greeks_now)))
         if len(opt_state.greek_snapshots) > 120:
             opt_state.greek_snapshots = opt_state.greek_snapshots[-120:]
@@ -257,7 +266,10 @@ def enrich_dataset_features(
     vanna = greeks_now.get("vanna")
     volga = greeks_now.get("volga")
     charm = greeks_now.get("charm")
+    color = greeks_now.get("color")
     speed = greeks_now.get("speed")
+    zomma = greeks_now.get("zomma")
+    ultima = greeks_now.get("ultima")
     delta = greeks_now.get("delta", raw.get("delta"))
     gamma = greeks_now.get("gamma", raw.get("gamma"))
     theta = greeks_now.get("theta", raw.get("theta"))
@@ -294,7 +306,10 @@ def enrich_dataset_features(
         "vanna": vanna,
         "volga": volga,
         "charm": charm,
+        "color": color,
         "speed": speed,
+        "zomma": zomma,
+        "ultima": ultima,
         "theta_per_min": float(theta / 1440.0) if theta is not None else None,
         "vega_per_ivpt": float(vega / iv_pct) if vega is not None and iv_pct and iv_pct > 0 else None,
         "delta_change_5m": (

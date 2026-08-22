@@ -15,11 +15,11 @@ from chain_replay_ml.dataset_builder.feature_ownership import ownership_of
 
 
 class TestFeatureDomains(unittest.TestCase):
-    def test_coverage_206(self) -> None:
-        result = validate_domain_coverage(expected_total=206)
+    def test_coverage_226(self) -> None:
+        result = validate_domain_coverage(expected_total=226)
         self.assertTrue(result["ok"], result)
-        self.assertEqual(result["registry_count"], 206)
-        self.assertEqual(sum(result["domain_counts_by_id"].values()), 206)
+        self.assertEqual(result["registry_count"], 226)
+        self.assertEqual(sum(result["domain_counts_by_id"].values()), 226)
         self.assertEqual(result["missing"], [])
         self.assertEqual(result["extra"], [])
         self.assertEqual(result["duplicates"], [])
@@ -37,10 +37,12 @@ class TestFeatureDomains(unittest.TestCase):
         self.assertEqual(primary_domain_of("otm_ce_volume"), "volume_liquidity")
         self.assertEqual(primary_domain_of("spot"), "spot_futures")
         self.assertEqual(primary_domain_of("ltp"), "price_premium")
+        self.assertEqual(primary_domain_of("color"), "greeks")
+        self.assertEqual(primary_domain_of("svi_param_a"), "implied_volatility")
 
     def test_meta_flags_present(self) -> None:
         meta = all_feature_domain_meta()
-        self.assertEqual(len(meta), 206)
+        self.assertEqual(len(meta), 226)
         sample = meta["ltp"]
         for key in (
             "primary_domain",

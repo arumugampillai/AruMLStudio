@@ -46,9 +46,23 @@ _REGISTRY_FEATURES: dict[str, list[str]] = {
     "greeks": [
         "delta", "abs_delta", "gamma", "theta", "vega",
         "vanna", "volga", "charm", "speed",
+        "color", "zomma", "ultima",
         # delta_x_spot / gamma_x_spot → Interaction pipeline only
         "theta_per_min", "vega_per_ivpt",
         # delta/gamma/theta_change_5m → Pipeline Owned
+    ],
+    "surface_svi": [
+        "svi_param_a", "svi_param_b", "svi_param_rho",
+        "svi_param_m", "svi_param_sigma", "svi_calibration_rmse",
+    ],
+    "surface_sabr": [
+        "sabr_param_alpha", "sabr_param_rho", "sabr_param_nu",
+        "sabr_calibration_rmse",
+    ],
+    "surface_topology": [
+        "iv_skew_25d", "iv_skew_10d", "iv_curvature_25d", "iv_term_slope_near_next",
+        "surface_displacement_5m", "surface_displacement_15m",
+        "surface_acceleration_15m", "vrp_proxy_30m",
     ],
     "iv": [
         "current_iv", "roll_iv",
