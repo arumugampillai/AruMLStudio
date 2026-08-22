@@ -86,6 +86,7 @@ class MorningResearchDossierPanel(ttk.Frame):
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         self.tab_overview = ScrollableFrame(self.notebook)
+        self.tab_research_registry = ttk.Frame(self.notebook, padding=10)
         self.tab_discovered_features = ScrollableFrame(self.notebook)
         self.tab_leaderboard = ttk.Frame(self.notebook, padding=10)
         self.tab_lineage = ttk.Frame(self.notebook, padding=10)
@@ -97,6 +98,7 @@ class MorningResearchDossierPanel(ttk.Frame):
         self._audit_events_cache: list[dict[str, Any]] = []
 
         self.notebook.add(self.tab_overview, text="🌅 Morning Summary")
+        self.notebook.add(self.tab_research_registry, text="📜 Research Registry")
         self.notebook.add(self.tab_discovered_features, text="⭐ Discovered Features")
         self.notebook.add(self.tab_leaderboard, text="🏆 Candidate Leaderboard")
         self.notebook.add(self.tab_lineage, text="🧬 Generational Lineage")
@@ -138,6 +140,7 @@ class MorningResearchDossierPanel(ttk.Frame):
                     pass
 
             self._render_overview_tab()
+            self._render_research_registry_tab()
             self._render_discovered_features_tab()
             self._render_leaderboard_tab()
             self._render_lineage_tab()
@@ -219,12 +222,229 @@ class MorningResearchDossierPanel(ttk.Frame):
                 text=f"🏆 Add Winner ({d.best_candidate_id}) to Classifier",
                 command=_on_add_champion_to_classifier,
             ).pack(side=tk.LEFT, padx=(0, 10))
-            ttk.Label(
-                reg_frame,
-                text="Registers this candidate into the Classifier Model Registry without modifying production models.",
-                font=("Segoe UI", 9, "italic"),
-                foreground=COL_MUTED,
-            ).pack(side=tk.LEFT)
+    def _render_research_registry_tab(self) -> None:
+        """Render the Permanent Autonomous Research Registry historical ledger (Doc 16)."""
+        target = self.tab_research_registry
+        clear_children(target)
+
+        from chain_replay_ml.research_registry.store import (
+            backfill_historical_research_records,
+            get_all_research_records,
+            get_research_detail,
+        )
+
+        if self.data_dir:
+            try:
+                backfill_historical_research_records(self.data_dir)
+            except Exception:
+                pass
+
+        records = get_all_research_records(self.data_dir) if self.data_dir else []
+        try:
+            self.notebook.tab(self.tab_research_registry, text=f"📜 Research Registry ({len(records)})")
+        except Exception:
+            pass
+
+        # Top Control & Filter Toolbar
+        tb = ttk.Frame(target)
+        tb.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(tb, text="📜 Autonomous Research Registry", font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(tb, text=f"({len(records)} permanent research runs recorded)", font=("Segoe UI", 9, "italic"), foreground=COL_MUTED).pack(side=tk.LEFT, padx=(0, 15))
+
+        def _on_view_detail_clicked():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showinfo("Select Research Run", "Please select a research run from the registry table to view details.")
+                return
+            item_vals = tree.item(sel[0], "values")
+            if item_vals:
+                r_id = item_vals[0]
+                self._show_research_detail_modal(r_id)
+
+        ttk.Button(tb, text="🔍 View Research Detail Dossier", command=_on_view_detail_clicked).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(tb, text="🔄 Refresh Registry", command=self._render_research_registry_tab).pack(side=tk.RIGHT, padx=5)
+
+        # Table Frame
+        t_frame = ttk.Frame(target)
+        t_frame.pack(fill=tk.BOTH, expand=True)
+
+        cols = (
+            "research_id", "context", "dataset", "started_at", "duration",
+            "status", "algos", "gens", "cands", "df_created",
+            "keep", "watch", "remove", "pool", "best_cand", "best_score"
+        )
+
+        tree = ttk.Treeview(t_frame, columns=cols, show="headings", height=14)
+        tree.heading("research_id", text="Research ID")
+        tree.heading("context", text="Context")
+        tree.heading("dataset", text="Dataset")
+        tree.heading("started_at", text="Started (UTC)")
+        tree.heading("duration", text="Duration")
+        tree.heading("status", text="Status")
+        tree.heading("algos", text="Algorithms")
+        tree.heading("gens", text="Gens")
+        tree.heading("cands", text="Cands")
+        tree.heading("df_created", text="DF Created")
+        tree.heading("keep", text="KEEP")
+        tree.heading("watch", text="WATCH")
+        tree.heading("remove", text="REMOVE")
+        tree.heading("pool", text="Active Pool")
+        tree.heading("best_cand", text="Champion ID")
+        tree.heading("best_score", text="Best Score")
+
+        tree.column("research_id", width=220)
+        tree.column("context", width=160)
+        tree.column("dataset", width=140)
+        tree.column("started_at", width=130)
+        tree.column("duration", width=75, anchor=tk.CENTER)
+        tree.column("status", width=85, anchor=tk.CENTER)
+        tree.column("algos", width=120)
+        tree.column("gens", width=50, anchor=tk.CENTER)
+        tree.column("cands", width=55, anchor=tk.CENTER)
+        tree.column("df_created", width=75, anchor=tk.CENTER)
+        tree.column("keep", width=55, anchor=tk.CENTER)
+        tree.column("watch", width=60, anchor=tk.CENTER)
+        tree.column("remove", width=65, anchor=tk.CENTER)
+        tree.column("pool", width=75, anchor=tk.CENTER)
+        tree.column("best_cand", width=160)
+        tree.column("best_score", width=80, anchor=tk.E)
+
+        for r in records:
+            dur_str = f"{int(r.get('duration_seconds', 0)//60)}m {int(r.get('duration_seconds', 0)%60)}s" if r.get('duration_seconds') else "—"
+            st_str = r.get("status", "UNKNOWN")
+            st_icon = "🟢 " + st_str if st_str == "COMPLETED" else ("🟡 " + st_str if st_str == "RUNNING" else "🔴 " + st_str)
+            algos_raw = r.get("algorithms_used_json", "[]")
+            try:
+                algos_list = json.loads(algos_raw)
+                algos_str = ", ".join(algos_list[:2]) + (f" +{len(algos_list)-2}" if len(algos_list) > 2 else "")
+            except Exception:
+                algos_str = str(algos_raw)
+
+            b_score = float(r.get("best_composite_score") or 0.0)
+            tree.insert("", tk.END, values=(
+                r.get("research_id", "—"),
+                r.get("context_key", "—"),
+                r.get("dataset_name", "—"),
+                str(r.get("started_at", "—"))[:19].replace("T", " "),
+                dur_str,
+                st_icon,
+                algos_str,
+                str(r.get("actual_generations_completed", 0)),
+                str(r.get("candidates_evaluated", 0)),
+                str(r.get("total_df_features_created", 0)),
+                str(r.get("keep_count", 0)),
+                str(r.get("watch_count", 0)),
+                str(r.get("remove_count", 0)),
+                str(r.get("active_discovery_pool", 0)),
+                r.get("best_candidate_id") or "—",
+                f"{b_score:.2f} pts",
+            ))
+
+        tree.bind("<Double-1>", lambda _e: _on_view_detail_clicked())
+        vsb = ttk.Scrollbar(t_frame, orient="vertical", command=tree.yview)
+        hsb = ttk.Scrollbar(t_frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def _show_research_detail_modal(self, research_id: str) -> None:
+        """Show full Research Detail Dossier modal dialog (Doc 16)."""
+        from chain_replay_ml.research_registry.store import get_research_detail
+        detail = get_research_detail(self.data_dir, research_id) if self.data_dir else None
+        if not detail:
+            messagebox.showerror("Error", f"Could not load details for Research ID: {research_id}")
+            return
+
+        top = tk.Toplevel(self)
+        top.title(f"Autonomous Research Detail — {research_id}")
+        top.geometry("920x650")
+        top.minsize(800, 500)
+
+        nb = ttk.Notebook(top)
+        nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        # Tab 1: Summary & Hardware
+        t_sum = ScrollableFrame(nb)
+        nb.add(t_sum, text="📋 Research Summary & Hardware")
+        s_inner = getattr(t_sum, "inner", t_sum)
+
+        ttk.Label(s_inner, text=f"Research Run: {detail.get('research_id')}", font=("Segoe UI", 11, "bold"), foreground="#0d47a1").pack(anchor=tk.W, pady=(0, 6))
+        
+        info_pairs = [
+            ("Campaign ID", detail.get("campaign_id")),
+            ("Model Context", detail.get("context_key")),
+            ("Context ID", detail.get("context_id")),
+            ("Dataset Name", detail.get("dataset_name")),
+            ("Dataset Snapshot", detail.get("dataset_snapshot_hash")),
+            ("Base Pipeline Anchor", f"{detail.get('base_pipeline_id')} ({detail.get('base_feature_count')} base features)"),
+            ("Registry Feature Count", f"{detail.get('registry_feature_count')} permanent features"),
+            ("Status", str(detail.get("status"))),
+            ("Stop Reason", str(detail.get("stop_reason"))),
+            ("Started At", str(detail.get("started_at"))),
+            ("Finished At", str(detail.get("finished_at"))),
+            ("Total Duration", f"{detail.get('duration_seconds', 0):.2f} seconds"),
+            ("Elimination Strategy", str(detail.get("elimination_strategy"))),
+            ("Generations Completed", f"{detail.get('actual_generations_completed')} / {detail.get('max_generations_configured')} configured"),
+            ("Candidates Evaluated", f"{detail.get('candidates_evaluated')} / {detail.get('candidates_generated')} generated ({detail.get('candidates_pruned')} pruned)"),
+            ("Research Champion ID", str(detail.get("best_candidate_id"))),
+            ("Champion Composite Score", f"{detail.get('best_composite_score', 0):.2f} pts (Lift: +{detail.get('total_score_lift', 0):.2f} pts)"),
+            ("Champion Trading Score", f"{detail.get('best_trading_score', 0):.2f} pts"),
+            ("Champion Model Score", f"{detail.get('best_model_score', 0):.2f} pts"),
+            ("Discovery Pipeline ID", str(detail.get("discovery_pipeline_id"))),
+            ("Final Discovery Snapshot", str(detail.get("final_discovery_snapshot_hash"))),
+            ("Total DF Features Created", str(detail.get("total_df_features_created"))),
+            ("Active Discovery Pool", f"{detail.get('active_discovery_pool')} features ({detail.get('keep_count')} KEEP · {detail.get('watch_count')} WATCH · {detail.get('remove_count')} REMOVE)"),
+        ]
+
+        f_grid = ttk.Frame(s_inner)
+        f_grid.pack(fill=tk.X, pady=4)
+        for idx, (lbl, val) in enumerate(info_pairs):
+            r = idx // 2
+            c = (idx % 2) * 2
+            ttk.Label(f_grid, text=f"{lbl}:", font=("Segoe UI", 9, "bold")).grid(row=r, column=c, sticky=tk.W, padx=(8, 4), pady=2)
+            ttk.Label(f_grid, text=str(val or "—"), font=("Segoe UI", 9)).grid(row=r, column=c+1, sticky=tk.W, padx=(0, 16), pady=2)
+
+        # Tab 2: Generational Progression
+        t_gen = ttk.Frame(nb, padding=8)
+        nb.add(t_gen, text="🧬 Generational Progression")
+        gens = detail.get("generations", [])
+
+        if not gens:
+            ttk.Label(t_gen, text="No generational snapshot milestones recorded for this run.", font=("Segoe UI", 9, "italic"), foreground=COL_MUTED).pack(pady=20)
+        else:
+            g_cols = ("gen", "snapshot", "cands", "best_score", "best_cand", "created_at")
+            g_tree = ttk.Treeview(t_gen, columns=g_cols, show="headings", height=12)
+            g_tree.heading("gen", text="Generation")
+            g_tree.heading("snapshot", text="Discovery Snapshot Hash")
+            g_tree.heading("cands", text="Candidates Evaluated")
+            g_tree.heading("best_score", text="Generation Best Score")
+            g_tree.heading("best_cand", text="Generation Best Candidate")
+            g_tree.heading("created_at", text="Snapshot Timestamp (UTC)")
+
+            g_tree.column("gen", width=80, anchor=tk.CENTER)
+            g_tree.column("snapshot", width=220)
+            g_tree.column("cands", width=130, anchor=tk.CENTER)
+            g_tree.column("best_score", width=140, anchor=tk.E)
+            g_tree.column("best_cand", width=180)
+            g_tree.column("created_at", width=140)
+
+            for g in gens:
+                g_tree.insert("", tk.END, values=(
+                    f"G{g.get('generation_number', 0)}",
+                    g.get("discovery_snapshot_hash", "—"),
+                    str(g.get("candidates_evaluated", 0)),
+                    f"{float(g.get('generation_best_score') or 0.0):.2f} pts",
+                    g.get("generation_best_candidate_id", "—"),
+                    str(g.get("created_at", "—"))[:19].replace("T", " "),
+                ))
+
+            g_vsb = ttk.Scrollbar(t_gen, orient="vertical", command=g_tree.yview)
+            g_tree.configure(yscrollcommand=g_vsb.set)
+            g_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            g_vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
 
     def _render_discovered_features_tab(self) -> None:

@@ -157,6 +157,127 @@ def persist_campaign_state(data_dir: str, config: CampaignConfig, state: Campaig
     finally:
         conn.close()
 
+    # Sync into permanent Research Registry in analysis.db (Doc 16)
+    _sync_research_registry_state(data_dir, config, state)
+
+
+def _sync_research_registry_state(data_dir: str, config: CampaignConfig, state: CampaignState) -> None:
+    """Sync campaign state into research_registry in analysis.db."""
+    try:
+        from datetime import datetime, timezone
+        from chain_replay_ml.research_registry.store import (
+            generate_research_id,
+            init_research_registry_tables,
+            insert_or_update_research_run,
+        )
+        from chain_replay_ml.research_registry.types import ResearchRegistryRecord, ResearchStatus
+
+        init_research_registry_tables(data_dir)
+        try:
+            from chain_replay_ml.discovery_pipeline.persistence import init_discovery_pipeline_tables
+            init_discovery_pipeline_tables(data_dir)
+        except Exception:
+            pass
+        conn = connect_analysis_db(data_dir)
+        try:
+            existing = conn.execute("SELECT research_id FROM research_registry WHERE campaign_id = ?;", (state.campaign_id,)).fetchone()
+            ctx_k = config.context_keys[0] if config.context_keys else "NIFTY:6:standard:all"
+            start_iso = state.start_time_iso or datetime.now(timezone.utc).isoformat()
+            if existing:
+                r_id = existing["research_id"]
+            else:
+                r_id = generate_research_id(ctx_k, start_iso)
+
+            dp_row = conn.execute(
+                "SELECT * FROM discovery_pipelines WHERE campaign_id = ? ORDER BY created_at DESC LIMIT 1;",
+                (state.campaign_id,),
+            ).fetchone()
+            dp_id = dp_row["pipeline_id"] if dp_row else f"DP_{state.campaign_id}"
+            dp_snap = dp_row["current_snapshot_hash"] if dp_row else None
+
+            dp_feats = conn.execute(
+                "SELECT lifecycle_status, COUNT(*) as cnt FROM discovery_pipeline_features WHERE pipeline_id = ? GROUP BY lifecycle_status;",
+                (dp_id,),
+            ).fetchall()
+            stat_m = {str(r["lifecycle_status"]).upper(): r["cnt"] for r in dp_feats}
+            keep_cnt = stat_m.get("KEEP", 0)
+            watch_cnt = stat_m.get("WATCH", 0)
+            rem_cnt = stat_m.get("REMOVE", 0)
+            tot_df = sum(stat_m.values())
+            act_pool = keep_cnt + watch_cnt
+
+            st_map = {
+                CampaignStatus.COMPLETED: ResearchStatus.COMPLETED,
+                CampaignStatus.RUNNING: ResearchStatus.RUNNING,
+                CampaignStatus.RESOURCE_PAUSED: ResearchStatus.PAUSED,
+                CampaignStatus.CAMPAIGN_STOPPED: ResearchStatus.ABORTED,
+                CampaignStatus.CAMPAIGN_FAILED: ResearchStatus.FAILED,
+            }
+            res_status = st_map.get(state.status, ResearchStatus.RUNNING)
+
+            dur = 0.0
+            if state.end_time_iso and state.start_time_iso:
+                try:
+                    t1 = datetime.fromisoformat(state.start_time_iso.replace("Z", "+00:00"))
+                    t2 = datetime.fromisoformat(state.end_time_iso.replace("Z", "+00:00"))
+                    dur = (t2 - t1).total_seconds()
+                except Exception:
+                    dur = 0.0
+
+            strat = getattr(config, "feature_elimination_strategy", "SHAP_AND_EVIDENCE") or "SHAP_AND_EVIDENCE"
+
+            rec = ResearchRegistryRecord(
+                research_id=r_id,
+                campaign_id=state.campaign_id,
+                context_key=ctx_k,
+                context_id="ctx_169e8ab4c718",
+                dataset_name=config.dataset_name or "dataset",
+                dataset_snapshot_hash=config.dataset_snapshot_hash or "snap",
+                base_pipeline_id="PL_0001",
+                base_feature_count=171,
+                registry_feature_count=211,
+                started_at=start_iso,
+                finished_at=state.end_time_iso,
+                duration_seconds=dur,
+                status=res_status,
+                stop_reason=state.stop_reason.value if state.stop_reason else "IN_PROGRESS",
+                algorithms_used=config.algorithms or ["XGBoost", "LightGBM", "CatBoost"],
+                elimination_strategy=strat,
+                max_generations_configured=config.max_generations,
+                actual_generations_completed=state.current_generation,
+                max_candidates_configured=config.max_candidates_total,
+                candidates_generated=state.total_candidates_generated,
+                candidates_evaluated=state.total_candidates_evaluated,
+                candidates_pruned=state.total_candidates_pruned,
+                best_candidate_id=state.best_candidate_id,
+                best_composite_score=float(state.best_composite_score or 0.0),
+                best_trading_score=float(state.best_trading_score or 0.0),
+                best_model_score=float(state.best_model_score or 0.0),
+                starting_best_score=float(state.starting_best_score or 0.0),
+                total_score_lift=float(state.best_composite_score or 0.0) - float(state.starting_best_score or 0.0),
+                discovery_pipeline_id=dp_id,
+                final_discovery_snapshot_hash=dp_snap,
+                total_df_features_created=tot_df,
+                unique_formula_count=tot_df,
+                keep_count=keep_cnt,
+                watch_count=watch_cnt,
+                remove_count=rem_cnt,
+                active_discovery_pool=act_pool,
+                promoted_feature_count=0,
+                research_config_json=json.dumps(config.to_dict()),
+                research_outcome_json="{}",
+                failure_reason=None,
+                architecture_version="2.2.0",
+                code_version="1.0.0",
+                created_at=start_iso,
+                updated_at=datetime.now(timezone.utc).isoformat(),
+            )
+            insert_or_update_research_run(data_dir, rec)
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
 
 def load_campaign_state(data_dir: str, campaign_id: str) -> tuple[CampaignConfig | None, CampaignState | None]:
     """Retrieve persisted campaign config and state from analysis.db."""

@@ -118,6 +118,12 @@ def run_discovery_generation(
     # 2. Identify active discovery pool from prior generations
     all_existing_features = load_discovered_features(data_dir, pipeline_id)
     existing_hashes = {f.formula_hash for f in all_existing_features}
+    try:
+        from chain_replay_ml.research_registry.memory import get_blacklisted_formula_hashes
+        blacklisted = get_blacklisted_formula_hashes(data_dir, context_key)
+        existing_hashes.update(blacklisted)
+    except Exception:
+        pass
 
     # Surviving features = KEEPs + WATCHes (REMOVEs are excluded from parent pool)
     active_discovered = [

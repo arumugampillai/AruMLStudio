@@ -696,7 +696,7 @@ class OvernightCampaignRunner:
                         )
 
                         dp_id = format_discovery_pipeline_id(self.config.campaign_id)
-                        run_discovery_generation(
+                        dp_res = run_discovery_generation(
                             df_matrix,
                             data_dir=self.data_dir,
                             pipeline_id=dp_id,
@@ -708,6 +708,25 @@ class OvernightCampaignRunner:
                             dataset_name=ds_name or ds_label,
                             dataset_snapshot_hash=ds_hash,
                         )
+                        try:
+                            from chain_replay_ml.research_registry.store import (
+                                generate_research_id,
+                                record_generation_linkage,
+                            )
+                            r_id = generate_research_id(ctx_str, start_iso)
+                            snap_h = getattr(dp_res, "snapshot_hash", "") or f"DP_SNAP_G{gen+1}"
+                            record_generation_linkage(
+                                self.data_dir,
+                                research_id=r_id,
+                                campaign_id=self.config.campaign_id,
+                                generation_number=gen + 1,
+                                discovery_snapshot_hash=snap_h,
+                                candidates_evaluated=state.total_candidates_evaluated,
+                                generation_best_score=state.best_composite_score,
+                                generation_best_candidate_id=state.best_candidate_id or "—",
+                            )
+                        except Exception:
+                            pass
                 except Exception as disc_err:
                     logger.warning("Autonomous discovery generation failed for campaign %s: %s", self.config.campaign_id, disc_err, exc_info=True)
 
@@ -765,6 +784,16 @@ class OvernightCampaignRunner:
 
         state.end_time_iso = _utc_now_iso()
         state.last_update_iso = _utc_now_iso()
+
+        # Update cross-research formula memory priors (Doc 16)
+        try:
+            from chain_replay_ml.research_registry.memory import update_formula_memory_from_discovery
+            from chain_replay_ml.research_registry.store import generate_research_id
+            r_id = generate_research_id(ctx_str, start_iso)
+            update_formula_memory_from_discovery(self.data_dir, r_id, self.config.campaign_id, ctx_str)
+        except Exception:
+            pass
+
         return self._build_campaign_report(
             state,
             start_ts,

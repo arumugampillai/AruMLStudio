@@ -263,6 +263,12 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         if self._on_open_prediction_runs:
             self._pred_runs_btn = ttk.Button(toolbar_right, text="Open Prediction Runs", command=self._open_prediction_runs)
             self._pred_runs_btn.pack(side="right", padx=4)
+        self._discovery_features_btn = ttk.Button(
+            toolbar_right,
+            text="🧬 Discovery Features",
+            command=self._open_discovery_feature_dashboard,
+        )
+        self._discovery_features_btn.pack(side="right", padx=4)
         self._research_leaderboard_btn = ttk.Button(
             toolbar_right,
             text="Research Leaderboard",
@@ -1919,6 +1925,65 @@ class ModelRegistryPanel(ttk.Frame, LazyLoadMixin):
         if hasattr(self, "_leaderboard_panel") and self._leaderboard_panel:
             self._leaderboard_panel.set_chart_dir(self.chart_dir)
             self._leaderboard_panel.refresh_leaderboard()
+
+    def _ensure_discovery_features_window(self) -> tk.Toplevel:
+        if getattr(self, "_discovery_features_win", None) is not None:
+            try:
+                if self._discovery_features_win.winfo_exists():
+                    return self._discovery_features_win
+            except tk.TclError:
+                pass
+        from .discovery_feature_dashboard_panel import DiscoveryFeatureDashboardPanel
+
+        win = tk.Toplevel(self)
+        win.title("Discovery Feature Dashboard — Pipeline Builder (Doc 18)")
+        win.geometry("1180x760")
+        win.minsize(960, 600)
+        win.protocol("WM_DELETE_WINDOW", lambda: win.withdraw())
+
+        from .build_service import chart_data_dir
+        data_dir = (
+            chart_data_dir(self.chart_dir)
+            if self.chart_dir
+            else os.path.join(os.getcwd(), "data")
+        )
+        self._discovery_dashboard_panel = DiscoveryFeatureDashboardPanel(
+            win,
+            data_dir=data_dir,
+        )
+        self._discovery_dashboard_panel.pack(fill="both", expand=True)
+
+        self._discovery_features_win = win
+        return win
+
+    def _open_discovery_feature_dashboard(self) -> None:
+        """Open Discovery Feature Dashboard beside the main app (Companion Window pattern)."""
+        from .fold_replay_widgets import place_toplevel_beside_main
+
+        win = self._ensure_discovery_features_window()
+        if not getattr(self, "_discovery_features_placed", False):
+            win.update_idletasks()
+            place_toplevel_beside_main(win, self)
+            self._discovery_features_placed = True
+        try:
+            win.deiconify()
+            win.lift()
+            win.focus_force()
+        except tk.TclError:
+            self._discovery_features_win = None
+            win = self._ensure_discovery_features_window()
+            win.update_idletasks()
+            place_toplevel_beside_main(win, self)
+            self._discovery_features_placed = True
+            win.deiconify()
+            win.lift()
+            win.focus_force()
+
+        if hasattr(self, "_discovery_dashboard_panel") and self._discovery_dashboard_panel:
+            if self.chart_dir:
+                self._discovery_dashboard_panel.set_chart_dir(self.chart_dir)
+            else:
+                self._discovery_dashboard_panel.refresh_pipelines()
 
 
 def _strat_from_doc(doc: dict[str, Any]) -> str:

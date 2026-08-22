@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 _PIPELINE_ID_RE = re.compile(r"^PL_\d{4}$", re.IGNORECASE)
-_VALID_TYPES = frozenset({"base", "existing", "manual", "auto"})
+_VALID_TYPES = frozenset({"base", "existing", "manual", "auto", "candidate_discovery", "discovery_experimental"})
 _BASE_TYPES = frozenset({"base", "existing"})
 _VALID_STATUSES = frozenset({"draft", "ready"})
 
@@ -131,6 +131,9 @@ def pipeline_summary(rec: dict[str, Any], *, pipeline_id: str) -> dict[str, Any]
         "candidate_features": candidates,
         "candidate_count": len(candidates),
         "feature_count": len(reg_ids) + len(candidates),
+        "base_feature_count": rec.get("base_feature_count", 0),
+        "discovered_feature_count": rec.get("discovered_feature_count", len(candidates)),
+        "provenance_metadata": rec.get("provenance_metadata"),
         "created_at": rec.get("created_at"),
         "updated_at": rec.get("updated_at"),
     }
@@ -142,6 +145,8 @@ def _type_label(ptype: str) -> str:
         return "Base"
     if norm == "auto":
         return "Auto"
+    if norm in ("candidate_discovery", "discovery_experimental"):
+        return "Discovery Experimental"
     return "Manual"
 
 

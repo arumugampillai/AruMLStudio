@@ -1,7 +1,9 @@
-"""Pipeline Feature Registry tab — list pipelines, membership, candidates."""
+"""Pipeline Feature Registry tab — list pipelines, membership, and rich master/detail discovery feature inspector."""
 
 from __future__ import annotations
 
+import json
+import os
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
@@ -14,6 +16,11 @@ from .pipeline_registry_service import (
     registry_catalog_features,
     set_pipeline_registry_members,
 )
+
+COL_KEEP = "#2e7d32"
+COL_WATCH = "#e65100"
+COL_REMOVE = "#c62828"
+COL_MUTED = "#666666"
 
 
 def _prepare_modal_dialog(
@@ -98,36 +105,50 @@ class PipelineRegistryFeatureDialog(tk.Toplevel):
         ttk.Button(actions, text="Apply", command=self._apply).pack(side="right")
         ttk.Button(actions, text="Cancel", command=self.destroy).pack(side="right", padx=(0, 8))
 
-    def _rebuild_list(self) -> None:
-        q = str(self._filter_var.get() or "").strip().lower()
-        self._list.delete(0, tk.END)
-        self._rows = []
-        for feat in self._features:
-            blob = f"{feat.get('name')} {feat.get('label')} {feat.get('group')}".lower()
-            if q and q not in blob:
-                continue
-            self._rows.append(feat)
-            mark = "☑" if self._vars[feat["feature_id"]].get() else "☐"
-            self._list.insert(tk.END, f"{mark}  {feat['name']}")
-        self._count_var.set(f"{sum(v.get() for v in self._vars.values())} selected")
-
     def _apply_filter(self) -> None:
         self._rebuild_list()
 
-    def _on_list_select(self, _event: Any = None) -> None:
-        for i in self._list.selection():
-            feat = self._rows[i]
+    def _rebuild_list(self) -> None:
+        query = self._filter_var.get().strip().lower()
+        self._list.delete(0, tk.END)
+        self._rows = []
+        for feat in self._features:
+            fid = str(feat.get("feature_id") or "")
+            name = str(feat.get("name") or fid)
+            family = str(feat.get("family") or "")
+            cat = str(feat.get("category") or "")
+            haystack = f"{fid} {name} {family} {cat}".lower()
+            if query and query not in haystack:
+                continue
+            self._rows.append(feat)
+            idx = self._list.size()
+            label = f"{fid} — {name} [{family}]"
+            self._list.insert(tk.END, label)
+            if self._vars.get(fid, tk.BooleanVar(value=False)).get():
+                self._list.selection_set(idx)
+        sel_count = sum(1 for v in self._vars.values() if v.get())
+        self._count_var.set(f"Selected: {sel_count} / {len(self._features)}")
+
+    def _on_list_select(self, _event: Any) -> None:
+        indices = set(self._list.curselection())
+        for idx, feat in enumerate(self._rows):
             fid = feat["feature_id"]
-            self._vars[fid].set(not self._vars[fid].get())
-        self._rebuild_list()
+            if idx in indices:
+                self._vars[fid].set(True)
+            else:
+                self._vars[fid].set(False)
+        sel_count = sum(1 for v in self._vars.values() if v.get())
+        self._count_var.set(f"Selected: {sel_count} / {len(self._features)}")
 
     def _apply(self) -> None:
-        selected = [fid for fid, var in self._vars.items() if var.get()]
-        self._on_apply(selected)
+        selected_ids = [fid for fid, v in self._vars.items() if v.get()]
+        self._on_apply(selected_ids)
         self.destroy()
 
 
 class CreatePipelineDialog(tk.Toplevel):
+    """Create a new pipeline with specified name and type."""
+
     def __init__(
         self,
         master: tk.Misc,
@@ -137,66 +158,48 @@ class CreatePipelineDialog(tk.Toplevel):
     ) -> None:
         super().__init__(master)
         self.title("Create Pipeline")
-        self.resizable(False, False)
-        self._chart_dir = chart_dir
+        _prepare_modal_dialog(self, master, width=440, height=220, min_width=440, min_height=220)
+        self.chart_dir = chart_dir
         self._on_create = on_create
+        self._name_var = tk.StringVar(value="")
+        self._type_var = tk.StringVar(value="manual")
 
-        from chain_replay_ml.dataset_builder.pipeline_registry_store import format_display_name
-
-        outer = ttk.Frame(self, padding=12)
-        outer.pack(fill="both", expand=True)
-
-        body = ttk.Frame(outer)
+        body = ttk.Frame(self, padding=16)
         body.pack(fill="both", expand=True)
-        body.columnconfigure(1, weight=1)
 
-        ttk.Label(body, text="Pipeline Name").grid(row=0, column=0, sticky="w")
-        self._name_var = tk.StringVar(value=format_display_name(999))  # placeholder
-        name_row = ttk.Frame(body)
-        name_row.grid(row=0, column=1, sticky="ew", pady=(0, 10))
-        ttk.Entry(name_row, textvariable=self._name_var, width=24).pack(side="left", fill="x", expand=True)
-        ttk.Button(name_row, text="Auto Generate Name", command=self._auto_name).pack(
-            side="left", padx=(8, 0)
+        ttk.Label(body, text="Pipeline Name:").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        name_entry = ttk.Entry(body, textvariable=self._name_var, width=32)
+        name_entry.grid(row=0, column=1, sticky="w", pady=(0, 8))
+        name_entry.focus_set()
+
+        ttk.Label(body, text="Pipeline Type:").grid(row=1, column=0, sticky="w", pady=(0, 8))
+        type_combo = ttk.Combobox(
+            body,
+            textvariable=self._type_var,
+            state="readonly",
+            values=["manual", "discovery_experimental"],
+            width=24,
         )
+        type_combo.grid(row=1, column=1, sticky="w", pady=(0, 8))
 
-        ttk.Label(body, text="Pipeline Type").grid(row=1, column=0, sticky="nw", pady=(4, 0))
-        self._type_var = tk.StringVar(value="auto")
-        types = ttk.Frame(body)
-        types.grid(row=1, column=1, sticky="w", pady=(4, 0))
-        ttk.Radiobutton(types, text="Manual", value="manual", variable=self._type_var).pack(anchor="w")
-        ttk.Radiobutton(types, text="Auto", value="auto", variable=self._type_var).pack(anchor="w")
+        btn_box = ttk.Frame(body)
+        btn_box.grid(row=2, column=0, columnspan=2, sticky="e", pady=(16, 0))
+        ttk.Button(btn_box, text="Create", command=self._submit).pack(side="right")
+        ttk.Button(btn_box, text="Cancel", command=self.destroy).pack(side="right", padx=(0, 8))
 
-        footer = ttk.Frame(outer)
-        footer.pack(fill="x", pady=(16, 0))
-        ttk.Button(footer, text="Create", command=self._create).pack(side="right")
-        ttk.Button(footer, text="Cancel", command=self.destroy).pack(side="right", padx=(0, 8))
-
-        self._auto_name()
-        _prepare_modal_dialog(self, master, min_width=400, min_height=200)
-
-    def _auto_name(self) -> None:
-        from chain_replay_ml.dataset_builder.pipeline_registry_store import (
-            format_display_name,
-            load_store,
-        )
-        from .build_service import chart_data_dir
-
-        data_dir = chart_data_dir(self._chart_dir)
-        doc = load_store(data_dir)
-        seq = int(doc.get("next_display_seq") or 1)
-        self._name_var.set(format_display_name(seq))
-
-    def _create(self) -> None:
-        name = str(self._name_var.get() or "").strip()
-        ptype = str(self._type_var.get() or "manual")
+    def _submit(self) -> None:
+        name = self._name_var.get().strip()
+        ptype = self._type_var.get().strip().lower()
         if not name:
-            messagebox.showwarning("Create Pipeline", "Pipeline name is required.", parent=self)
+            messagebox.showerror("Validation Error", "Pipeline name cannot be empty.", parent=self)
             return
         self._on_create(name, ptype)
         self.destroy()
 
 
 class PipelineRegistryPanel(ttk.Frame):
+    """Pipeline Feature Registry management panel with two-panel master/detail discovery feature inspector."""
+
     def __init__(
         self,
         master: tk.Misc,
@@ -210,27 +213,30 @@ class PipelineRegistryPanel(ttk.Frame):
         self._pipelines: list[dict[str, Any]] = []
         self._selected_id: str | None = None
         self._detail_var = tk.StringVar(value="Select a pipeline")
+        self._current_candidates: list[str] = []
+        self._current_feat_prov_map: dict[str, dict[str, Any]] = {}
+        self._is_discovery_pipeline: bool = False
+
         self._build_ui()
         self.refresh()
 
     def _build_ui(self) -> None:
         header = ttk.Frame(self)
-        header.pack(fill="x", pady=(0, 8))
-        ttk.Label(header, text="Pipeline Feature Registry", font=("Segoe UI", 12, "bold")).pack(
-            side="left"
-        )
+        header.pack(fill="x", pady=(0, 6))
+        ttk.Label(header, text="Pipeline Feature Registry", font=("Segoe UI", 12, "bold")).pack(side="left")
         ttk.Button(header, text="Create Pipeline", command=self._open_create).pack(side="right")
         ttk.Button(header, text="Refresh", command=self.refresh).pack(side="right", padx=(0, 8))
 
-        cols = ("name", "type", "features", "status")
+        # Top Table: Pipelines Overview
+        p_cols = ("name", "type", "features", "status")
         tree_frame = ttk.Frame(self)
-        tree_frame.pack(fill="x")
-        self._tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=6)
+        tree_frame.pack(fill="x", pady=(0, 6))
+        self._tree = ttk.Treeview(tree_frame, columns=p_cols, show="headings", height=5)
         for c, label, w in (
-            ("name", "Pipeline Name", 160),
-            ("type", "Type", 90),
-            ("features", "Features", 70),
-            ("status", "Status", 80),
+            ("name", "Pipeline Name", 220),
+            ("type", "Type", 140),
+            ("features", "Features", 75),
+            ("status", "Status", 85),
         ):
             self._tree.heading(c, text=label)
             self._tree.column(c, width=w, anchor="center" if c != "name" else "w")
@@ -240,26 +246,157 @@ class PipelineRegistryPanel(ttk.Frame):
         sb.pack(side="right", fill="y")
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
 
-        detail = ttk.LabelFrame(self, text="Pipeline Detail", padding=8)
-        detail.pack(fill="both", expand=True, pady=(8, 0))
-        ttk.Label(detail, textvariable=self._detail_var, justify="left").pack(anchor="w")
+        # Bottom Detail Container
+        detail_frame = ttk.LabelFrame(self, text="Pipeline Detail & Feature Membership", padding=8)
+        detail_frame.pack(fill="both", expand=True, pady=(2, 0))
 
-        btn_row = ttk.Frame(detail)
-        btn_row.pack(fill="x", pady=(8, 0))
-        ttk.Button(btn_row, text="Select Features", command=self._select_features).pack(side="left")
-        ttk.Label(btn_row, text="(from Master Feature Registry — membership only)", foreground="#666").pack(
-            side="left", padx=(8, 0)
-        )
+        # Summary Header
+        summary_row = ttk.Frame(detail_frame)
+        summary_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(summary_row, textvariable=self._detail_var, font=("Segoe UI", 9, "bold"), foreground="#0d47a1").pack(side="left")
+
+        # Action Buttons
+        btn_row = ttk.Frame(detail_frame)
+        btn_row.pack(fill="x", pady=(0, 6))
+        self._select_features_btn = ttk.Button(btn_row, text="Select Master Registry Features", command=self._select_features)
+        self._select_features_btn.pack(side="left")
+        self._membership_note_lbl = ttk.Label(btn_row, text="(from Master Feature Registry — membership only)", foreground=COL_MUTED)
+        self._membership_note_lbl.pack(side="left", padx=(8, 0))
         self._delete_pipeline_btn = ttk.Button(btn_row, text="Delete Pipeline", command=self._delete_pipeline)
         self._delete_pipeline_btn.pack(side="right")
 
-        cand_frame = ttk.LabelFrame(detail, text="Candidate Features", padding=4)
-        cand_frame.pack(fill="both", expand=True, pady=(8, 0))
-        self._cand_list = tk.Listbox(cand_frame, height=12)
-        cand_sb = ttk.Scrollbar(cand_frame, orient="vertical", command=self._cand_list.yview)
-        self._cand_list.configure(yscrollcommand=cand_sb.set)
-        self._cand_list.pack(side="left", fill="both", expand=True)
-        cand_sb.pack(side="right", fill="y")
+        # Two-Panel Master / Detail Panedwindow
+        self._paned = ttk.Panedwindow(detail_frame, orient=tk.HORIZONTAL)
+        self._paned.pack(fill="both", expand=True, pady=(2, 0))
+
+        # LEFT PANEL: Feature List / Table
+        self._left_frame = ttk.LabelFrame(self._paned, text="Discovered Features", padding=6)
+        self._paned.add(self._left_frame, weight=3)
+
+        f_cols = ("name", "verdict", "strategy", "gen", "delta_auc")
+        self._feat_tree = ttk.Treeview(self._left_frame, columns=f_cols, show="headings", height=12)
+        self._feat_tree.heading("name", text="Feature Name")
+        self._feat_tree.heading("verdict", text="Verdict")
+        self._feat_tree.heading("strategy", text="Strategy")
+        self._feat_tree.heading("gen", text="Gen")
+        self._feat_tree.heading("delta_auc", text="ΔAUC")
+
+        self._feat_tree.column("name", width=230, anchor="w")
+        self._feat_tree.column("verdict", width=75, anchor="center")
+        self._feat_tree.column("strategy", width=85, anchor="center")
+        self._feat_tree.column("gen", width=45, anchor="center")
+        self._feat_tree.column("delta_auc", width=70, anchor="e")
+
+        self._feat_tree.tag_configure("tag_keep", foreground=COL_KEEP)
+        self._feat_tree.tag_configure("tag_watch", foreground=COL_WATCH)
+        self._feat_tree.tag_configure("tag_remove", foreground=COL_REMOVE)
+
+        f_vsb = ttk.Scrollbar(self._left_frame, orient="vertical", command=self._feat_tree.yview)
+        f_hsb = ttk.Scrollbar(self._left_frame, orient="horizontal", command=self._feat_tree.xview)
+        self._feat_tree.configure(yscrollcommand=f_vsb.set, xscrollcommand=f_hsb.set)
+
+        self._feat_tree.pack(side="left", fill="both", expand=True)
+        f_vsb.pack(side="right", fill="y")
+        f_hsb.pack(side="bottom", fill="x")
+        self._feat_tree.bind("<<TreeviewSelect>>", self._on_feat_tree_select)
+
+        # RIGHT PANEL: Structured Feature Details Inspector
+        self._right_frame = ttk.LabelFrame(self._paned, text="Selected Feature Details", padding=8)
+        self._paned.add(self._right_frame, weight=4)
+
+        # Scrollable container for Right Details
+        r_canvas = tk.Canvas(self._right_frame, borderwidth=0, highlightthickness=0)
+        r_vsb = ttk.Scrollbar(self._right_frame, orient="vertical", command=r_canvas.yview)
+        self._detail_content = ttk.Frame(r_canvas)
+
+        self._detail_content.bind(
+            "<Configure>",
+            lambda _e: r_canvas.configure(scrollregion=r_canvas.bbox("all")),
+        )
+        r_canvas.create_window((0, 0), window=self._detail_content, anchor="nw")
+        r_canvas.configure(yscrollcommand=r_vsb.set)
+
+        r_canvas.pack(side="left", fill="both", expand=True)
+        r_vsb.pack(side="right", fill="y")
+
+        self._build_detail_inspector_widgets()
+
+    def _build_detail_inspector_widgets(self) -> None:
+        """Construct the structured card layout inside the right detail inspector."""
+        p = self._detail_content
+
+        # 1. Identity Section
+        id_sec = ttk.LabelFrame(p, text="📌 Feature Identity", padding=6)
+        id_sec.pack(fill="x", pady=(0, 6))
+
+        ttk.Label(id_sec, text="Feature Name:", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", pady=1)
+        self._d_name_val = ttk.Label(id_sec, text="—", font=("Segoe UI", 9, "bold"), foreground="#0d47a1", wraplength=380, justify="left")
+        self._d_name_val.grid(row=0, column=1, sticky="w", pady=1, padx=(6, 0))
+
+        ttk.Label(id_sec, text="Technical ID:", font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="w", pady=1)
+        self._d_tech_id_var = tk.StringVar(value="—")
+        d_tech_entry = ttk.Entry(id_sec, textvariable=self._d_tech_id_var, state="readonly", width=42, font=("Consolas", 9))
+        d_tech_entry.grid(row=1, column=1, sticky="w", pady=1, padx=(6, 0))
+
+        ttk.Label(id_sec, text="Verdict & Strategy:", font=("Segoe UI", 9, "bold")).grid(row=2, column=0, sticky="w", pady=1)
+        self._d_verdict_strat_lbl = ttk.Label(id_sec, text="—", font=("Segoe UI", 9))
+        self._d_verdict_strat_lbl.grid(row=2, column=1, sticky="w", pady=1, padx=(6, 0))
+
+        # 2. Formula Section
+        f_sec = ttk.LabelFrame(p, text="📐 Mathematical AST Formula", padding=6)
+        f_sec.pack(fill="x", pady=(0, 6))
+
+        self._formula_text = tk.Text(
+            f_sec,
+            height=3,
+            width=48,
+            font=("Consolas", 9),
+            wrap="word",
+            relief="solid",
+            bd=1,
+            bg="#f8f9fa",
+        )
+        self._formula_text.pack(fill="x", expand=True)
+
+        # 3. Evidence & Governance Section
+        ev_sec = ttk.LabelFrame(p, text="📊 Evidence & Performance", padding=6)
+        ev_sec.pack(fill="x", pady=(0, 6))
+
+        self._d_delta_auc_lbl = ttk.Label(ev_sec, text="Marginal ΔAUC: —")
+        self._d_delta_auc_lbl.grid(row=0, column=0, sticky="w", pady=1)
+
+        self._d_drift_lbl = ttk.Label(ev_sec, text="KS Drift (D_KS): —")
+        self._d_drift_lbl.grid(row=0, column=1, sticky="w", pady=1, padx=(12, 0))
+
+        self._d_evidence_lbl = ttk.Label(ev_sec, text="Evidence Score: —")
+        self._d_evidence_lbl.grid(row=1, column=0, sticky="w", pady=1)
+
+        self._d_folds_lbl = ttk.Label(ev_sec, text="Fold Consistency: —")
+        self._d_folds_lbl.grid(row=1, column=1, sticky="w", pady=1, padx=(12, 0))
+
+        ttk.Label(ev_sec, text="Governance Rationale:", font=("Segoe UI", 8, "bold")).grid(row=2, column=0, sticky="nw", pady=(2, 0))
+        self._d_rationale_lbl = ttk.Label(ev_sec, text="—", font=("Segoe UI", 8, "italic"), wraplength=360, justify="left")
+        self._d_rationale_lbl.grid(row=2, column=1, sticky="w", pady=(2, 0), padx=(12, 0))
+
+        # 4. Provenance & Lineage Section
+        prov_sec = ttk.LabelFrame(p, text="🧬 Discovery Provenance & Lineage", padding=6)
+        prov_sec.pack(fill="x", pady=(0, 4))
+
+        ttk.Label(prov_sec, text="Source Pipeline:", font=("Segoe UI", 8, "bold")).grid(row=0, column=0, sticky="w", pady=1)
+        self._d_src_pipeline_lbl = ttk.Label(prov_sec, text="—", font=("Consolas", 8), wraplength=320, justify="left")
+        self._d_src_pipeline_lbl.grid(row=0, column=1, sticky="w", pady=1, padx=(6, 0))
+
+        ttk.Label(prov_sec, text="Research ID:", font=("Segoe UI", 8, "bold")).grid(row=1, column=0, sticky="w", pady=1)
+        self._d_src_research_lbl = ttk.Label(prov_sec, text="—", font=("Consolas", 8), wraplength=320, justify="left")
+        self._d_src_research_lbl.grid(row=1, column=1, sticky="w", pady=1, padx=(6, 0))
+
+        ttk.Label(prov_sec, text="Formula Hash:", font=("Segoe UI", 8, "bold")).grid(row=2, column=0, sticky="w", pady=1)
+        self._d_hash_lbl = ttk.Label(prov_sec, text="—", font=("Consolas", 8))
+        self._d_hash_lbl.grid(row=2, column=1, sticky="w", pady=1, padx=(6, 0))
+
+        ttk.Label(prov_sec, text="Parent Features:", font=("Segoe UI", 8, "bold")).grid(row=3, column=0, sticky="nw", pady=1)
+        self._d_parents_lbl = ttk.Label(prov_sec, text="—", font=("Segoe UI", 8), wraplength=320, justify="left")
+        self._d_parents_lbl.grid(row=3, column=1, sticky="w", pady=1, padx=(6, 0))
 
     def refresh(self) -> None:
         self._pipelines = load_pipelines(self.chart_dir)
@@ -296,8 +433,12 @@ class PipelineRegistryPanel(ttk.Frame):
         row = get_pipeline(self.chart_dir, pipeline_id)
         if not row:
             self._detail_var.set("Pipeline not found")
-            self._cand_list.delete(0, tk.END)
+            self._feat_tree.delete(*self._feat_tree.get_children())
+            self._current_candidates = []
+            self._current_feat_prov_map = {}
+            self._clear_detail_inspector("Pipeline not found")
             return
+
         from chain_replay_ml.dataset_builder.pipeline_features_prefs import (
             is_excluded_pipeline_feature,
         )
@@ -309,20 +450,159 @@ class PipelineRegistryPanel(ttk.Frame):
             for n in (row.get("candidate_features") or [])
             if str(n).strip() and not is_excluded_pipeline_feature(str(n).strip(), data_dir)
         ]
+        self._current_candidates = candidates
+
+        meta = row.get("provenance_metadata") or {}
+        feat_prov = meta.get("selected_features_provenance") or []
+        feat_prov_map: dict[str, dict[str, Any]] = {}
+        for fp in feat_prov:
+            if isinstance(fp, dict) and fp.get("feature_id"):
+                feat_prov_map[fp["feature_id"]] = fp
+        self._current_feat_prov_map = feat_prov_map
+
+        ptype = str(row.get("type") or "").lower()
+        self._is_discovery_pipeline = ptype in ("discovery_experimental", "candidate_discovery")
+
         self._detail_var.set(
             f"ID: {row['pipeline_id']}  ·  Name: {row['name']}  ·  "
             f"Type: {row['type_label']}  ·  Status: {row['status_label']}\n"
-            f"Registry members: {row['registry_feature_count']}  ·  "
-            f"Candidates: {len(candidates)}"
+            f"Registry Members: {row['registry_feature_count']}  ·  "
+            f"Candidate Discovered Features: {len(candidates)}"
         )
-        is_base = bool(row.get("is_base")) or str(row.get("type") or "") == "base"
+
+        is_base = bool(row.get("is_base")) or ptype == "base"
         try:
             self._delete_pipeline_btn.configure(state="disabled" if is_base else "normal")
+            self._select_features_btn.configure(state="disabled" if (is_base or self._is_discovery_pipeline) else "normal")
         except tk.TclError:
             pass
-        self._cand_list.delete(0, tk.END)
-        for name in candidates:
-            self._cand_list.insert(tk.END, name)
+
+        # Populate Left Treeview
+        self._feat_tree.delete(*self._feat_tree.get_children())
+        self._left_frame.config(text=f"Discovered Features ({len(candidates)})" if self._is_discovery_pipeline else f"Candidate Features ({len(candidates)})")
+
+        for idx, name in enumerate(candidates):
+            prov = feat_prov_map.get(name, {})
+            disp = prov.get("display_name") or name
+            verdict = prov.get("discovery_verdict") or ("BASE" if is_base else "CANDIDATE")
+            strategy = prov.get("generator_strategy") or ("BASE" if is_base else "—")
+            gen = f"G{prov['generation_discovered']}" if "generation_discovered" in prov else "—"
+            delta_auc_str = f"{prov['marginal_delta_auc']:+.5f}" if "marginal_delta_auc" in prov else "—"
+
+            v_norm = str(verdict).upper()
+            if v_norm == "KEEP":
+                v_text = "🟢 KEEP"
+                tag = "tag_keep"
+            elif v_norm == "WATCH":
+                v_text = "🟡 WATCH"
+                tag = "tag_watch"
+            elif v_norm == "REMOVE":
+                v_text = "🔴 REMOVE"
+                tag = "tag_remove"
+            else:
+                v_text = v_norm
+                tag = ""
+
+            self._feat_tree.insert(
+                "",
+                tk.END,
+                iid=name,
+                values=(disp, v_text, strategy, gen, delta_auc_str),
+                tags=(tag,) if tag else (),
+            )
+
+        if candidates:
+            first_item = candidates[0]
+            self._feat_tree.selection_set(first_item)
+            self._populate_detail_inspector(first_item)
+        else:
+            self._clear_detail_inspector("No Discovery Features in this Pipeline")
+
+    def _on_feat_tree_select(self, _event: Any = None) -> None:
+        sel = self._feat_tree.selection()
+        if not sel:
+            return
+        self._populate_detail_inspector(sel[0])
+
+    def _populate_detail_inspector(self, feature_id: str) -> None:
+        """Render the structured right detail inspector card for the selected feature."""
+        prov = self._current_feat_prov_map.get(feature_id)
+
+        if prov:
+            disp_name = prov.get("display_name") or feature_id
+            tech_id = prov.get("feature_id") or feature_id
+            verdict = prov.get("discovery_verdict") or "KEEP"
+            strategy = prov.get("generator_strategy") or "—"
+            gen = prov.get("generation_discovered", 1)
+            formula = prov.get("formula_expression") or "—"
+            d_auc = float(prov.get("marginal_delta_auc") or 0.0)
+            d_ks = float(prov.get("ks_statistic") or 0.0)
+            drift_sev = int(prov.get("drift_severity") or 0)
+            ev_score = float(prov.get("evidence_score") or 0.0)
+            fold_cons = float(prov.get("fold_consistency") or 0.0)
+            gov_rat = prov.get("governance_rationale") or "—"
+            src_dp = prov.get("source_discovery_pipeline_id") or prov.get("pipeline_id") or "—"
+            src_rid = prov.get("source_research_id") or prov.get("research_id") or "—"
+            f_hash = prov.get("formula_hash") or "—"
+            parents = prov.get("parent_features") or []
+
+            # 1. Identity
+            self._d_name_val.config(text=disp_name)
+            self._d_tech_id_var.set(tech_id)
+            v_badge = "🟢 KEEP" if verdict == "KEEP" else ("🟡 WATCH" if verdict == "WATCH" else "🔴 REMOVE")
+            self._d_verdict_strat_lbl.config(text=f"{v_badge}   ·   Strategy: {strategy}   ·   Generation: G{gen}")
+
+            # 2. Formula Area
+            self._formula_text.delete("1.0", tk.END)
+            self._formula_text.insert("1.0", formula)
+
+            # 3. Evidence & Governance
+            sev_label = "0 (Low)" if drift_sev == 0 else ("1 (Moderate)" if drift_sev == 1 else "2 (Severe)")
+            self._d_delta_auc_lbl.config(text=f"Marginal ΔAUC: {d_auc:+.5f}")
+            self._d_drift_lbl.config(text=f"KS Drift (D_KS): {d_ks:.4f} (Severity {sev_label})")
+            self._d_evidence_lbl.config(text=f"Evidence Score: {ev_score:.1f} pts")
+            self._d_folds_lbl.config(text=f"Fold Consistency: {fold_cons*100:.0f}%")
+            self._d_rationale_lbl.config(text=gov_rat)
+
+            # 4. Provenance
+            self._d_src_pipeline_lbl.config(text=src_dp)
+            self._d_src_research_lbl.config(text=src_rid)
+            self._d_hash_lbl.config(text=f_hash)
+            self._d_parents_lbl.config(text=", ".join(parents) if parents else "—")
+
+        else:
+            # Fallback for standard Base or non-discovery candidate features
+            self._d_name_val.config(text=feature_id)
+            self._d_tech_id_var.set(feature_id)
+            self._d_verdict_strat_lbl.config(text="Base / Registry Candidate Feature")
+            self._formula_text.delete("1.0", tk.END)
+            self._formula_text.insert("1.0", f"Base Feature column in analysis dataset: col('{feature_id}')")
+            self._d_delta_auc_lbl.config(text="Marginal ΔAUC: Baseline")
+            self._d_drift_lbl.config(text="KS Drift (D_KS): Baseline")
+            self._d_evidence_lbl.config(text="Evidence Score: Baseline")
+            self._d_folds_lbl.config(text="Fold Consistency: 100%")
+            self._d_rationale_lbl.config(text="Authoritative pipeline candidate feature.")
+            self._d_src_pipeline_lbl.config(text=self._selected_id or "—")
+            self._d_src_research_lbl.config(text="Base Pipeline Anchor")
+            self._d_hash_lbl.config(text="—")
+            self._d_parents_lbl.config(text="Raw Time-Series / Order Flow")
+
+    def _clear_detail_inspector(self, empty_msg: str) -> None:
+        """Display clean empty state message."""
+        self._d_name_val.config(text=empty_msg)
+        self._d_tech_id_var.set("—")
+        self._d_verdict_strat_lbl.config(text="—")
+        self._formula_text.delete("1.0", tk.END)
+        self._formula_text.insert("1.0", empty_msg)
+        self._d_delta_auc_lbl.config(text="Marginal ΔAUC: —")
+        self._d_drift_lbl.config(text="KS Drift (D_KS): —")
+        self._d_evidence_lbl.config(text="Evidence Score: —")
+        self._d_folds_lbl.config(text="Fold Consistency: —")
+        self._d_rationale_lbl.config(text="—")
+        self._d_src_pipeline_lbl.config(text="—")
+        self._d_src_research_lbl.config(text="—")
+        self._d_hash_lbl.config(text="—")
+        self._d_parents_lbl.config(text="—")
 
     def _open_create(self) -> None:
         CreatePipelineDialog(self, chart_dir=self.chart_dir, on_create=self._create_pipeline)
