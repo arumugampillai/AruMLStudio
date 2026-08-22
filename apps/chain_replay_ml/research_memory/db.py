@@ -13,12 +13,21 @@ from typing import Any
 from .schema import ANALYSIS_DB_TABLES_DDL, EXPECTED_INDICES, EXPECTED_TABLES
 
 
-def analysis_db_path(data_dir: str) -> str:
-    """Return the absolute path to `<data_dir>/analysis.db`."""
-    return os.path.join(data_dir, "analysis.db")
+def analysis_db_path(data_dir: str | None = None) -> str:
+    """Return the absolute path to analysis.db via DataRootService."""
+    if data_dir is None:
+        from chain_replay_ml.core.data_root import get_data_root_service
+        return get_data_root_service().get_database_path("analysis")
+    d_str = str(data_dir).strip()
+    if d_str.endswith(".db"):
+        return os.path.abspath(d_str)
+    canonical_sub = os.path.join(d_str, "databases", "analysis.db")
+    if os.path.isfile(canonical_sub):
+        return os.path.abspath(canonical_sub)
+    return os.path.abspath(os.path.join(d_str, "analysis.db"))
 
 
-def connect_analysis_db(data_dir: str) -> sqlite3.Connection:
+def connect_analysis_db(data_dir: str | None = None) -> sqlite3.Connection:
     """Open a SQLite connection to `<data_dir>/analysis.db` with enforced pragmas.
     
     Pragmas Enforced:

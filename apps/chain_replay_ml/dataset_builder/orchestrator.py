@@ -55,7 +55,8 @@ class DatasetBuildConfig:
     def resolved_data_dir(self) -> str:
         if self.data_dir:
             return self.data_dir
-        return os.path.join(_CHART_DIR, "data")
+        from chain_replay_ml.core.data_root import get_data_root_service
+        return get_data_root_service().get_datasets_dir("analysis")
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]

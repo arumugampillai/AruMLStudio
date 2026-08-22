@@ -422,6 +422,10 @@ class PipelineRegistryPanel(ttk.Frame):
             self._tree.selection_set(first)
             self._show_detail(first)
 
+    def on_show(self) -> None:
+        """Called by app shell when user navigates to Pipeline Features."""
+        self.refresh()
+
     def _on_select(self, _event: Any = None) -> None:
         sel = self._tree.selection()
         if not sel:

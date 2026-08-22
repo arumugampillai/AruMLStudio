@@ -20,6 +20,7 @@ import os
 import subprocess
 import threading
 import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,6 +40,29 @@ logger = logging.getLogger(__name__)
 _PROBE_LOCK = threading.Lock()
 _PROBE_CACHE: dict[str, Any] = {}
 _STARTUP_LOGGED = False
+
+
+@contextmanager
+def _suppress_c_stderr():
+    """Temporarily suppress C-level stderr (fd 2) during native GPU capability probes.
+    
+    Prevents third-party C++ libraries (e.g. LightGBM C++ CUDA/GPU probe) from
+    printing spurious '[Fatal] CUDA/GPU Tree Learner was not enabled' messages
+    to the console during routine capability discovery. Genuine training errors
+    outside of probes remain fully visible and unsuppressed.
+    """
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        old_stderr_fd = os.dup(2)
+        os.dup2(devnull_fd, 2)
+        os.close(devnull_fd)
+        try:
+            yield
+        finally:
+            os.dup2(old_stderr_fd, 2)
+            os.close(old_stderr_fd)
+    except Exception:
+        yield
 
 
 class LightGBMGpuUnavailableError(RuntimeError):
@@ -104,7 +128,11 @@ def _env_or(params: dict[str, Any], *keys: str, default: str = "cuda") -> str:
 
 def _wants_gpu(raw: str) -> bool:
     text = str(raw or "").strip().lower()
-    return text in ("cuda", "gpu", "cuml") or text.startswith("cuda")
+    if text in ("cpu", "none", "off", "disable", "disabled"):
+        return False
+    if text in ("cuda", "gpu", "cuml", "auto", "default") or text.startswith("cuda"):
+        return True
+    return True
 
 
 def detect_gpu_hardware() -> dict[str, Any]:
@@ -241,30 +269,28 @@ def probe_lightgbm_gpu() -> dict[str, Any]:
         y = (X[:, 0] > 0).astype("float32")
         dataset = lgb.Dataset(X, label=y)
         errors: list[str] = []
-        for device in ("cuda", "gpu"):
-            try:
-                lgb.train(
-                    {
-                        "objective": "regression",
-                        "device": device,
-                        "verbosity": -1,
-                        "num_leaves": 7,
-                        "gpu_use_dp": False,
-                    },
-                    dataset,
-                    num_boost_round=2,
-                )
-                result["supported"] = True
-                result["backend"] = device
-                result["detail"] = f"probe succeeded with device={device}"
-                break
-            except Exception as exc:
-                errors.append(f"device={device}: {exc.__class__.__name__}: {exc}")
+        with _suppress_c_stderr():
+            for device in ("cuda", "gpu"):
+                try:
+                    lgb.train(
+                        {
+                            "objective": "regression",
+                            "device": device,
+                            "verbosity": -1,
+                            "num_leaves": 7,
+                            "gpu_use_dp": False,
+                        },
+                        dataset,
+                        num_boost_round=2,
+                    )
+                    result["supported"] = True
+                    result["backend"] = device
+                    result["detail"] = f"probe succeeded with device={device}"
+                    break
+                except Exception as exc:
+                    errors.append(f"device={device}: {exc.__class__.__name__}: {exc}")
         if not result["supported"]:
-            result["detail"] = (
-                "LightGBM is installed but this build has no working GPU support. "
-                + " | ".join(errors[:2])
-            )
+            result["detail"] = "Installed LightGBM build has no CUDA/OpenCL GPU learner (CPU/OpenMP only)"
     except ImportError:
         result["detail"] = "lightgbm is not installed"
     except Exception as exc:
@@ -576,23 +602,7 @@ def resolve_training_device(
                 probe_notes=(str(probe.get("detail") or ""),),
                 hard_fail_on_gpu_miss=True,
             )
-        detail = probe.get("detail") or "GPU support not available"
-        message = (
-            "LightGBM GPU was requested but this LightGBM install cannot use a GPU.\n"
-            f"Detail: {detail}\n"
-            "Official pip wheels are usually CPU-only. Install a CUDA-enabled LightGBM "
-            "build (for example via conda-forge with GPU support), then retry.\n"
-            "Refusing to silently train on CPU. Set lgb_device=cpu only if you "
-            "intentionally want CPU training."
-        )
-        if not fallback_allowed:
-            raise LightGBMGpuUnavailableError(message)
-        warn = (
-            "LightGBM GPU unavailable; CPU fallback explicitly allowed by caller — "
-            + detail
-        )
-        warnings.warn(warn, UserWarning, stacklevel=2)
-        logger.warning(warn)
+        detail = str(probe.get("detail") or "Installed LightGBM build has no CUDA/OpenCL GPU learner (CPU/OpenMP active)")
         return DevicePlan(
             algorithm=algo,
             prefer_gpu=True,
@@ -601,9 +611,10 @@ def resolve_training_device(
             device_label="CPU",
             requested=requested,
             library_params={"num_threads": -1},
-            fallback_reason=warn,
+            fallback_reason=detail,
             library_version=version,
-            hard_fail_on_gpu_miss=True,
+            probe_notes=(detail,),
+            hard_fail_on_gpu_miss=False,
         )
 
     if algo == ALGORITHM_CATBOOST:

@@ -46,7 +46,7 @@ class ModelDeviceFactoryTests(unittest.TestCase):
         self.assertEqual(plan.device_label, "CPU")
         self.assertIn("CPU requested", plan.fallback_reason or "")
 
-    def test_lightgbm_raises_when_gpu_unsupported(self) -> None:
+    def test_lightgbm_falls_back_to_cpu_when_gpu_unsupported(self) -> None:
         with mock.patch(
             "chain_replay_ml.training.model_device.detect_gpu_hardware",
             return_value={"gpu_detected": True, "gpu_name": "FakeGPU"},
@@ -56,12 +56,15 @@ class ModelDeviceFactoryTests(unittest.TestCase):
                 "supported": False,
                 "installed": True,
                 "version": "4.0.0",
-                "detail": "CPU-only wheel",
+                "detail": "Installed LightGBM build has no CUDA/OpenCL GPU learner",
             },
         ):
-            with self.assertRaises(LightGBMGpuUnavailableError) as ctx:
-                resolve_training_device("lightgbm", {"lgb_device": "cuda"})
-        self.assertIn("Refusing to silently train on CPU", str(ctx.exception))
+            plan = resolve_training_device("lightgbm", {"lgb_device": "cuda"})
+            self.assertFalse(plan.use_gpu)
+            self.assertEqual(plan.device_label, "CPU")
+            self.assertEqual(plan.device, "cpu")
+            self.assertEqual(plan.library_params.get("num_threads"), -1)
+            self.assertIn("no CUDA/OpenCL GPU learner", plan.fallback_reason or "")
 
     def test_lightgbm_cpu_allowed_when_explicit(self) -> None:
         plan = resolve_training_device("lightgbm", {"lgb_device": "cpu"})

@@ -124,12 +124,16 @@ def resolve_master_datasets_dir(data_dir: str | None = None) -> str:
     """Root folder for master_dataset_*.db files.
 
     Uses ``ARUNEO_MASTER_DATA_DIR`` / project ``master_data_dir`` when set;
-    otherwise ``{data_dir}/datasets``.
+    otherwise canonical ``datasets/master`` via DataRootService, falling back to ``{data_dir}/datasets``.
     """
     configured = _configured_master_data_dir()
     if configured:
         os.makedirs(configured, exist_ok=True)
         return configured
+    from chain_replay_ml.core.data_root import get_data_root_service
+    canonical = get_data_root_service().get_datasets_dir("master")
+    if os.path.isdir(canonical):
+        return canonical
     base = str(data_dir or "").strip() or "."
     datasets = os.path.join(base, "datasets")
     os.makedirs(datasets, exist_ok=True)

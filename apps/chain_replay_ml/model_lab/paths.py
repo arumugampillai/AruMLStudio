@@ -8,41 +8,17 @@ import re
 
 from chain_replay_ml.training.paths import safe_model_name
 
-DEFAULT_MODEL_RESEARCH_DIR = r"D:\data\model_research"
-
-
-def _ml_research_studio_config_path() -> str:
-    base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    folder = os.path.join(base, "AruMLStudio") if os.environ.get("APPDATA") else os.path.join(base, ".arumlstudio")
-    target_path = os.path.join(folder, "ml_research_studio.json")
-    if not os.path.isfile(target_path):
-        legacy_path = os.path.join(base, "AruNeo", "ml_research_studio.json")
-        if os.path.isfile(legacy_path):
-            try:
-                import shutil
-                os.makedirs(folder, exist_ok=True)
-                shutil.copy2(legacy_path, target_path)
-            except Exception:
-                return legacy_path
-    return target_path
+DEFAULT_MODEL_RESEARCH_DIR = r"D:\data\predictions\datasets"
 
 
 def _load_config_model_research_dir() -> str:
-    path = _ml_research_studio_config_path()
-    if not os.path.isfile(path):
-        return ""
-    try:
-        with open(path, encoding="utf-8") as fh:
-            doc = json.load(fh)
-        if not isinstance(doc, dict):
-            return ""
-        return str(doc.get("model_research_dir") or "").strip()
-    except (OSError, json.JSONDecodeError):
-        return ""
+    from chain_replay_ml.core.data_root import load_application_config
+    doc = load_application_config()
+    return str(doc.get("model_research_dir") or "").strip()
 
 
 def resolve_model_research_dir() -> str:
-    """Priority: ARUMLSTUDIO_MODEL_RESEARCH_DIR → ARUNEO_MODEL_RESEARCH_DIR → ml_research_studio.json → D:\\data\\model_research."""
+    """Canonical predictions datasets directory: D:\\data\\predictions\\datasets."""
     env = str(
         os.environ.get("ARUMLSTUDIO_MODEL_RESEARCH_DIR")
         or os.environ.get("ARUNEO_MODEL_RESEARCH_DIR")
@@ -52,12 +28,25 @@ def resolve_model_research_dir() -> str:
         research_dir = os.path.abspath(os.path.normpath(env))
     else:
         saved = _load_config_model_research_dir()
-        if saved:
+        if saved and saved != r"D:\data\model_research":
             research_dir = os.path.abspath(os.path.normpath(saved))
         else:
-            research_dir = os.path.abspath(DEFAULT_MODEL_RESEARCH_DIR)
+            from chain_replay_ml.core.data_root import get_data_root_service
+            research_dir = get_data_root_service().get_predictions_dir("datasets")
     os.makedirs(research_dir, exist_ok=True)
     return research_dir
+
+
+def resolve_prediction_artifacts_dir() -> str:
+    r"""Canonical predictions artifacts directory: D:\data\predictions\artifacts."""
+    from chain_replay_ml.core.data_root import get_data_root_service
+    return get_data_root_service().get_predictions_dir("artifacts")
+
+
+def resolve_prediction_logs_dir() -> str:
+    r"""Canonical application logs directory: D:\data\logs."""
+    from chain_replay_ml.core.data_root import get_data_root_service
+    return get_data_root_service().get_logs_dir()
 
 
 def lab_db_stem(model_name: str) -> str:

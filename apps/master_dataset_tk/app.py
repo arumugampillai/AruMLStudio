@@ -17,6 +17,8 @@ from .feature_intelligence_studio_panel import FeatureIntelligenceStudioPanel
 from .feature_studio_panel import FeatureStudioPanel
 from .model_explorer.panel import ModelExplorerPanel
 from .model_registry_panel import ModelRegistryPanel
+from .pipeline_registry_panel import PipelineRegistryPanel
+from .morning_research_dossier_panel import MorningResearchDossierPanel
 from .registry_panel import RegistryPanel
 from .settings_panel import SettingsPanel
 from .nifty_history_bar_panel import NiftyHistoryBarPanel
@@ -63,6 +65,8 @@ _NAV_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         [
             ("registry.datasets", "Dataset Registry"),
             ("registry.features", "Feature Registry"),
+            ("registry.pipeline_features", "Pipeline Features"),
+            ("registry.autonomous_researches", "Autonomous Researches"),
             ("registry.models", "Models"),
         ],
     ),
@@ -84,6 +88,8 @@ _NAV_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
 ]
 
 _PAGE_TITLES: dict[str, str] = {key: label for _sec, items in _NAV_SECTIONS for key, label in items}
+_PAGE_TITLES["registry.autonomous_researches"] = "Autonomous Research Registry"
+_PAGE_TITLES["registry.autonomous_models"] = "Autonomous Research Registry"
 
 _FEATURE_STUDIO_TAB_ALIASES: dict[str, str] = {
     "builder.importance": "importance",
@@ -275,6 +281,15 @@ class MLResearchStudioApp(tk.Tk):
             on_compare_datasets=self._open_dataset_comparison,
         )
         self.features_panel = FeatureRegistryPanel(self._content, chart_dir=self.chart_dir)
+        self.pipeline_features_panel = PipelineRegistryPanel(
+            self._content,
+            chart_dir=self.chart_dir,
+        )
+        self.morning_dossier_panel = MorningResearchDossierPanel(
+            self._content,
+            data_dir=chart_data_dir(self.chart_dir),
+            on_select_model=self._open_model_registry,
+        )
         self.settings_panel = SettingsPanel(
             self._content,
             chart_dir=self.chart_dir,
@@ -374,6 +389,13 @@ class MLResearchStudioApp(tk.Tk):
             "master.metadata": self.master_panel,
             "registry.datasets": self.registry_panel,
             "registry.features": self.features_panel,
+            "registry.pipeline_features": self.pipeline_features_panel,
+            "registry.pipelines": self.pipeline_features_panel,
+            "registry.autonomous_researches": self.morning_dossier_panel,
+            "registry.autonomous_models": self.morning_dossier_panel,
+            "registry.morning_dossier": self.morning_dossier_panel,
+            "registry.research_registry": self.morning_dossier_panel,
+            "registry.dossier": self.morning_dossier_panel,
             "registry.models": self.model_registry_panel,
             "builder.create": self.create_model_shell,
             # Backward-compatible alias → Create Model / Outcome Labels tab

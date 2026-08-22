@@ -35,8 +35,18 @@ def is_base_pipeline_record(rec: dict[str, Any] | None) -> bool:
     return is_base_pipeline_type(str(rec.get("type") or ""))
 
 
-def store_path(data_dir: str) -> str:
-    return os.path.join(data_dir, "pipeline_registry_store.json")
+def store_path(data_dir: str | None = None) -> str:
+    """Return the absolute path to pipeline_registry_store.json via DataRootService."""
+    if data_dir is None:
+        from chain_replay_ml.core.data_root import get_data_root_service
+        return get_data_root_service().get_registry_path("pipeline")
+    d_str = str(data_dir).strip()
+    if d_str.endswith(".json"):
+        return os.path.abspath(d_str)
+    canonical_sub = os.path.join(d_str, "registries", "pipeline_registry_store.json")
+    if os.path.isfile(canonical_sub):
+        return os.path.abspath(canonical_sub)
+    return os.path.abspath(os.path.join(d_str, "pipeline_registry_store.json"))
 
 
 def _load_json(path: str) -> dict[str, Any]:
@@ -74,7 +84,7 @@ def format_display_name(seq: int) -> str:
     return f"Pipeline_{seq:03d}"
 
 
-def load_store(data_dir: str) -> dict[str, Any]:
+def load_store(data_dir: str | None = None) -> dict[str, Any]:
     doc = _load_json(store_path(data_dir))
     if not doc:
         return _empty_store()
@@ -97,9 +107,14 @@ def _migrate_legacy_pipeline_types(doc: dict[str, Any]) -> None:
             rec["type"] = "base"
 
 
-def save_store(data_dir: str, doc: dict[str, Any]) -> None:
+def save_store(data_dir: str | None, doc: dict[str, Any] | None = None) -> None:
+    if isinstance(data_dir, dict) and doc is None:
+        doc = data_dir
+        data_dir = None
+    if doc is None:
+        return
     path = store_path(data_dir)
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, indent=2)
 

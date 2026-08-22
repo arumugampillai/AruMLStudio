@@ -19,15 +19,25 @@ from .recommendation_policy import (
 EVIDENCE_DB_NAME = "feature_recommendation_evidence.db"
 
 
-def evidence_db_path(data_dir: str) -> str:
-    return os.path.join(data_dir, EVIDENCE_DB_NAME)
+def evidence_db_path(data_dir: str | None = None) -> str:
+    """Return the absolute path to feature_recommendation_evidence.db via DataRootService."""
+    if data_dir is None:
+        from chain_replay_ml.core.data_root import get_data_root_service
+        return get_data_root_service().get_database_path("feature_evidence")
+    d_str = str(data_dir).strip()
+    if d_str.endswith(".db"):
+        return os.path.abspath(d_str)
+    canonical_sub = os.path.join(d_str, "databases", EVIDENCE_DB_NAME)
+    if os.path.isfile(canonical_sub):
+        return os.path.abspath(canonical_sub)
+    return os.path.abspath(os.path.join(d_str, EVIDENCE_DB_NAME))
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def get_connection(data_dir: str) -> sqlite3.Connection:
+def get_connection(data_dir: str | None = None) -> sqlite3.Connection:
     path = evidence_db_path(data_dir)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     conn = sqlite3.connect(path, timeout=30.0)

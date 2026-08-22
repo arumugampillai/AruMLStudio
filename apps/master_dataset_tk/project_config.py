@@ -93,7 +93,23 @@ def save_tick_data_dir(tick_data_dir: str) -> None:
         json.dump(doc, fh, indent=2)
 
 
+DEFAULT_DATA_ROOT = r"D:\data"
 DEFAULT_MASTER_DATA_DIR = r"D:\data\master_dataset"
+
+
+def resolve_data_root(custom_root: str | None = None) -> str:
+    from chain_replay_ml.core.data_root import resolve_data_root as _resolve
+    return _resolve(custom_root)
+
+
+def save_data_root(data_root: str) -> None:
+    from chain_replay_ml.core.data_root import save_data_root as _save
+    _save(data_root)
+
+
+def get_data_root_service(data_root: str | None = None):
+    from chain_replay_ml.core.data_root import get_data_root_service as _get_svc
+    return _get_svc(data_root)
 
 
 def save_master_data_dir(master_data_dir: str) -> None:
@@ -110,7 +126,8 @@ def resolve_master_data_dir(chart_dir: str | None = None) -> str:
     Preference order:
     1. ``ARUMLSTUDIO_MASTER_DATA_DIR`` env (fallback: ``ARUNEO_MASTER_DATA_DIR``)
     2. ``master_data_dir`` in ml_research_studio.json
-    3. ``{chart_dir}/data/datasets`` (legacy default)
+    3. Canonical ``D:\\data\\datasets\\master`` via DataRootService
+    4. ``{chart_dir}/data/datasets`` (legacy default)
     """
     env = str(
         os.environ.get("ARUMLSTUDIO_MASTER_DATA_DIR")
@@ -126,6 +143,13 @@ def resolve_master_data_dir(chart_dir: str | None = None) -> str:
         path = normalize_chart_dir(saved)
         os.makedirs(path, exist_ok=True)
         return path
+    from chain_replay_ml.core.data_root import get_data_root_service
+    canonical = get_data_root_service().get_datasets_dir("master")
+    if os.path.isdir(canonical):
+        return canonical
+    legacy = r"D:\data\master_dataset"
+    if os.path.isdir(legacy):
+        return legacy
     base = chart_dir or bundled_chart_dir()
     path = os.path.join(base, "data", "datasets")
     os.makedirs(path, exist_ok=True)

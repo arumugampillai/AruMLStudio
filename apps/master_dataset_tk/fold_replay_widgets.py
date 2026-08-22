@@ -382,14 +382,34 @@ def resolve_main_app_root(widget: tk.Misc) -> tk.Misc:
 
 
 def place_toplevel_beside_main(win: tk.Toplevel, master: tk.Misc) -> None:
-    """Position a toplevel immediately to the right of the main app, same size."""
+    """Position a toplevel immediately to the right of the main app, same size, with screen-bounds fallback."""
     root = resolve_main_app_root(master)
     root.update_idletasks()
     w = max(int(root.winfo_width()), 800)
     h = max(int(root.winfo_height()), 600)
     x = int(root.winfo_x())
     y = int(root.winfo_y())
-    win.geometry(f"{w}x{h}+{x + w}+{y}")
+
+    try:
+        sw = int(win.winfo_screenwidth())
+        sh = int(win.winfo_screenheight())
+    except Exception:
+        sw = 1920
+        sh = 1080
+
+    target_x = x + w
+    target_y = y
+
+    # If placing to the right overflows the screen, try placing on the left, or clamp intelligently
+    if target_x + w > sw:
+        if x - w >= 0:
+            target_x = x - w
+        else:
+            target_x = max(0, sw - w - 20)
+
+    target_y = max(0, min(target_y, max(0, sh - h - 40)))
+
+    win.geometry(f"{w}x{h}+{target_x}+{target_y}")
     win.minsize(640, 480)
 
 

@@ -8,10 +8,27 @@ import re
 from chain_replay_ml.dataset_builder.writer import _safe_filename
 
 
-def models_dir(data_dir: str) -> str:
-    path = os.path.join(data_dir, "models")
-    os.makedirs(path, exist_ok=True)
-    return path
+def models_dir(
+    data_dir: str | None = None,
+    category: str = "research",
+) -> str:
+    r"""Canonical models location by category: D:\data\models\{production|candidates|research}."""
+    from chain_replay_ml.core.data_root import get_data_root_service
+    svc = get_data_root_service()
+    if data_dir is None:
+        return svc.get_models_dir(category)
+    d_str = str(data_dir).strip()
+    cat_str = str(category).lower()
+    sub_cat = os.path.join(d_str, "models", cat_str)
+    if os.path.isdir(sub_cat):
+        return sub_cat
+    if os.path.basename(os.path.normpath(d_str)).lower() in ("production", "candidates", "research"):
+        return os.path.abspath(d_str)
+    if os.path.isdir(os.path.join(d_str, "models")):
+        if os.path.isdir(os.path.join(d_str, "models", cat_str)):
+            return os.path.join(d_str, "models", cat_str)
+        return os.path.join(d_str, "models")
+    return svc.get_models_dir(category)
 
 
 def safe_model_name(name: str) -> str:
@@ -19,25 +36,42 @@ def safe_model_name(name: str) -> str:
     return cleaned or "unnamed_model"
 
 
-def model_package_dir(data_dir: str, model_name: str) -> str:
+def model_package_dir(
+    data_dir: str | None = None,
+    model_name: str = "",
+    category: str | None = None,
+) -> str:
     safe = safe_model_name(model_name)
-    direct = os.path.join(models_dir(data_dir), safe)
-    if os.path.isdir(direct):
-        return direct
+    from chain_replay_ml.core.data_root import get_data_root_service
+    svc = get_data_root_service()
 
-    candidates = [
-        os.path.join(data_dir, "models", safe),
-        os.path.join(data_dir, "data", "models", safe),
-    ]
-    if os.path.basename(os.path.normpath(data_dir)).lower() == "data":
-        candidates.append(os.path.join(os.path.dirname(os.path.normpath(data_dir)), "models", safe))
-    elif os.path.isdir(os.path.join(data_dir, "data")):
-        candidates.append(os.path.join(data_dir, "data", "models", safe))
+    cat = category or ("candidates" if safe.startswith("CAND_") else "research")
+    
+    canonical_cand = os.path.join(svc.get_models_dir("candidates"), safe)
+    if os.path.isdir(canonical_cand):
+        return canonical_cand
+    canonical_res = os.path.join(svc.get_models_dir("research"), safe)
+    if os.path.isdir(canonical_res):
+        return canonical_res
+    canonical_prod = os.path.join(svc.get_models_dir("production"), safe)
+    if os.path.isdir(canonical_prod):
+        return canonical_prod
 
-    for cand in candidates:
-        if os.path.isdir(cand):
-            return cand
-    return direct
+    if data_dir:
+        direct = os.path.join(models_dir(data_dir, cat), safe)
+        if os.path.isdir(direct):
+            return direct
+        candidates = [
+            os.path.join(data_dir, "models", safe),
+            os.path.join(data_dir, "data", "models", safe),
+        ]
+        if os.path.basename(os.path.normpath(data_dir)).lower() == "data":
+            candidates.append(os.path.join(os.path.dirname(os.path.normpath(data_dir)), "models", safe))
+        for cand in candidates:
+            if os.path.isdir(cand):
+                return cand
+
+    return os.path.join(svc.get_models_dir(cat), safe)
 
 
 

@@ -208,13 +208,9 @@ def classify_feature_recommendation(
 
 def _lookup_feature_evidence_db(data_dir: str, feature_name: str) -> tuple[float, str | None, str | None]:
     """Safely query feature_recommendation_evidence.db for evidence_score, lifecycle_status, and graduation."""
-    paths = [
-        os.path.join(data_dir, "feature_recommendation_evidence.db"),
-        os.path.join("apps", "feature_recommendation_evidence.db"),
-        "feature_recommendation_evidence.db",
-    ]
-    db_path = next((p for p in paths if os.path.isfile(p)), None)
-    if not db_path:
+    from chain_replay_ml.production_validation.evidence_store import evidence_db_path
+    db_path = evidence_db_path(data_dir)
+    if not os.path.isfile(db_path):
         return (50.0, None, None)
 
     ev_score = 50.0

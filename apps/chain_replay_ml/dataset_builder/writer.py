@@ -148,10 +148,23 @@ def _write_parquet(
     pq.write_table(table, parquet_path)
 
 
-def datasets_dir(data_dir: str) -> str:
-    path = os.path.join(data_dir, "datasets")
-    os.makedirs(path, exist_ok=True)
-    return path
+def datasets_dir(data_dir: str | None = None) -> str:
+    r"""Canonical analysis datasets directory: D:\data\datasets\analysis."""
+    if data_dir is None:
+        from chain_replay_ml.core.data_root import get_data_root_service
+        return get_data_root_service().get_datasets_dir("analysis")
+    d_str = str(data_dir).strip()
+    sub_analysis = os.path.join(d_str, "datasets", "analysis")
+    if os.path.isdir(sub_analysis):
+        return sub_analysis
+    if os.path.basename(os.path.normpath(d_str)).lower() in ("datasets", "analysis"):
+        return os.path.abspath(d_str)
+    # Check legacy data_dir/datasets if exists
+    legacy = os.path.join(d_str, "datasets")
+    if os.path.isdir(legacy):
+        return legacy
+    from chain_replay_ml.core.data_root import get_data_root_service
+    return get_data_root_service().get_datasets_dir("analysis")
 
 
 def read_dataset_parquet(parquet_path: str) -> pd.DataFrame:

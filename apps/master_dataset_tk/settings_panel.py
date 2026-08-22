@@ -1,57 +1,61 @@
-"""Settings page — project folder, data paths, and quick links."""
+"""Settings page — Canonical Data Root, Storage Layout, and Migration Assistant (Doc 17, Phase 4)."""
 
 from __future__ import annotations
 
 import os
+import sqlite3
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
-from .build_service import chart_data_dir
+from chain_replay_ml.core.data_root import (
+    DEFAULT_CANONICAL_DATA_ROOT,
+    DataRootService,
+    get_data_root_service,
+    normalize_storage_path,
+    resolve_data_root,
+    save_data_root,
+)
+from .migration_dialog import MigrationAssistantDialog
 from .project_config import (
     bundled_chart_dir,
     config_path,
-    ensure_project_data_dir,
     normalize_chart_dir,
-    resolve_chart_dir_from_selection,
-    resolve_master_data_dir,
     resolve_tick_data_dir,
-    save_master_data_dir,
-    save_project_config,
     save_tick_data_dir,
-    validate_chart_dir,
-    DEFAULT_MASTER_DATA_DIR,
 )
 from .ui_util import open_path
 
 
 class SettingsPanel(ttk.Frame):
+    """Authoritative Settings UI for managing the canonical Data Root and Storage Layout."""
+
     def __init__(
         self,
         master: tk.Misc,
         *,
-        chart_dir: str,
+        chart_dir: str | None = None,
         on_project_changed: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(master)
-        self.chart_dir = chart_dir
+        self.chart_dir = chart_dir or resolve_data_root()
         self._on_project_changed = on_project_changed
-        self._project_var = tk.StringVar(value=chart_dir)
+
+        self._data_root_var = tk.StringVar(value=resolve_data_root())
         self._tick_data_var = tk.StringVar(value=self._configured_tick_data_dir())
-        self._master_data_var = tk.StringVar(value=self._configured_master_data_dir())
+
         self._build_ui()
+
+    def _data_root_service(self) -> DataRootService:
+        return get_data_root_service(self._data_root_var.get().strip() or DEFAULT_CANONICAL_DATA_ROOT)
 
     def set_chart_dir(self, chart_dir: str) -> None:
         self.chart_dir = chart_dir
-        self._project_var.set(chart_dir)
+        self._data_root_var.set(resolve_data_root())
         self._tick_data_var.set(self._configured_tick_data_dir())
-        self._master_data_var.set(self._configured_master_data_dir())
-        self._refresh_path_rows()
+        self._refresh_health_card()
         if hasattr(self, "_disable_gil_var"):
             self._disable_gil_var.set(self._load_disable_gil_monitor())
-
-    def _data_dir(self) -> str:
-        return chart_data_dir(self.chart_dir)
 
     def _configured_tick_data_dir(self) -> str:
         from .project_config import load_project_config
@@ -63,134 +67,84 @@ class SettingsPanel(ttk.Frame):
 
         return DEFAULT_TICK_DATA_DIR
 
-    def _configured_master_data_dir(self) -> str:
-        from .project_config import load_project_config
-
-        saved = str(load_project_config().get("master_data_dir") or "").strip()
-        if saved:
-            return normalize_chart_dir(saved)
-        return DEFAULT_MASTER_DATA_DIR
-
     def _resolved_tick_data_dir(self) -> str:
         return resolve_tick_data_dir(self.chart_dir)
-
-    def _resolved_master_data_dir(self) -> str:
-        return resolve_master_data_dir(self.chart_dir)
 
     def _build_ui(self) -> None:
         wrap = ttk.Frame(self, padding=16)
         wrap.pack(fill="both", expand=True)
 
-        ttk.Label(wrap, text="Settings", font=("Segoe UI", 14, "bold")).pack(anchor="w", pady=(0, 12))
+        # Header
+        ttk.Label(wrap, text="⚙️ Storage & Data Root Settings", font=("Segoe UI", 14, "bold")).pack(anchor="w", pady=(0, 4))
         ttk.Label(
             wrap,
-            text="ML Research Studio runs standalone — no chart server required.",
-            foreground="#888",
-        ).pack(anchor="w", pady=(0, 16))
-
-        proj_fr = ttk.LabelFrame(wrap, text="Project Folder", padding=10)
-        proj_fr.pack(fill="x", pady=(0, 16))
-        ttk.Label(
-            proj_fr,
-            text="Point to the chart folder that contains data/ (or select the AruNeo repo root).",
-            foreground="#888",
-            wraplength=760,
-        ).pack(anchor="w", pady=(0, 8))
-
-        row = ttk.Frame(proj_fr)
-        row.pack(fill="x", pady=(0, 6))
-        ttk.Entry(row, textvariable=self._project_var, width=78).pack(side="left", fill="x", expand=True)
-        ttk.Button(row, text="Browse…", command=self._browse_project).pack(side="left", padx=(6, 0))
-
-        btn_row = ttk.Frame(proj_fr)
-        btn_row.pack(fill="x", pady=(4, 0))
-        ttk.Button(btn_row, text="Open Project Folder", command=lambda: open_path(self.chart_dir)).pack(side="left")
-        ttk.Button(btn_row, text="Use Bundled Default", command=self._use_bundled).pack(side="left", padx=(8, 0))
-        ttk.Button(btn_row, text="Apply Project", command=self._apply_project).pack(side="left", padx=(8, 0))
-
-        ttk.Label(
-            proj_fr,
-            text=f"Config file: {config_path()}",
+            text="ML Research Studio uses a Single Authoritative Data Root. All databases, registries, datasets, models, and predictions resolve beneath this root.",
             foreground="#666",
+            wraplength=840,
+        ).pack(anchor="w", pady=(0, 14))
+
+        # 1. Primary Data Root Section
+        root_box = ttk.LabelFrame(wrap, text="📁 1. Application Data Root (Canonical Ground Truth)", padding=12)
+        root_box.pack(fill="x", pady=(0, 14))
+
+        ttk.Label(
+            root_box,
+            text="Primary directory owning all persistent application data (Doc 17 specification):",
+            foreground="#555",
+        ).pack(anchor="w", pady=(0, 6))
+
+        r_row = ttk.Frame(root_box)
+        r_row.pack(fill="x", pady=(0, 8))
+        ttk.Entry(r_row, textvariable=self._data_root_var, font=("Segoe UI", 10, "bold"), width=70).pack(side="left", fill="x", expand=True)
+        ttk.Button(r_row, text="Browse…", command=self._browse_data_root).pack(side="left", padx=(6, 0))
+
+        btn_row = ttk.Frame(root_box)
+        btn_row.pack(fill="x")
+        ttk.Button(btn_row, text="📂 Open Data Root", command=lambda: open_path(self._data_root_var.get().strip())).pack(side="left")
+        ttk.Button(btn_row, text="💾 Save & Apply Data Root", command=self._apply_data_root).pack(side="left", padx=(8, 0))
+        ttk.Button(btn_row, text="📦 Open Data Migration Assistant", command=self._open_migration_assistant).pack(side="right")
+
+        ttk.Label(
+            root_box,
+            text=f"Configuration file: {config_path()}",
+            foreground="#888",
             font=("Segoe UI", 8),
         ).pack(anchor="w", pady=(8, 0))
 
-        tick_fr = ttk.LabelFrame(wrap, text="Tick Data Folder", padding=10)
-        tick_fr.pack(fill="x", pady=(0, 16))
-        ttk.Label(
-            tick_fr,
-            text="Primary location for angel_market_YYYY-MM-DD.db tick databases (live writer and replay).",
-            foreground="#888",
-            wraplength=760,
-        ).pack(anchor="w", pady=(0, 8))
+        # 2. Storage Layout & Telemetry Card
+        self.layout_box = ttk.LabelFrame(wrap, text="📊 2. Canonical Storage Layout & Health Status", padding=12)
+        self.layout_box.pack(fill="both", expand=True, pady=(0, 14))
 
-        tick_row = ttk.Frame(tick_fr)
-        tick_row.pack(fill="x", pady=(0, 6))
-        ttk.Entry(tick_row, textvariable=self._tick_data_var, width=78).pack(side="left", fill="x", expand=True)
-        ttk.Button(tick_row, text="Browse…", command=self._browse_tick_data).pack(side="left", padx=(6, 0))
+        self._health_status_lbl = ttk.Label(self.layout_box, text="", font=("Segoe UI", 10, "bold"))
+        self._health_status_lbl.pack(anchor="w", pady=(0, 8))
 
-        tick_btn_row = ttk.Frame(tick_fr)
-        tick_btn_row.pack(fill="x", pady=(4, 0))
-        ttk.Button(
-            tick_btn_row,
-            text="Open Tick Data Folder",
-            command=lambda: open_path(self._resolved_tick_data_dir()),
-        ).pack(side="left")
-        ttk.Button(tick_btn_row, text="Apply Tick Folder", command=self._apply_tick_data).pack(side="left", padx=(8, 0))
+        # Treeview showing canonical directory hierarchy
+        cols = ("category", "canonical_path", "status", "size_desc")
+        self.layout_tree = ttk.Treeview(self.layout_box, columns=cols, show="headings", height=9)
+        self.layout_tree.heading("category", text="Category")
+        self.layout_tree.heading("canonical_path", text="Canonical Subdirectory")
+        self.layout_tree.heading("status", text="Existence")
+        self.layout_tree.heading("size_desc", text="Tracked Contents")
 
-        self._tick_resolved_var = tk.StringVar()
-        ttk.Label(
-            tick_fr,
-            textvariable=self._tick_resolved_var,
-            foreground="#666",
-            font=("Segoe UI", 8),
-            wraplength=760,
-        ).pack(anchor="w", pady=(8, 0))
+        self.layout_tree.column("category", width=140, anchor="w")
+        self.layout_tree.column("canonical_path", width=380, anchor="w")
+        self.layout_tree.column("status", width=90, anchor="center")
+        self.layout_tree.column("size_desc", width=220, anchor="w")
 
-        master_fr = ttk.LabelFrame(wrap, text="Master Dataset Folder", padding=10)
-        master_fr.pack(fill="x", pady=(0, 16))
-        ttk.Label(
-            master_fr,
-            text="Location for master_dataset_*.db, master_insert_*.expected.json, and build prefs.",
-            foreground="#888",
-            wraplength=760,
-        ).pack(anchor="w", pady=(0, 8))
+        tree_sb = ttk.Scrollbar(self.layout_box, orient="vertical", command=self.layout_tree.yview)
+        self.layout_tree.configure(yscrollcommand=tree_sb.set)
+        self.layout_tree.pack(side="left", fill="both", expand=True)
+        tree_sb.pack(side="right", fill="y")
 
-        master_row = ttk.Frame(master_fr)
-        master_row.pack(fill="x", pady=(0, 6))
-        ttk.Entry(master_row, textvariable=self._master_data_var, width=78).pack(
-            side="left", fill="x", expand=True
-        )
-        ttk.Button(master_row, text="Browse…", command=self._browse_master_data).pack(
-            side="left", padx=(6, 0)
-        )
+        # 3. Operations & External Overrides
+        bottom_fr = ttk.Frame(wrap)
+        bottom_fr.pack(fill="x", pady=(0, 6))
 
-        master_btn_row = ttk.Frame(master_fr)
-        master_btn_row.pack(fill="x", pady=(4, 0))
-        ttk.Button(
-            master_btn_row,
-            text="Open Master Dataset Folder",
-            command=lambda: open_path(self._resolved_master_data_dir()),
-        ).pack(side="left")
-        ttk.Button(
-            master_btn_row, text="Apply Master Folder", command=self._apply_master_data
-        ).pack(side="left", padx=(8, 0))
+        ttk.Button(bottom_fr, text="🔄 Verify Storage Integrity", command=self._verify_storage_integrity).pack(side="left")
 
-        self._master_resolved_var = tk.StringVar()
-        ttk.Label(
-            master_fr,
-            textvariable=self._master_resolved_var,
-            foreground="#666",
-            font=("Segoe UI", 8),
-            wraplength=760,
-        ).pack(anchor="w", pady=(8, 0))
-
-        self._paths_host = ttk.Frame(wrap)
-        self._paths_host.pack(fill="x")
-        self._refresh_path_rows()
-
-        diag_fr = ttk.LabelFrame(wrap, text="Diagnostics", padding=10)
-        diag_fr.pack(fill="x", pady=(16, 0))
+        # Diagnostics Frame
+        diag_fr = ttk.LabelFrame(wrap, text="⚙️ 3. Diagnostics", padding=10)
+        diag_fr.pack(fill="x", pady=(8, 0))
         self._disable_gil_var = tk.BooleanVar(value=self._load_disable_gil_monitor())
         ttk.Checkbutton(
             diag_fr,
@@ -198,112 +152,119 @@ class SettingsPanel(ttk.Frame):
             variable=self._disable_gil_var,
             command=self._save_gil_monitor_pref,
         ).pack(anchor="w")
-        ttk.Label(
-            diag_fr,
-            text="When enabled, diagnostics use heavy profiling and slow builds. Leave disabled unless investigating UI lag.",
-            foreground="#888",
-            wraplength=760,
-        ).pack(anchor="w", pady=(6, 0))
 
-    def _refresh_path_rows(self) -> None:
-        for child in self._paths_host.winfo_children():
-            child.destroy()
+        self._refresh_health_card()
 
-        ttk.Label(self._paths_host, text="Data paths", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 8))
-        paths = [
-            ("Chart directory", self.chart_dir),
-            ("Tick data directory", self._resolved_tick_data_dir()),
-            ("Master dataset folder", self._resolved_master_data_dir()),
-            ("Data directory", self._data_dir()),
-            ("Models", os.path.join(self._data_dir(), "models")),
-            ("Datasets (exports)", os.path.join(self._data_dir(), "datasets")),
-            ("Prediction runs DB", os.path.join(self._data_dir(), "prediction_runs", "registry.db")),
+    def _refresh_health_card(self) -> None:
+        svc = self._data_root_service()
+        val = svc.validate_layout()
+
+        # Update Health Label
+        if val["root_exists"]:
+            self._health_status_lbl.config(
+                text=f"🟢 Storage Status: HEALTHY · Disk Free: {val['disk_free_gb']} GB / {val['disk_total_gb']} GB",
+                foreground="#006600",
+            )
+        else:
+            self._health_status_lbl.config(
+                text=f"🟡 Storage Status: ROOT DIRECTORY NOT FOUND ({svc.data_root})",
+                foreground="#b00",
+            )
+
+        for item in self.layout_tree.get_children():
+            self.layout_tree.delete(item)
+
+        categories = [
+            ("Databases", svc.get_database_path("analysis"), "analysis.db, evidence.db, historic_bars.db"),
+            ("Registries", svc.get_registry_path("pipeline"), "pipeline_registry, feature_registry"),
+            ("Datasets (Master)", svc.get_datasets_dir("master"), "master_dataset_nifty_*.db"),
+            ("Datasets (Analysis)", svc.get_datasets_dir("analysis"), "analysis_*.parquet & json schemas"),
+            ("Datasets (Labels)", svc.get_datasets_dir("labels"), "triple_barrier_run_*.parquet"),
+            ("Datasets (Exports)", svc.get_datasets_dir("exports"), "chain_NIFTY_*.json exports"),
+            ("Models (Candidates)", svc.get_models_dir("candidates"), "CAND_* validated model packages"),
+            ("Models (Research)", svc.get_models_dir("research"), "Exp_* research models & reports"),
+            ("Models (Production)", svc.get_models_dir("production"), "Active production model weights"),
+            ("Predictions (Datasets)", svc.get_predictions_dir("datasets"), "model_lab_*.db evaluation stores"),
+            ("Predictions (Artifacts)", svc.get_predictions_dir("artifacts"), "prediction metadata & manifests"),
+            ("Ticks (Market Feeds)", svc.get_ticks_dir(), "angel_market_YYYY-MM-DD.db"),
+            ("Application Logs", svc.get_logs_dir(), "worker & campaign execution logs"),
+            ("Cache", svc.get_cache_dir(), "OpenAPIScripMaster.json"),
         ]
-        for label, path in paths:
-            row = ttk.Frame(self._paths_host)
-            row.pack(fill="x", pady=4)
-            ttk.Label(row, text=label, width=20).pack(side="left")
-            var = tk.StringVar(value=path)
-            ttk.Entry(row, textvariable=var, state="readonly", width=70).pack(side="left", padx=4)
-            ttk.Button(row, text="Open", command=lambda p=path: open_path(p)).pack(side="left")
 
-        self._tick_resolved_var.set(f"Resolved tick path: {self._resolved_tick_data_dir()}")
-        self._master_resolved_var.set(
-            f"Resolved master path: {self._resolved_master_data_dir()}"
-        )
+        for cat_name, path, desc in categories:
+            parent_dir = path if not path.endswith((".db", ".json")) else os.path.dirname(path)
+            exists = "🟢 YES" if os.path.exists(path if path.endswith((".db", ".json")) else parent_dir) else "⚪ Missing"
+            self.layout_tree.insert("", "end", values=(cat_name, parent_dir, exists, desc))
 
-    def _browse_tick_data(self) -> None:
-        initial = self._tick_data_var.get().strip() or self._resolved_tick_data_dir()
-        if not os.path.isdir(initial):
-            initial = self._resolved_tick_data_dir()
-        picked = filedialog.askdirectory(
-            parent=self.winfo_toplevel(),
-            title="Select tick data folder",
-            initialdir=initial,
-        )
+    def _browse_data_root(self) -> None:
+        init = self._data_root_var.get().strip() or DEFAULT_CANONICAL_DATA_ROOT
+        if not os.path.isdir(init):
+            init = os.path.splitdrive(init)[0] or "C:\\"
+        picked = filedialog.askdirectory(parent=self.winfo_toplevel(), title="Select Canonical Application Data Root", initialdir=init)
         if picked:
-            self._tick_data_var.set(normalize_chart_dir(picked))
+            self._data_root_var.set(normalize_storage_path(picked))
+            self._refresh_health_card()
 
-    def _apply_tick_data(self) -> None:
-        raw = self._tick_data_var.get().strip()
+    def _apply_data_root(self) -> None:
+        raw = self._data_root_var.get().strip()
         if not raw:
-            messagebox.showinfo("Tick Data Folder", "Choose a folder first.", parent=self.winfo_toplevel())
+            messagebox.showinfo("Data Root", "Choose a directory first.", parent=self.winfo_toplevel())
             return
-        tick_dir = normalize_chart_dir(raw)
-        if not os.path.isdir(tick_dir):
-            messagebox.showerror(
-                "Tick Data Folder",
-                f"Folder does not exist:\n{tick_dir}",
-                parent=self.winfo_toplevel(),
-            )
-            return
-        save_tick_data_dir(tick_dir)
-        self._tick_data_var.set(tick_dir)
-        self._refresh_path_rows()
+        root = normalize_storage_path(raw)
+        save_data_root(root)
+        self.chart_dir = root
+        self._data_root_var.set(root)
+        self._refresh_health_card()
+        if self._on_project_changed:
+            self._on_project_changed(root)
         messagebox.showinfo(
-            "Tick Data Folder",
-            f"Tick data folder set to:\n{tick_dir}\n\nResolved path:\n{self._resolved_tick_data_dir()}",
+            "Data Root Saved",
+            f"Canonical Data Root successfully updated to:\n{root}\n\nAll application subsystems will now resolve from this root.",
             parent=self.winfo_toplevel(),
         )
 
-    def _browse_master_data(self) -> None:
-        initial = self._master_data_var.get().strip() or self._resolved_master_data_dir()
-        if not os.path.isdir(initial):
-            initial = self._resolved_master_data_dir()
-        picked = filedialog.askdirectory(
-            parent=self.winfo_toplevel(),
-            title="Select master dataset folder",
-            initialdir=initial,
+    def _open_migration_assistant(self) -> None:
+        MigrationAssistantDialog(
+            self.winfo_toplevel(),
+            target_data_root=self._data_root_var.get().strip() or DEFAULT_CANONICAL_DATA_ROOT,
+            on_completed=lambda r: self._on_migration_completed(r),
         )
-        if picked:
-            self._master_data_var.set(normalize_chart_dir(picked))
 
-    def _apply_master_data(self) -> None:
-        raw = self._master_data_var.get().strip()
-        if not raw:
-            messagebox.showinfo(
-                "Master Dataset Folder",
-                "Choose a folder first.",
-                parent=self.winfo_toplevel(),
-            )
+    def _on_migration_completed(self, new_root: str) -> None:
+        self._data_root_var.set(new_root)
+        self._refresh_health_card()
+        if self._on_project_changed:
+            self._on_project_changed(new_root)
+
+    def _verify_storage_integrity(self) -> None:
+        svc = self._data_root_service()
+        val = svc.validate_layout()
+        if not val["root_exists"]:
+            messagebox.showwarning("Storage Integrity", f"Data Root does not exist:\n{svc.data_root}", parent=self.winfo_toplevel())
             return
-        master_dir = normalize_chart_dir(raw)
-        os.makedirs(master_dir, exist_ok=True)
-        if not os.path.isdir(master_dir):
-            messagebox.showerror(
-                "Master Dataset Folder",
-                f"Folder does not exist:\n{master_dir}",
-                parent=self.winfo_toplevel(),
-            )
-            return
-        save_master_data_dir(master_dir)
-        self._master_data_var.set(master_dir)
-        self._refresh_path_rows()
-        messagebox.showinfo(
-            "Master Dataset Folder",
-            f"Master dataset folder set to:\n{master_dir}\n\nResolved path:\n{self._resolved_master_data_dir()}",
-            parent=self.winfo_toplevel(),
+
+        db_checks: list[str] = []
+        for name, db_type in [("Analysis DB", "analysis"), ("Evidence DB", "feature_evidence"), ("Historic Bars DB", "angel_historic")]:
+            p = svc.get_database_path(db_type)
+            if os.path.isfile(p):
+                try:
+                    conn = sqlite3.connect(p, timeout=5.0)
+                    cur = conn.cursor()
+                    cur.execute("PRAGMA integrity_check;")
+                    res = cur.fetchone()[0]
+                    conn.close()
+                    db_checks.append(f"• {name}: {res} ({os.path.getsize(p)/(1024*1024):.1f} MB)")
+                except Exception as e:
+                    db_checks.append(f"• {name}: ERROR ({e})")
+            else:
+                db_checks.append(f"• {name}: Not found at {p}")
+
+        msg = (
+            f"Storage Integrity Verification for {svc.data_root}:\n\n"
+            f"• Disk Space: {val['disk_free_gb']} GB Free / {val['disk_total_gb']} GB Total\n\n"
+            + "\n".join(db_checks)
         )
+        messagebox.showinfo("Storage Integrity Report", msg, parent=self.winfo_toplevel())
 
     def _load_disable_gil_monitor(self) -> bool:
         from .build_config_prefs import load_build_config_prefs
@@ -318,41 +279,3 @@ class SettingsPanel(ttk.Frame):
         studio = dict(existing.get("studio") or {})
         studio["disable_gil_monitor"] = bool(self._disable_gil_var.get())
         save_build_config_prefs(self.chart_dir, {"studio": studio})
-
-    def _browse_project(self) -> None:
-        initial = self._project_var.get().strip() or self.chart_dir or bundled_chart_dir()
-        if not os.path.isdir(initial):
-            initial = bundled_chart_dir()
-        picked = filedialog.askdirectory(
-            parent=self.winfo_toplevel(),
-            title="Select project folder",
-            initialdir=initial,
-        )
-        if picked:
-            self._project_var.set(resolve_chart_dir_from_selection(picked))
-
-    def _use_bundled(self) -> None:
-        self._project_var.set(bundled_chart_dir())
-
-    def _apply_project(self) -> None:
-        raw = self._project_var.get().strip()
-        if not raw:
-            messagebox.showinfo("Project Folder", "Choose a folder first.", parent=self.winfo_toplevel())
-            return
-        chart_dir = resolve_chart_dir_from_selection(raw)
-        ok, err = validate_chart_dir(chart_dir)
-        if not ok:
-            messagebox.showerror("Project Folder", err, parent=self.winfo_toplevel())
-            return
-        ensure_project_data_dir(chart_dir)
-        save_project_config(chart_dir)
-        self.chart_dir = chart_dir
-        self._project_var.set(chart_dir)
-        self._refresh_path_rows()
-        if self._on_project_changed:
-            self._on_project_changed(chart_dir)
-        messagebox.showinfo(
-            "Project Folder",
-            f"Project set to:\n{chart_dir}\n\nAll panels now use this data folder.",
-            parent=self.winfo_toplevel(),
-        )

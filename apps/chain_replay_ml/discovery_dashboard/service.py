@@ -38,10 +38,14 @@ from .types import (
 
 
 def list_discovery_pipelines(
-    data_dir: str,
+    data_dir: str | None = None,
     context_key: str | None = None,
 ) -> list[dict[str, Any]]:
     """Query and return all Discovery Pipelines matching context_key with aggregated governance metrics."""
+    if data_dir is None:
+        from chain_replay_ml.core.data_root import resolve_data_root
+        data_dir = resolve_data_root()
+
     init_discovery_pipeline_tables(data_dir)
     try:
         from chain_replay_ml.research_registry.store import init_research_registry_tables
@@ -171,8 +175,8 @@ def derive_human_readable_feature_name(
 
 
 def list_discovery_features(
-    data_dir: str,
-    pipeline_id: str | Sequence[str],
+    data_dir: str | None = None,
+    pipeline_id: str | Sequence[str] | None = None,
     generation: int | None = None,
     verdicts: list[str] | None = None,
     strategy: str | None = None,
@@ -180,12 +184,19 @@ def list_discovery_features(
     deduplicate_by_hash: bool = True,
 ) -> list[dict[str, Any]]:
     """Query features across one or multiple Discovery Pipelines with filtering and formula deduplication."""
+    if data_dir is None:
+        from chain_replay_ml.core.data_root import resolve_data_root
+        data_dir = resolve_data_root()
+
     init_discovery_pipeline_tables(data_dir)
     try:
         from chain_replay_ml.research_registry.store import init_research_registry_tables
         init_research_registry_tables(data_dir)
     except Exception:
         pass
+
+    if pipeline_id is None:
+        return []
 
     if isinstance(pipeline_id, str):
         p_ids = [pipeline_id.strip()] if pipeline_id.strip() else []
@@ -409,7 +420,7 @@ def validate_cross_pipeline_selection(
 
 
 def create_candidate_discovery_pipeline(
-    data_dir: str,
+    data_dir: str | None,
     req: PipelineCreationRequest,
     basket: CrossPipelineSelectionBasket,
 ) -> PipelineCreationResult:
@@ -423,6 +434,10 @@ def create_candidate_discovery_pipeline(
     5. New pipeline type is strictly 'discovery_experimental'.
     6. Full multi-pipeline and human-readable AST provenance is persisted in pipeline_registry_store.json.
     """
+    if data_dir is None:
+        from chain_replay_ml.core.data_root import resolve_data_root
+        data_dir = resolve_data_root()
+
     is_valid, msg, dedup_items, co_disc = validate_cross_pipeline_selection(basket, req.context_key)
     if not is_valid:
         return PipelineCreationResult(

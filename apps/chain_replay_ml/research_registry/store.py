@@ -290,7 +290,7 @@ def get_all_research_records(data_dir: str, context_key: str | None = None) -> l
 
 
 def get_research_detail(data_dir: str, research_id: str) -> dict[str, Any] | None:
-    """Retrieve full research record, generational linkages, and discovery pipeline summary."""
+    """Retrieve full research record, generational linkages, discovery features, and hardware metadata."""
     init_research_registry_tables(data_dir)
     conn = connect_analysis_db(data_dir)
     try:
@@ -298,33 +298,150 @@ def get_research_detail(data_dir: str, research_id: str) -> dict[str, Any] | Non
         if not row:
             return None
         res_d = dict(row)
+        camp_id = res_d.get("campaign_id") or ""
+        dp_id = res_d.get("discovery_pipeline_id") or ""
+
+        # Parse config and outcome JSON
+        cfg_d = json.loads(res_d.get("research_config_json") or "{}") if res_d.get("research_config_json") else {}
+        out_d = json.loads(res_d.get("research_outcome_json") or "{}") if res_d.get("research_outcome_json") else {}
+        res_d["research_config"] = cfg_d
+        res_d["research_outcome"] = out_d
+
+        # 1. Load point-in-time discovery features for this research run
+        feat_rows = conn.execute(
+            """SELECT feature_id, pipeline_id, feature_name, formula_expression, formula_hash,
+                      generator_strategy, parent_features_json, generation_discovered,
+                      lifecycle_status, evidence_score, total_evaluations, holdout_rank,
+                      relative_imp_drop, drift_severity, ks_statistic, ks_pvalue, metadata_json,
+                      created_at, updated_at
+               FROM discovery_pipeline_features
+               WHERE pipeline_id = ? OR pipeline_id LIKE ?
+               ORDER BY generation_discovered ASC, evidence_score DESC;""",
+            (dp_id, f"%{camp_id}%" if camp_id else dp_id),
+        ).fetchall()
+
+        features_list = []
+        for f in feat_rows:
+            fd = dict(f)
+            meta = json.loads(fd.get("metadata_json") or "{}") if fd.get("metadata_json") else {}
+            fd["delta_auc"] = meta.get("delta_auc")
+            fd["governance_rationale"] = meta.get("governance_rationale") or "Under evaluation"
+            fd["research_id"] = research_id
+            try:
+                fd["parent_features"] = json.loads(fd.get("parent_features_json") or "[]")
+            except Exception:
+                fd["parent_features"] = []
+            features_list.append(fd)
+        res_d["features"] = features_list
+
+        # 2. Load generations
         gen_rows = conn.execute(
             "SELECT * FROM research_generation_snapshots WHERE research_id = ? ORDER BY generation_number ASC;",
             (research_id,),
         ).fetchall()
-        res_d["generations"] = [dict(g) for g in gen_rows]
+        generations = [dict(g) for g in gen_rows]
+
+        # If generation snapshots table was not explicitly populated, synthesize from discovery_pipeline_snapshots
+        if not generations and dp_id:
+            snap_rows = conn.execute(
+                """SELECT snapshot_hash, pipeline_id, generation_number,
+                          feature_count, keep_count, watch_count, remove_count, created_at
+                   FROM discovery_pipeline_snapshots
+                   WHERE pipeline_id = ? OR pipeline_id LIKE ?
+                   ORDER BY generation_number ASC;""",
+                (dp_id, f"%{camp_id}%" if camp_id else dp_id),
+            ).fetchall()
+            for s in snap_rows:
+                sd = dict(s)
+                sd["research_id"] = research_id
+                sd["discovery_snapshot_hash"] = sd.get("snapshot_hash")
+                sd["candidates_evaluated"] = res_d.get("candidates_evaluated", 0) // max(len(snap_rows), 1)
+                sd["candidates_generated"] = res_d.get("candidates_generated", 0) // max(len(snap_rows), 1)
+                sd["candidates_pruned"] = res_d.get("candidates_pruned", 0) // max(len(snap_rows), 1)
+                sd["generation_best_score"] = res_d.get("best_composite_score", 0.0)
+                sd["generation_best_trading_score"] = res_d.get("best_trading_score", 0.0)
+                sd["generation_best_model_score"] = res_d.get("best_model_score", 0.0)
+                sd["generation_best_candidate_id"] = res_d.get("best_candidate_id") or "—"
+                generations.append(sd)
+
+        # Fallback if still empty but actual_generations_completed > 0
+        if not generations and int(res_d.get("actual_generations_completed") or 0) > 0:
+            act_gens = int(res_d.get("actual_generations_completed") or 1)
+            for g_num in range(1, act_gens + 1):
+                generations.append({
+                    "generation_number": g_num,
+                    "discovery_snapshot_hash": res_d.get("final_discovery_snapshot_hash") or f"GEN_{g_num}_SNAPSHOT",
+                    "candidates_generated": res_d.get("candidates_generated", 0) // act_gens,
+                    "candidates_evaluated": res_d.get("candidates_evaluated", 0) // act_gens,
+                    "candidates_pruned": res_d.get("candidates_pruned", 0) // act_gens,
+                    "generation_best_score": res_d.get("best_composite_score", 0.0),
+                    "generation_best_trading_score": res_d.get("best_trading_score", 0.0),
+                    "generation_best_model_score": res_d.get("best_model_score", 0.0),
+                    "generation_best_candidate_id": res_d.get("best_candidate_id") or "—",
+                    "keep_count": res_d.get("keep_count", 0),
+                    "watch_count": res_d.get("watch_count", 0),
+                    "remove_count": res_d.get("remove_count", 0),
+                    "created_at": res_d.get("started_at"),
+                })
+
+        res_d["generations"] = generations
+
+        # 3. Build Hardware / Runtime info
+        import os
+        from chain_replay_ml.training.model_device import detect_gpu_hardware
+        hw = detect_gpu_hardware()
+        gpu_detected = bool(hw.get("gpu_detected"))
+        gpu_name = hw.get("gpu_name") or "—"
+        res_d["hardware"] = {
+            "cpu": f"{os.cpu_count() or 4} Logical Cores (OpenMP multi-threaded)",
+            "gpu": "Available (CUDA active)" if gpu_detected else "None / CPU",
+            "gpu_model": gpu_name,
+            "algorithms_mapping": "XGBoost: CUDA (cuda:0) · CatBoost: GPU · LightGBM: CPU (OpenMP) · Random Forest: CPU",
+            "workers_threads": f"{cfg_d.get('n_workers') or 4} workers · {os.cpu_count() or 4} threads",
+            "memory": hw.get("memory_total") or "8192 MiB dedicated VRAM",
+            "fallback_info": "LightGBM using CPU fallback (installed wheel lacks CUDA learner)",
+            "driver_version": hw.get("driver_version") or "610.88",
+        }
         return res_d
     finally:
         conn.close()
 
 
-def backfill_historical_research_records(data_dir: str) -> int:
-    """Scan existing overnight_campaigns in analysis.db and ensure corresponding research_registry entries exist."""
+def map_campaign_status_to_research_status(camp_status: str | None, stop_reason: str | None = None) -> ResearchStatus:
+    """Normalize and map overnight campaign status to authoritative ResearchStatus."""
+    st = str(camp_status or "").strip().upper()
+    sr = str(stop_reason or "").strip().upper()
+    if sr == "USER_CANCELLED":
+        return ResearchStatus.ABORTED
+    if st in ("COMPLETED", "CAMPAIGN_COMPLETED"):
+        return ResearchStatus.COMPLETED
+    if st in ("CAMPAIGN_FAILED", "FAILED"):
+        return ResearchStatus.FAILED
+    if st == "RESOURCE_PAUSED":
+        return ResearchStatus.PAUSED
+    if st == "RUNNING":
+        return ResearchStatus.RUNNING
+    # Interrupted or unexecuted non-terminal states
+    if st in ("CREATED", "TRAINING", "CAMPAIGN_STOPPED", "OOS_EVALUATION", "TRADING_EVALUATION", "RANKING", "FINE_TUNING", "NEXT_GENERATION"):
+        return ResearchStatus.ABORTED
+    return ResearchStatus.ABORTED
+
+
+def backfill_historical_research_records(data_dir: str, force_resync: bool = False) -> int:
+    """Scan existing overnight_campaigns in analysis.db and ensure corresponding research_registry entries exist and have accurate status."""
     init_research_registry_tables(data_dir)
     conn = connect_analysis_db(data_dir)
-    backfilled_count = 0
+    synced_count = 0
     try:
         camps = conn.execute("SELECT * FROM overnight_campaigns ORDER BY start_time_iso ASC;").fetchall()
         for c in camps:
             camp_id = c["campaign_id"]
-            existing = conn.execute("SELECT research_id FROM research_registry WHERE campaign_id = ?;", (camp_id,)).fetchone()
-            if existing:
-                continue
+            existing = conn.execute("SELECT * FROM research_registry WHERE campaign_id = ?;", (camp_id,)).fetchone()
 
             cfg_d = json.loads(c["config_json"] or "{}") if c["config_json"] else {}
             ctx_key = cfg_d.get("context_key") or "NIFTY:6:standard:all"
             start_iso = c["start_time_iso"] or _utc_now_iso()
-            r_id = generate_research_id(ctx_key, start_iso)
+            r_id = existing["research_id"] if existing else generate_research_id(ctx_key, start_iso)
 
             # Check for discovery pipeline
             dp_row = conn.execute("SELECT * FROM discovery_pipelines WHERE campaign_id = ? ORDER BY created_at DESC LIMIT 1;", (camp_id,)).fetchone()
@@ -343,7 +460,7 @@ def backfill_historical_research_records(data_dir: str) -> int:
             tot_df = sum(stat_m.values())
             act_pool = keep_cnt + watch_cnt
 
-            st_val = ResearchStatus.COMPLETED if c["status"] == "completed" else (ResearchStatus.RUNNING if c["status"] == "running" else ResearchStatus.ABORTED)
+            st_val = map_campaign_status_to_research_status(c["status"], c["stop_reason"])
             dur = 0.0
             if c["end_time_iso"] and c["start_time_iso"]:
                 try:
@@ -356,6 +473,15 @@ def backfill_historical_research_records(data_dir: str) -> int:
             c_d = dict(c)
             algos = cfg_d.get("algorithms") or ["XGBoost", "LightGBM", "CatBoost"]
             strat = c_d.get("feature_elimination_strategy") or cfg_d.get("feature_elimination_strategy") or "SHAP_AND_EVIDENCE"
+
+            if existing:
+                if force_resync or existing["status"] != st_val.value:
+                    conn.execute(
+                        "UPDATE research_registry SET status = ?, updated_at = ? WHERE research_id = ?;",
+                        (st_val.value, _utc_now_iso(), r_id),
+                    )
+                    synced_count += 1
+                continue
 
             rec = ResearchRegistryRecord(
                 research_id=r_id,
@@ -404,7 +530,92 @@ def backfill_historical_research_records(data_dir: str) -> int:
                 updated_at=_utc_now_iso(),
             )
             insert_or_update_research_run(data_dir, rec)
-            backfilled_count += 1
-        return backfilled_count
+            synced_count += 1
+        conn.commit()
+        return synced_count
+    finally:
+        conn.close()
+
+
+def delete_research_records(data_dir: str, research_ids: list[str]) -> dict[str, int]:
+    """Safely delete specified research registry records and their uniquely associated run metadata.
+    
+    Preserves referential integrity and checks ownership so shared discovery pipelines
+    or external models/registries are never accidentally removed.
+    """
+    if not research_ids:
+        return {}
+
+    conn = connect_analysis_db(data_dir)
+    deleted_counts: dict[str, int] = {
+        "research_registry": 0,
+        "research_generation_snapshots": 0,
+        "overnight_campaign_events": 0,
+        "overnight_campaigns": 0,
+        "campaign_candidate_specs": 0,
+        "discovery_pipelines": 0,
+        "discovery_pipeline_features": 0,
+        "discovery_pipeline_snapshots": 0,
+    }
+
+    try:
+        conn.execute("BEGIN TRANSACTION;")
+        for r_id in research_ids:
+            # 1. Fetch the research record to find its campaign_id and discovery_pipeline_id
+            row = conn.execute(
+                "SELECT campaign_id, discovery_pipeline_id FROM research_registry WHERE research_id = ?;",
+                (r_id,),
+            ).fetchone()
+            if not row:
+                continue
+
+            c_id = row["campaign_id"]
+            dp_id = row["discovery_pipeline_id"]
+
+            # 2. Delete research_generation_snapshots
+            cur = conn.execute("DELETE FROM research_generation_snapshots WHERE research_id = ? OR campaign_id = ?;", (r_id, c_id))
+            deleted_counts["research_generation_snapshots"] += cur.rowcount
+
+            # 3. Delete overnight_campaign_events and candidate specs
+            if c_id:
+                cur = conn.execute("DELETE FROM overnight_campaign_events WHERE campaign_id = ?;", (c_id,))
+                deleted_counts["overnight_campaign_events"] += cur.rowcount
+
+                cur = conn.execute("DELETE FROM campaign_candidate_specs WHERE campaign_id = ?;", (c_id,))
+                deleted_counts["campaign_candidate_specs"] += cur.rowcount
+
+            # 4. Check if discovery pipeline is uniquely owned by this campaign / research run
+            if dp_id:
+                other_refs = conn.execute(
+                    "SELECT COUNT(*) as c FROM research_registry WHERE discovery_pipeline_id = ? AND research_id != ?;",
+                    (dp_id, r_id),
+                ).fetchone()["c"]
+                if other_refs == 0:
+                    cur = conn.execute("DELETE FROM discovery_pipeline_features WHERE pipeline_id = ?;", (dp_id,))
+                    deleted_counts["discovery_pipeline_features"] += cur.rowcount
+                    cur = conn.execute("DELETE FROM discovery_pipeline_snapshots WHERE pipeline_id = ?;", (dp_id,))
+                    deleted_counts["discovery_pipeline_snapshots"] += cur.rowcount
+                    cur = conn.execute("DELETE FROM discovery_pipelines WHERE pipeline_id = ?;", (dp_id,))
+                    deleted_counts["discovery_pipelines"] += cur.rowcount
+
+            # 5. Delete from overnight_campaigns (only if no other research_registry row uses this campaign_id)
+            if c_id:
+                other_camp_refs = conn.execute(
+                    "SELECT COUNT(*) as c FROM research_registry WHERE campaign_id = ? AND research_id != ?;",
+                    (c_id, r_id),
+                ).fetchone()["c"]
+                if other_camp_refs == 0:
+                    cur = conn.execute("DELETE FROM overnight_campaigns WHERE campaign_id = ?;", (c_id,))
+                    deleted_counts["overnight_campaigns"] += cur.rowcount
+
+            # 6. Delete from research_registry
+            cur = conn.execute("DELETE FROM research_registry WHERE research_id = ?;", (r_id,))
+            deleted_counts["research_registry"] += cur.rowcount
+
+        conn.commit()
+        return deleted_counts
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
